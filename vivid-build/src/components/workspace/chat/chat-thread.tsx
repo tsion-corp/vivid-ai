@@ -5,24 +5,6 @@ import { useEffect, useRef } from "react";
 import { cn } from "@/lib/cn";
 import { AnswerSummary, parseAnswers } from "./answer-summary";
 import { MessagePart, type PartContext } from "./message-parts";
-import { CHANGING_TOOLS } from "./tool-labels";
-
-/**
- * Did this turn touch the app at all?
- *
- * A build turn is meant to write files. One that only reads them and then
- * reports `reason: "answered"` has produced nothing, and saying so is the
- * difference between "wait, where is my app?" and "ask it again".
- */
-function changedNothing(parts: UIMessage["parts"]): boolean {
-  let sawTool = false;
-  for (const part of parts) {
-    if (!part.type.startsWith("tool-")) continue;
-    sawTool = true;
-    if (CHANGING_TOOLS.has(part.type.slice("tool-".length))) return false;
-  }
-  return sawTool;
-}
 
 /**
  * The transcript.
@@ -79,7 +61,7 @@ export function ChatThread({
                     className="max-w-[85%] rounded-2xl bg-surface-2 px-3.5 py-3 text-left"
                   />
                 ) : (
-                  <p className="max-w-[85%] rounded-2xl bg-surface-2 px-3.5 py-2.5 text-[15px] leading-[1.5] whitespace-pre-wrap text-fg">
+                  <p className="max-w-[85%] rounded-2xl bg-surface-2 px-3.5 py-2.5 text-[14px] leading-[1.55] whitespace-pre-wrap text-fg">
                     {text}
                   </p>
                 ))}
@@ -110,7 +92,7 @@ export function ChatThread({
                 key={`${message.id}-${partIndex}`}
                 part={part}
                 last={isLast && partIndex === message.parts.length - 1}
-                context={{ ...context, answered: answeredHere, changedNothing: changedNothing(message.parts) }}
+                context={{ ...context, answered: answeredHere }}
               />
             ))}
           </div>

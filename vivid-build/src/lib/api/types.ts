@@ -34,6 +34,17 @@ export type Project = {
   fullstack: boolean;
   /** The design recipe the plan chose — "shop", "booking", "landing", … */
   recipe: string | null;
+  /**
+   * A turn is in flight on the backend. It survives the tab closing, so this is
+   * the answer to "is it still working?" — previously only inferable from the
+   * thread ending on a user message, which was wrong whenever a turn finished
+   * without leaving one.
+   */
+  turn_status: "idle" | "running";
+  /** When the running turn started, for "building for 6 min". */
+  turn_started_at: string | null;
+  /** Latest desktop screenshot, a 7-day signed URL, for the project card. */
+  thumbnail_url: string | null;
   published_url: string | null;
   created_at: string;
   updated_at: string;
@@ -87,6 +98,56 @@ export type Connector = {
   mode: string;
   projects?: { ref: string; name: string; region: string; status: string }[];
   created_at: string;
+};
+
+/**
+ * One file's contents.
+ *
+ * Binary files used to arrive as a UTF-8 decode of their bytes — several
+ * thousand replacement characters. Now they say so, and `?raw=1` serves the
+ * actual bytes with a real content type, which is what an `<img>` wants.
+ */
+export type FileContent = {
+  path: string;
+  /** Empty when `binary` is true. */
+  content: string;
+  binary: boolean;
+  content_base64: string | null;
+  content_type: string | null;
+};
+
+/** A `vivid_` key for scripts and CLIs. The secret itself is returned once. */
+export type ApiKey = {
+  id: string;
+  name: string;
+  /** The visible stub, e.g. "vivid_a1b2". */
+  prefix: string;
+  created_at: string;
+  last_used_at: string | null;
+  /**
+   * Set once the key has been revoked.
+   *
+   * `GET /keys` keeps returning revoked keys — verified: after a `DELETE` the
+   * key itself answers 401, but the row stays in the list. Undocumented, so
+   * optional, and filtered on rather than trusted to be absent.
+   */
+  revoked_at?: string | null;
+};
+
+/** Only on creation — the full key is never returned again. */
+export type CreatedApiKey = ApiKey & { key: string };
+
+export type AnalyticsBucket = { key: string; count: number };
+
+export type Analytics = {
+  days: number;
+  pageviews: number;
+  visitors: number;
+  by_day: { date: string; pageviews: number; visitors: number }[];
+  top_pages: AnalyticsBucket[];
+  referrers: AnalyticsBucket[];
+  devices: AnalyticsBucket[];
+  countries: AnalyticsBucket[];
 };
 
 export type Usage = {

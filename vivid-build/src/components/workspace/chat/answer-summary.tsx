@@ -33,7 +33,7 @@ export function AnswerSummary({
       {pairs.map((pair) => (
         <div key={pair.question} className="flex flex-col gap-0.5">
           <dt className="text-[11px] leading-[1.4] font-semibold text-muted-2">{pair.question}</dt>
-          <dd className="text-[15px] leading-[1.45] text-fg">{pair.answer}</dd>
+          <dd className="text-[14px] leading-[1.5] text-fg">{pair.answer}</dd>
         </div>
       ))}
     </dl>

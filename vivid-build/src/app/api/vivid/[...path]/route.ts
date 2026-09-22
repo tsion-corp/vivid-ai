@@ -12,9 +12,26 @@ import { vividApiBase } from "@/lib/server/env";
  * incoming request and passed along, so this is never an open relay.
  */
 
-// A build turn runs far longer than any default. Local `next start` has no cap
-// at all; on a serverless host this is the ceiling, and a first build will hit it.
-export const maxDuration = 800;
+/**
+ * A build turn runs 15-25 minutes; no serverless platform will hold a response
+ * open that long. 300s is the ceiling Vercel's Hobby plan accepts (Pro allows
+ * 800, which is still short of a first build), and asking for more fails the
+ * build outright rather than degrading:
+ *
+ *   Builder returned invalid maxDuration value for Serverless Function
+ *   "api/vivid/[...path]". Serverless Functions must have a maxDuration
+ *   between 1 and 300 for plan hobby.
+ *
+ * So the stream *will* be cut mid-turn when deployed here. That is survivable
+ * rather than fatal only because the turn belongs to the backend, not to this
+ * connection: `turn_status` says it is still running and `GET /chat/stream`
+ * replays and reattaches, which the client does on a stream error.
+ *
+ * The real fix is not a bigger number — it is this app's origin on the
+ * backend's CORS allowlist, so the browser streams from the API directly and
+ * no function is in the path at all. See BACKEND-ISSUES.md.
+ */
+export const maxDuration = 300;
 
 /** Sent upstream. `host` and `content-length` would describe the wrong request. */
 const FORWARD_REQUEST = ["authorization", "content-type", "accept"];

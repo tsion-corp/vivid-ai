@@ -1,5 +1,6 @@
 import type { Metadata, Viewport } from "next";
 import { AuthModalProvider } from "@/components/auth/auth-modal-provider";
+import { NetworkToast } from "@/components/ui/network-toast";
 import { SessionProvider } from "@/lib/api/session";
 import { Plus_Jakarta_Sans } from "next/font/google";
 import { themeInitScript } from "@/lib/theme";
@@ -46,6 +47,9 @@ export default function RootLayout({ children }: LayoutProps<"/">) {
         <SessionProvider>
           <AuthModalProvider>{children}</AuthModalProvider>
         </SessionProvider>
+        {/* Outside the providers: a connection warning must not depend on a
+            session, and it is as relevant on the marketing pages as in the app. */}
+        <NetworkToast />
       </body>
     </html>
   );

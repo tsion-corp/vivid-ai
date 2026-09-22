@@ -14,6 +14,7 @@ from app.api.routes.keys import router as keys_router
 from app.api.routes.media import router as media_router
 from app.api.routes.search import router as search_router
 from app.api.routes.tools import router as tools_router
+from app.api.routes.waitlist import router as waitlist_router
 
 api_router = APIRouter()
 api_router.include_router(health_router)
@@ -30,3 +31,4 @@ api_router.include_router(search_router)
 api_router.include_router(media_router)
 api_router.include_router(tools_router)
 api_router.include_router(builder_router)
+api_router.include_router(waitlist_router)

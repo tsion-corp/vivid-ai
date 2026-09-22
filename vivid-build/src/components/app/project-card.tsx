@@ -59,7 +59,16 @@ export function ProjectCard({ project, starred, actions, selecting, selected, on
       >
         <ProjectThumbnail
           name={project.name}
-          badge={project.mode === "plan" ? "Planning" : project.published_url ? "Live" : "Built"}
+          screenshotUrl={project.thumbnail_url}
+          badge={
+            project.turn_status === "running"
+              ? "Building"
+              : project.mode === "plan"
+                ? "Planning"
+                : project.published_url
+                  ? "Live"
+                  : "Built"
+          }
           className={cn("w-full transition-colors", selected && "ring-2 ring-accent")}
         />
       </Link>

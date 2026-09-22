@@ -32,6 +32,11 @@
   --chip-bg: rgba(10, 11, 13, 0.72);
   --glow: rgba(214, 221, 231, 0.14);
   --glow-strong: rgba(214, 221, 231, 0.16);
+  /* The dashboard aurora. Four blobs, blurred into one another. */
+  --aurora-1: rgba(56, 96, 255, 0.9);
+  --aurora-2: rgba(139, 92, 246, 0.8);
+  --aurora-3: rgba(236, 72, 153, 0.78);
+  --aurora-4: rgba(244, 63, 94, 0.62);
   --tint: rgba(214, 221, 231, 0.07);
   --shot-filter: none;
 
@@ -77,6 +82,10 @@
   --chip-bg: rgba(255, 255, 255, 0.8);
   --glow: rgba(16, 20, 26, 0.08);
   --glow-strong: rgba(16, 20, 26, 0.1);
+  --aurora-1: rgba(56, 96, 255, 0.32);
+  --aurora-2: rgba(139, 92, 246, 0.28);
+  --aurora-3: rgba(236, 72, 153, 0.26);
+  --aurora-4: rgba(244, 63, 94, 0.2);
   --tint: rgba(16, 20, 26, 0.05);
   --shot-filter: saturate(0.55) contrast(0.98) brightness(1.04);
 
@@ -164,6 +173,54 @@
 }
 @utility filter-shot {
   filter: var(--shot-filter);
+}
+
+/**
+ * The dashboard aurora.
+ *
+ * Four blurred radial blobs standing in for the animated shader other builders
+ * run on a canvas. A shader would mean a WebGL context and a render loop behind
+ * a page whose whole job is a text box; this is four gradients and one
+ * transform, and it composites on the GPU without JavaScript.
+ *
+ * The drift is slow enough to read as light rather than movement, and the
+ * global prefers-reduced-motion rule at the bottom of this file stops it
+ * outright for anyone who asks.
+ */
+@utility aurora {
+  position: absolute;
+  /* Top-anchored, not inset:0 — the height is the consumer's to set, and a
+     bottom edge here would fight it. */
+  inset: 0 0 auto;
+  height: min(680px, 78vh);
+  overflow: hidden;
+  pointer-events: none;
+  /* Fades into the page instead of ending on an edge. */
+  mask-image: linear-gradient(to bottom, #000 0%, #000 55%, transparent 97%);
+  -webkit-mask-image: linear-gradient(to bottom, #000 0%, #000 55%, transparent 97%);
+
+  &::before {
+    content: "";
+    position: absolute;
+    /* Oversized so the blur has material to pull from and never shows an edge. */
+    inset: -25% -10% 0;
+    background:
+      radial-gradient(55% 50% at 32% 6%, var(--aurora-1), transparent 72%),
+      radial-gradient(50% 46% at 82% 26%, var(--aurora-2), transparent 72%),
+      radial-gradient(62% 52% at 46% 56%, var(--aurora-3), transparent 74%),
+      radial-gradient(52% 46% at 10% 82%, var(--aurora-4), transparent 74%);
+    filter: blur(72px);
+    animation: aurora-drift 26s var(--ease-soft) infinite alternate;
+  }
+}
+
+@keyframes aurora-drift {
+  from {
+    transform: translate3d(-2%, -1%, 0) scale(1.04);
+  }
+  to {
+    transform: translate3d(3%, 2%, 0) scale(1.14);
+  }
 }
 
 /* Scrollable, but without the bar taking up room or drawing the eye. */

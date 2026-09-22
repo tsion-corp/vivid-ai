@@ -16,21 +16,19 @@ import { toolLabel } from "./tool-labels";
 type Part = UIMessage["parts"][number];
 
 /**
- * Why a turn ended, in words the person waiting for it can act on.
+ * Why a turn ended badly, in words the person waiting for it can act on.
  *
- * This map is also the definition of "went wrong": a reason that is not in it
- * gets no warning. That is deliberate. The alternative — warn on anything that
- * is not literally "answered" — flagged `asked` and `spec_written` as failures,
- * which are the two most common *successful* endings in plan mode. It told the
- * user something had broken at the exact moment everything had gone right.
- *
- * An unrecognised genuine failure is quieter than it could be; a false alarm on
- * every planning turn is worse.
+ * `data-usage` now carries an explicit `ok`, so this map no longer has to double
+ * as the definition of "went wrong". That matters: guessing from `reason` alone
+ * flagged `asked` and `spec_written` — the two most common *successful* endings
+ * in plan mode — as failures. Branching on `ok` means a reason we have never
+ * seen is still reported honestly rather than mislabelled either way.
  */
 const STOP_REASON: Record<string, string> = {
   typecheck_strikes:
     "The agent could not get the code to compile this turn, so the preview may be blank or broken.",
   step_limit: "The agent hit its step limit before finishing.",
+  no_changes: "This turn wrote no files, so the app is as it was.",
   cancelled: "This turn was cancelled.",
   error: "This turn failed part-way through.",
 };
@@ -38,6 +36,7 @@ const STOP_REASON: Record<string, string> = {
 const FIX_REQUEST: Record<string, string> = {
   typecheck_strikes: "The app does not compile. Fix the type errors and make the preview work.",
   step_limit: "You ran out of steps. Carry on from where you stopped.",
+  no_changes: "That turn wrote no files. Please build the app now, following the spec.",
   error: "That turn failed part-way through. Please pick it up and finish.",
 };
 
@@ -54,8 +53,6 @@ export type PartContext = {
   onBuild: () => void;
   /** Plan mode: only then do "Edit spec" and "Build" mean anything. */
   planning: boolean;
-  /** This turn called tools but none that write, run or generate anything. */
-  changedNothing?: boolean;
 };
 
 export function MessagePart({ part, last, context }: { part: Part; last: boolean; context: PartContext }) {
@@ -159,28 +156,39 @@ export function MessagePart({ part, last, context }: { part: Part; last: boolean
   }
 
   if (type === "data-usage") {
-    const usage = data<{ model?: string; steps?: number; reason?: string }>(part);
-    const reason = usage.reason && usage.reason in STOP_REASON ? usage.reason : null;
+    const usage = data<{
+      model?: string;
+      steps?: number;
+      reason?: string;
+      ok?: boolean;
+      failed_tools?: string[];
+    }>(part);
+
     const footer = (
       <p className="text-[11px] font-semibold text-muted-3">
         {usage.steps ?? 0} step{usage.steps === 1 ? "" : "s"} · {modelLabel(usage.model)}
       </p>
     );
 
-    // A build turn that only read files reports itself as a clean success.
-    // Observed live: six `read_file` calls, `reason: "answered"`, no writes, and
-    // a preview still showing the starter page. Nothing in the payload says
-    // anything went wrong, so this has to be inferred from the tools it used.
-    const idle = !context.planning && context.changedNothing;
+    // A tool call whose arguments came back malformed. The backend retries each
+    // one, so a name still here at the end means that file was never written —
+    // and saying which file is the difference between a user who can ask for it
+    // and one staring at a half-built app wondering what is missing.
+    const failed = usage.failed_tools ?? [];
 
-    if (!reason && !idle) return footer;
+    // `ok` is authoritative. Older turns in a hydrated thread predate it, so
+    // fall back to the failure list we know about rather than assuming success.
+    const wentWrong = usage.ok === false || (usage.ok === undefined && !!usage.reason && usage.reason in STOP_REASON);
 
-    const note = reason
+    if (!wentWrong && failed.length === 0) return footer;
+
+    const reason = usage.reason ?? "";
+    const note = wentWrong
       ? (STOP_REASON[reason] ?? `This turn stopped early (${reason.replace(/_/g, " ")}).`)
-      : "This turn read the project but did not change any files, so the app is as it was.";
-    const retry = reason
+      : `Some files were never written: ${failed.join(", ")}.`;
+    const retry = wentWrong
       ? (FIX_REQUEST[reason] ?? "That turn stopped early. Please finish it.")
-      : "That turn only read files without writing anything. Please build the app now, following the spec.";
+      : `These were never written: ${failed.join(", ")}. Please write them.`;
 
     // A turn that ran out of typecheck attempts or steps has left the app in a
     // state that may not even compile. Burying that in grey 11px text is how
@@ -191,12 +199,19 @@ export function MessagePart({ part, last, context }: { part: Part; last: boolean
           <TriangleAlert aria-hidden className="mt-px size-3.5 flex-none" />
           {note}
         </p>
+        {wentWrong && failed.length > 0 && (
+          <ul className="flex flex-col gap-0.5 pl-5.5 text-[12px] text-muted">
+            {failed.map((tool) => (
+              <li key={tool}>{tool} — never written</li>
+            ))}
+          </ul>
+        )}
         <button
           type="button"
           onClick={() => context.onSend(retry)}
           className="cursor-pointer self-start rounded-full bg-btn px-3 py-1 text-[11px] font-bold text-btn-fg"
         >
-          {reason ? "Ask it to finish" : "Ask it to build"}
+          {wentWrong ? "Ask it to finish" : "Ask for the missing files"}
         </button>
         {footer}
       </div>

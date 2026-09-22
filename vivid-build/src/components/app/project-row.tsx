@@ -75,7 +75,7 @@ export function ProjectRow({ project, starred, actions, selecting, selected, onT
           }}
           className="flex min-w-0 items-center gap-3 outline-none focus-visible:underline"
         >
-          <ProjectThumbnail name={project.name} className="w-16 flex-none" />
+          <ProjectThumbnail name={project.name} screenshotUrl={project.thumbnail_url} className="w-16 flex-none" />
           <span className="min-w-0">
             <span className="block truncate text-sm font-semibold text-fg">{project.name}</span>
             <span className="block truncate text-xs text-muted">

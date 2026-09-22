@@ -1,10 +1,37 @@
 "use client";
 
+import { reportRequest } from "@/lib/network";
 import { getTokens, setTokens } from "./tokens";
 import { ApiError, type Tokens } from "./types";
 
-/** The relay. Same origin, because the backend's CORS allowlist excludes this one. */
-export const API = "/api/vivid";
+/**
+ * Where the builder API is reached.
+ *
+ * Two modes, and the env var is the switch:
+ *
+ *  - **Direct** (`NEXT_PUBLIC_VIVID_API_BASE` set): the browser calls the API
+ *    itself. This is the one that matters, because it takes our server out of
+ *    the path of the 15-25 minute chat stream — and no serverless platform will
+ *    hold a response open that long (Vercel caps it at 300s on Hobby, 800s on
+ *    Pro, both under a first build).
+ *  - **Relayed** (unset, the default): same-origin `/api/vivid/*`, forwarded by
+ *    a route handler. Correct anywhere our origin is not on the backend's
+ *    `CORS_ORIGINS` allowlist, which is every deployment until someone adds it.
+ *
+ * Leaving it unset is the safe default deliberately: turning this on before the
+ * origin is allow-listed would fail every request in the app, where leaving it
+ * off merely costs a hop. The relay maps `/api/vivid/X` onto
+ * `${VIVID_API_BASE}/X`, so the paths below are identical either way and
+ * nothing but this constant changes.
+ *
+ * Read as a static member access so Next can inline it at build time.
+ */
+const DIRECT_BASE = process.env.NEXT_PUBLIC_VIVID_API_BASE?.trim().replace(/\/+$/, "");
+
+export const API = DIRECT_BASE || "/api/vivid";
+
+/** True when a request leaves our origin. Only `/api/auth/*` never does. */
+export const CALLING_API_DIRECTLY = Boolean(DIRECT_BASE);
 
 /**
  * One refresh at a time, shared by every caller.
@@ -96,9 +123,15 @@ async function send<T>(path: string, init?: RequestInit): Promise<T> {
   try {
     response = await authFetch(`${API}${path}`, init);
   } catch (error) {
+    // An abort is us cancelling, not the network failing, so it tells us
+    // nothing either way.
     if ((error as Error).name === "AbortError") throw error;
+    reportRequest(false);
     throw new ApiError(0, "offline", "Could not reach the builder. Check your connection.");
   }
+
+  // Any answer at all — including a 500 — means the request got there.
+  reportRequest(true);
 
   if (!response.ok) throw await toApiError(response);
   if (response.status === 204) return undefined as T;

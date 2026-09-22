@@ -47,8 +47,11 @@ export function WorkspaceSkeleton() {
       </div>
       <div className="min-w-0 flex-1 bg-bg-2 lg:flex-[1.15]">
         <div className="flex gap-2 border-b border-line px-4 py-3">
-          {["w-20", "w-16", "w-20", "w-16"].map((width) => (
-            <Skeleton key={width} className={`h-9 rounded-full ${width}`} />
+          {/* Keyed by position, not by the width: the widths repeat, and a
+              duplicate key lets React drop one of the pills. These are fixed,
+              decorative and never reorder, so the index is the identity. */}
+          {["w-20", "w-16", "w-20", "w-16"].map((width, index) => (
+            <Skeleton key={index} className={`h-9 rounded-full ${width}`} />
           ))}
         </div>
         <div className="p-[18px]">

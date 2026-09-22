@@ -463,6 +463,13 @@ class Settings(BaseSettings):
     # detail. Empty = the detail is never shown. Generate: openssl rand -hex 24
     HEALTH_TOKEN: str = ""
 
+    # Reads the waitlist (GET /v1/waitlist): Authorization: Bearer <ADMIN_TOKEN>.
+    # Separate from HEALTH_TOKEN because the list is people's names and
+    # emails. Empty = nobody can read it. Generate: openssl rand -hex 24
+    ADMIN_TOKEN: str = ""
+    # Sign-ups per minute from one address; the form is public.
+    WAITLIST_PER_MINUTE: int = 5
+
     model_config = SettingsConfigDict(env_file=".env", env_file_encoding="utf-8", extra="ignore")
 
     @field_validator("MODEL_PROVIDER", "LLM_PROVIDER", "CODE_LLM_PROVIDER",

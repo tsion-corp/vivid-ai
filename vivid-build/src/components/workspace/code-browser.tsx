@@ -3,11 +3,11 @@
 import { Check, ChevronRight, Copy, FolderClosed, FolderOpen } from "lucide-react";
 import { useMemo, useState } from "react";
 import { Skeleton } from "@/components/ui/skeleton";
-import { key, listAssets, listFiles, readFile } from "@/lib/api/endpoints";
+import { key, listFiles, readFile } from "@/lib/api/endpoints";
+import type { FileContent } from "@/lib/api/types";
 import { useResource } from "@/lib/api/use-resource";
 import { cn } from "@/lib/cn";
-import { isBinaryPath, isImagePath, looksBinary } from "@/lib/binary";
-import { buildTree, countLines, type FileTreeNode } from "@/lib/files";
+import { buildTree, countLines, formatSize, type FileTreeNode } from "@/lib/files";
 import { languageFor } from "@/lib/highlight";
 import { usePrefs } from "@/lib/store/prefs";
 import { CodeView } from "./code-view";
@@ -37,25 +37,16 @@ export function CodeBrowser({ projectId, selectedFile, onFileSelect }: Props) {
   const tree = useMemo(() => buildTree(paths), [paths]);
 
   const activePath = (selectedFile && paths.includes(selectedFile) ? selectedFile : paths[0]) ?? null;
-  const binary = Boolean(activePath && isBinaryPath(activePath));
 
-  // Never fetched for a binary path: the endpoint would hand back a JPEG
-  // decoded as UTF-8, and the highlighter would tokenise the wreckage.
+  // Every path is safe to fetch: the endpoint flags a binary file and carries
+  // its bytes in `content_base64` rather than a UTF-8 decode of them.
   const file = useResource(
-    activePath && !binary ? key.file(projectId, activePath) : null,
+    activePath ? key.file(projectId, activePath) : null,
     () => readFile(projectId, activePath!),
-    { enabled: Boolean(activePath) && !binary },
+    { enabled: Boolean(activePath) },
   );
 
-  // Generated and uploaded images are also assets, and those carry a real URL —
-  // the only way to actually show a picture the agent made.
-  const assets = useResource(binary ? key.assets(projectId) : null, () => listAssets(projectId), {
-    enabled: binary,
-  });
-  const asset =
-    assets.status === "ready" && activePath
-      ? assets.data.find((item) => item.name === activePath.split("/").pop())
-      : undefined;
+  const binary = file.status === "ready" && file.data.binary;
 
   const [copied, setCopied] = useState(false);
 
@@ -127,11 +118,9 @@ export function CodeBrowser({ projectId, selectedFile, onFileSelect }: Props) {
           </button>
         </div>
 
-        {binary && activePath ? (
-          <BinaryFile path={activePath} url={asset?.url} loading={assets.status === "loading"} />
-        ) : file.status === "ready" && activePath ? (
-          looksBinary(file.data.content) ? (
-            <BinaryFile path={activePath} />
+        {file.status === "ready" && activePath ? (
+          file.data.binary ? (
+            <BinaryFile name={activePath.split("/").pop() ?? activePath} file={file.data} />
           ) : (
             <CodeView content={file.data.content} language={languageFor(activePath)} wrap={wrap} fontSize={fontSize} />
           )
@@ -149,16 +138,37 @@ export function CodeBrowser({ projectId, selectedFile, onFileSelect }: Props) {
   );
 }
 
-/** An image preview when one is reachable, an honest note when it is not. */
-function BinaryFile({ path, url, loading }: { path: string; url?: string; loading?: boolean }) {
-  const name = path.split("/").pop() ?? path;
+/**
+ * A data URL inlines the bytes into the document, so a large one is paid for in
+ * memory twice over — once as base64, once decoded. Past this the file is
+ * described rather than drawn.
+ */
+const PREVIEW_LIMIT = 4 * 1024 * 1024;
 
-  if (isImagePath(path) && url) {
+/** Base64 carries 3 bytes per 4 characters, less whatever the padding stands in for. */
+function byteLength(base64: string): number {
+  const padding = base64.endsWith("==") ? 2 : base64.endsWith("=") ? 1 : 0;
+  return Math.floor((base64.length * 3) / 4) - padding;
+}
+
+/** An image preview when the bytes are worth inlining, an honest note when they are not. */
+function BinaryFile({ name, file }: { name: string; file: FileContent }) {
+  const base64 = file.content_base64;
+  const type = file.content_type;
+  const size = base64 ? byteLength(base64) : 0;
+  const oversized = size > PREVIEW_LIMIT;
+
+  if (base64 && type?.startsWith("image/") && !oversized) {
     return (
       <div className="flex min-h-0 flex-1 items-center justify-center overflow-auto bg-surface-2 p-6">
-        {/* A signed, time-limited URL on a host that is not known at build time. */}
+        {/* The raw endpoint sits behind the relay's Authorization gate, which an
+            <img> request cannot carry — these are the bytes already fetched. */}
         {/* eslint-disable-next-line @next/next/no-img-element */}
-        <img src={url} alt={name} className="max-h-full max-w-full rounded-lg object-contain" />
+        <img
+          src={`data:${type};base64,${base64}`}
+          alt={name}
+          className="max-h-full max-w-full rounded-lg object-contain"
+        />
       </div>
     );
   }
@@ -167,7 +177,13 @@ function BinaryFile({ path, url, loading }: { path: string; url?: string; loadin
     <div className="flex min-h-0 flex-1 flex-col items-center justify-center gap-1.5 p-6 text-center">
       <p className="text-sm font-semibold text-fg">{name}</p>
       <p className="text-sm text-muted">
-        {loading ? "Looking for a preview…" : "This file is not text, so there is nothing to show here."}
+        {oversized
+          ? `Too large to preview here — ${formatSize(size)}.`
+          : "This file is not text, so there is nothing to show here."}
+      </p>
+      <p className="text-xs text-muted-3">
+        {type ?? "Unknown type"}
+        {!oversized && size > 0 && ` · ${formatSize(size)}`}
       </p>
     </div>
   );

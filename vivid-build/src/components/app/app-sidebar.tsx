@@ -36,9 +36,11 @@ import { DEFAULT_ACCOUNT } from "./data";
 
 const RECENTS_LIMIT = 3;
 
+// 13px, not 14: the sidebar is chrome, and at the same size as page content it
+// competed with it. The tighter row also fits the recents list on a short screen.
 const itemClass = (active: boolean, collapsed = false) =>
   cn(
-    "flex w-full cursor-pointer items-center gap-2.5 rounded-[10px] py-2.5 text-left text-sm font-semibold transition-colors",
+    "flex w-full cursor-pointer items-center gap-2.5 rounded-[10px] py-2 text-left text-[13px] font-semibold transition-colors",
     collapsed ? "justify-center px-0" : "justify-between px-3",
     active ? "bg-surface-2 text-fg" : "text-muted hover:bg-surface hover:text-fg",
   );
@@ -114,7 +116,7 @@ export function AppSidebar({
           <span
             title={collapsed ? teamName : undefined}
             className={cn(
-              "flex items-center gap-[9px] rounded-xl border border-line-2 bg-surface text-sm font-semibold transition-colors hover:border-line-3",
+              "flex items-center gap-[9px] rounded-xl border border-line-2 bg-surface text-[13px] font-semibold transition-colors hover:border-line-3",
               collapsed ? "justify-center p-[9px]" : "px-3 py-[11px]",
             )}
           >

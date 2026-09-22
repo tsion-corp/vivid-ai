@@ -9,16 +9,11 @@ import { useToast } from "@/components/ui/toast";
 import { deleteAsset, key, listAssets, uploadAsset } from "@/lib/api/endpoints";
 import type { Asset } from "@/lib/api/types";
 import { useResource } from "@/lib/api/use-resource";
+import { formatSize } from "@/lib/files";
 import { buttonClass } from "@/lib/ui";
 
 /** 48 MB per project, per §7. Worth showing before someone hits it. */
 const PROJECT_LIMIT = 48 * 1024 * 1024;
-
-function formatSize(bytes: number) {
-  if (bytes < 1024) return `${bytes} B`;
-  if (bytes < 1024 * 1024) return `${Math.round(bytes / 1024)} KB`;
-  return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
-}
 
 /**
  * Everything the project holds: what was uploaded and what the agent generated.

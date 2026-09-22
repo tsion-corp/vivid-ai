@@ -43,6 +43,16 @@ function doneMessage(mode: Project["mode"]) {
   return mode === "build" ? "Your app is ready" : "Ready for you";
 }
 
+/** "for 6 minutes" — nothing under a minute, where a spinner already says it. */
+function sinceLabel(startedAt: string | null): string | null {
+  if (!startedAt) return null;
+  const started = Date.parse(startedAt);
+  if (Number.isNaN(started)) return null;
+  const minutes = Math.floor((Date.now() - started) / 60_000);
+  if (minutes < 1) return null;
+  return `for ${minutes} minute${minutes === 1 ? "" : "s"}`;
+}
+
 type Props = {
   className?: string;
   project: Project;
@@ -66,9 +76,16 @@ export function ChatPanel({ className, project, initialMessages, onSnapshot, req
   const [building, setBuilding] = useState(false);
   const inputRef = useRef<HTMLTextAreaElement>(null);
 
-  const { messages, sendMessage, setMessages, status, stop, error, clearError } = useProjectChat({
+  // Captured once, at mount: if a turn was already running when this page
+  // loaded, attach to its stream instead of showing a thread that looks
+  // finished. State rather than a ref because it is read during render, and
+  // never set again because `useChat` reads `resume` on mount only.
+  const [resumeOnMount] = useState(() => project.turn_status === "running");
+
+  const { messages, sendMessage, setMessages, status, stop, error, clearError, resumeStream } = useProjectChat({
     projectId: project.id,
     initialMessages,
+    resume: resumeOnMount,
     onSnapshot,
     onDone: () => {
       toast(doneMessage(project.mode));
@@ -135,68 +152,85 @@ export function ChatPanel({ className, project, initialMessages, onSnapshot, req
   }, [request, send]);
 
   /**
-   * A turn that is still running when you navigate away.
+   * A turn still running on the backend, with no stream attached here.
    *
-   * The stream belongs to the page that started it, and the API exposes no
-   * "is a turn running" flag — but §3 guarantees the assistant message is
-   * stored before the stream ends. So a thread whose last message is the user's
-   * is either mid-turn or just finished, and polling for the reply is the only
-   * way to find out. Without this, coming back to a 20-minute build shows a
-   * dead thread with no explanation.
+   * `turn_status` replaces what used to be an inference — "the last message is
+   * the user's, so a reply must be coming" — which was wrong in exactly the case
+   * that mattered: a turn that ended without leaving a message pinned the banner
+   * up forever with no way to clear it.
+   *
+   * The project row is polled while a turn runs, both to notice it finish and to
+   * keep "building for N minutes" honest.
    */
-  const lastMessageId = messages.at(-1)?.id ?? null;
-  // Keyed by message id, so giving up on one turn does not suppress the banner
-  // for the next one.
-  const [dismissedFor, setDismissedFor] = useState<string | null>(null);
-  const waitingForReply =
-    !streaming &&
-    messages.length > 0 &&
-    messages.at(-1)?.role === "user" &&
-    dismissedFor !== lastMessageId;
-  const [gaveUp, setGaveUp] = useState(false);
+  const turnRunning = project.turn_status === "running";
+  const waitingForReply = turnRunning && !streaming;
+
+  // Recomputed on each project poll, which is what moves the counter along.
+  const elapsed = turnRunning ? sinceLabel(project.turn_started_at) : null;
+
+  /**
+   * The stream died while the turn is still going: reattach to it.
+   *
+   * This is the normal case on a serverless host, not an edge one. A build turn
+   * runs 15-25 minutes and Vercel caps a function response at 300s (Hobby), so
+   * the relay is *guaranteed* to be cut part-way through a first build. The turn
+   * itself is unaffected — it belongs to the backend — so `GET /chat/stream`
+   * replays what it has produced and follows the rest live.
+   *
+   * Capped, because a stream that fails instantly every time would otherwise
+   * spin: past that the "Still working on this" banner takes over, and the
+   * finished turn is picked up when `turn_status` goes idle.
+   */
+  const reattempts = useRef(0);
+  useEffect(() => {
+    if (!error || !turnRunning) {
+      reattempts.current = 0;
+      return;
+    }
+    if (reattempts.current >= 5) return;
+
+    const wait = Math.min(1000 * 2 ** reattempts.current, 15_000);
+    const id = window.setTimeout(() => {
+      reattempts.current += 1;
+      clearError();
+      void resumeStream();
+    }, wait);
+    return () => window.clearTimeout(id);
+  }, [error, turnRunning, clearError, resumeStream]);
 
   useEffect(() => {
-    if (!waitingForReply) {
-      // Reset via a timeout rather than in the render path: this is a state
-      // write and React 19 rejects one made synchronously in an effect body.
-      const reset = window.setTimeout(() => setGaveUp(false), 0);
-      return () => window.clearTimeout(reset);
-    }
+    if (!turnRunning) return;
 
-    let cancelled = false;
-    const check = async () => {
-      try {
-        const fresh = await listMessages(project.id);
-        if (cancelled || fresh.at(-1)?.role !== "assistant") return;
-        setMessages(toUIMessages(fresh));
+    // Cheap: one project row, not the whole thread. The stream is the live
+    // channel; this is only here to catch the end of a turn we are not attached
+    // to, and to move the "building for N minutes" counter along.
+    const id = window.setInterval(() => {
+      if (!document.hidden) invalidate(key.project(project.id));
+    }, 10_000);
+    return () => window.clearInterval(id);
+  }, [turnRunning, project.id]);
 
-        // Say so. A turn can take 25 minutes, so whoever was waiting is almost
-        // certainly looking at something else by now: the toast covers another
-        // page in the app, and the title covers another tab entirely.
+  // The edge from running to idle is the end of a turn nobody was watching.
+  const wasRunning = useRef(turnRunning);
+  useEffect(() => {
+    if (wasRunning.current && !turnRunning) {
+      void (async () => {
+        try {
+          setMessages(toUIMessages(await listMessages(project.id)));
+        } catch {
+          // The banner is already gone; the thread will catch up on next load.
+        }
         toast(doneMessage(project.mode));
         flagDoneInTitle(project.name);
-        // The build wrote files and may have published; nothing derived from
-        // the old state is still true.
-        invalidate(key.project(project.id));
+        // The turn wrote files and may have published; nothing derived from the
+        // old state is still true.
         invalidate(key.files(project.id));
         invalidate(key.snapshots(project.id));
         onSnapshot?.();
-      } catch {
-        // Offline or a transient failure; the next tick tries again.
-      }
-    };
-
-    const id = window.setInterval(check, 5000);
-    // Longer than the 25 minutes §1 quotes for a first build. Past that the
-    // turn is not coming back, and an endless spinner is worse than saying so.
-    const deadline = window.setTimeout(() => setGaveUp(true), 30 * 60 * 1000);
-
-    return () => {
-      cancelled = true;
-      window.clearInterval(id);
-      window.clearTimeout(deadline);
-    };
-  }, [waitingForReply, project.id, project.name, project.mode, setMessages, toast, onSnapshot]);
+      })();
+    }
+    wasRunning.current = turnRunning;
+  }, [turnRunning, project.id, project.name, project.mode, setMessages, toast, onSnapshot]);
 
   /**
    * Stop, and mean it.
@@ -207,12 +241,8 @@ export function ChatPanel({ className, project, initialMessages, onSnapshot, req
    * because aborting only the fetch would leave a 25-minute turn running and
    * still burning credits.
    *
-   * Its `{cancelled}` answer was being thrown away, and that was the bug: when
-   * a turn had already finished without persisting an assistant message, the
-   * backend replied `cancelled: false` — "nothing was running" — and we ignored
-   * it, so the "Still working on this" banner stayed up with no way to clear
-   * it. That reply is the only signal the API gives that a turn is over, so it
-   * now decides what the user is told.
+   * A cancelled turn still stores what it produced, so the thread is refreshed
+   * either way rather than assuming the work was thrown away.
    */
   const halt = async () => {
     stop();
@@ -226,23 +256,20 @@ export function ChatPanel({ className, project, initialMessages, onSnapshot, req
       running = false;
     }
 
-    // Either way this turn is done; let go of the banner.
-    setDismissedFor(lastMessageId);
+    // `turn_status` decides whether the banner shows, so this is what clears it.
+    invalidate(key.project(project.id));
 
-    if (!running) {
-      toast("That turn had already finished");
-      // It may well have written files and published before it ended without
-      // leaving a message behind, so nothing derived from the old state holds.
-      try {
-        setMessages(toUIMessages(await listMessages(project.id)));
-      } catch {
-        // The refresh is a courtesy; the banner is gone regardless.
-      }
-      invalidate(key.project(project.id));
-      invalidate(key.files(project.id));
-      invalidate(key.snapshots(project.id));
-      onSnapshot?.();
+    if (!running) toast("That turn had already finished");
+
+    // A cancelled turn keeps what it produced, so pull it in either way.
+    try {
+      setMessages(toUIMessages(await listMessages(project.id)));
+    } catch {
+      // The refresh is a courtesy; the banner clears from turn_status anyway.
     }
+    invalidate(key.files(project.id));
+    invalidate(key.snapshots(project.id));
+    onSnapshot?.();
   };
 
   /**
@@ -307,21 +334,19 @@ export function ChatPanel({ className, project, initialMessages, onSnapshot, req
 
       {waitingForReply && (
         <div className="flex items-center gap-2.5 border-t border-line bg-surface px-[18px] py-2.5">
-          {!gaveUp && <Spinner />}
+          <Spinner />
           <p className="min-w-0 flex-1 text-[13px] font-semibold text-fg-2">
-            {gaveUp
-              ? "No reply came back. The turn may have stopped — ask again to pick it up."
-              : "Still working on this — it keeps going even if you leave."}
+            Still working on this — it keeps going even if you leave.
+            {/* "Building for 6 minutes" is reassuring in a way a bare spinner is
+                not, when a first build honestly takes 15 to 25. */}
+            {elapsed && <span className="ml-1.5 font-medium text-muted">{elapsed}</span>}
           </p>
-          {/* Always offered. Once this banner is up, it is the only way out of
-              it — and a turn that ended without leaving a message would
-              otherwise keep it on screen indefinitely. */}
           <button
             type="button"
             onClick={() => void halt()}
             className="flex-none cursor-pointer rounded-full border border-line-2 px-3 py-1 text-[11px] font-bold text-muted transition-colors hover:text-fg"
           >
-            {gaveUp ? "Dismiss" : "Stop"}
+            Stop
           </button>
         </div>
       )}
@@ -334,7 +359,10 @@ export function ChatPanel({ className, project, initialMessages, onSnapshot, req
         onSend={send}
         onUpload={(file) => uploadAsset(project.id, file)}
         inputRef={inputRef}
-        busy={streaming}
+        // A turn started in another tab counts too: while one runs, every new
+        // POST /chat answers 409 busy, so offering to send is a promise we
+        // cannot keep.
+        busy={streaming || turnRunning}
         mode={project.mode}
       />
 

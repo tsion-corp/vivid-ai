@@ -423,3 +423,22 @@ class BuilderAsset(Base):
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_now)
 
     __table_args__ = (UniqueConstraint("project_id", "name", name="uq_builder_assets_name"),)
+
+
+class WaitlistEntry(Base):
+    """Someone who asked to be let in. One row per email, stored lowercased,
+    so signing up twice updates the row rather than adding another."""
+    __tablename__ = "waitlist_entries"
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=_uuid)
+    first_name: Mapped[str] = mapped_column(String(80))
+    last_name: Mapped[str] = mapped_column(String(80))
+    email: Mapped[str] = mapped_column(String(320), unique=True, index=True)
+    use_case: Mapped[str] = mapped_column(Text)
+    #: Where they heard about Vivid: free text, or whatever the form's
+    #: dropdown sends ("twitter", "a friend", ...).
+    heard_from: Mapped[str] = mapped_column(String(160))
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), default=_now, index=True)
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), default=_now, onupdate=_now)

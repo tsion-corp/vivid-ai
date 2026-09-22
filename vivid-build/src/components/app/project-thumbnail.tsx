@@ -7,10 +7,9 @@ type Props = {
   /** Used for the seeded tint, so each project keeps its own colour. */
   name: string;
   /**
-   * A rendered screenshot when one exists. The API has none today — the build
-   * agent's critique screenshots live inside the last assistant message, which
-   * would cost one request per card — so this is the slot for a future
-   * `Project.thumbnail_url` rather than something to fetch per card.
+   * `Project.thumbnail_url`: the latest desktop screenshot, a 7-day signed URL.
+   * Absent until the project has been built, so the seeded tint below is still
+   * what a new project shows.
    */
   screenshotUrl?: string | null;
   /** "Planning" / "Building", shown as a small badge. */
@@ -21,10 +20,10 @@ type Props = {
 /**
  * The image on a project card.
  *
- * Until the backend exposes a screenshot this is a seeded gradient. It used to
- * be a live scaled iframe of locally generated HTML; with a real backend the
- * equivalent would boot one cloud sandbox per card, which costs money and takes
- * 5-60 seconds each, so it is deliberately not attempted.
+ * A real screenshot once the backend has one, and a seeded gradient before
+ * that. The alternative — a live scaled iframe, as the local prototype did —
+ * would boot one cloud sandbox per card at 5-60 seconds and real money each,
+ * so it stays deliberately unattempted.
  */
 export function ProjectThumbnail({ name, screenshotUrl, badge, className }: Props) {
   const hue = hash32(name.toLowerCase()) % 360;

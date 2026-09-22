@@ -39,7 +39,17 @@ export function WorkPanel({
 
   return (
     <section aria-label="Workspace" className={cn("min-w-0 flex-1 flex-col bg-bg-2 lg:flex-[1.15]", className)}>
-      <div className="no-scrollbar min-h-0 flex-1 overflow-y-auto p-[18px]">
+      <div
+        className={cn(
+          "no-scrollbar min-h-0 flex-1",
+          // The preview owns the pane and scrolls nothing: inside a scrolling,
+          // padded box its `h-full` had nothing to resolve against and it fell
+          // back to a 420px floor, which on a phone is most of the screen spent
+          // on chrome and a letterbox of app. No padding at all on a phone —
+          // the point is to see the app, not a frame around it.
+          tab === "preview" ? "flex flex-col p-0 sm:p-[18px]" : "overflow-y-auto p-[18px]",
+        )}
+      >
         {tab === "preview" &&
           (planning ? (
             <EmptyTab

@@ -141,7 +141,7 @@ export function QuestionCards({
                   <li key={question.id} className="flex items-start gap-2.5">
                     <div className="min-w-0 flex-1">
                       <p className="text-[11px] leading-[1.4] font-semibold text-muted-2">{question.question}</p>
-                      <p className="text-[15px] leading-[1.45] text-fg">{choices[question.id]}</p>
+                      <p className="text-[14px] leading-[1.5] text-fg">{choices[question.id]}</p>
                     </div>
                     <button
                       type="button"

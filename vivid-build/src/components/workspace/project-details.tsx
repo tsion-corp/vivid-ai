@@ -5,6 +5,7 @@ import { Skeleton } from "@/components/ui/skeleton";
 import { getUsage, key } from "@/lib/api/endpoints";
 import type { Project } from "@/lib/api/types";
 import { useResource } from "@/lib/api/use-resource";
+import { AnalyticsPanel } from "./analytics-panel";
 import { AssetList } from "./asset-list";
 import { DeployList } from "./deploy-list";
 
@@ -31,6 +32,10 @@ export function ProjectDetails({ project }: { project: Project }) {
             <Stat label="Cost" value={`$${usage.data.cost_usd.toFixed(2)}`} />
           </dl>
         )}
+      </Section>
+
+      <Section title="Visitors">
+        <AnalyticsPanel project={project} />
       </Section>
 
       <Section title="Files">

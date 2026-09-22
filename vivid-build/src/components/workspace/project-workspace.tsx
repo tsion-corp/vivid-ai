@@ -17,6 +17,14 @@ import { ChatPanel } from "./chat/chat-panel";
 import { WorkPanel } from "./work-panel";
 import { WorkspaceTopBar } from "./workspace-top-bar";
 
+/** The phone's whole workspace navigation. History lives in the project menu. */
+const MOBILE_NAV = [
+  { key: "chat", label: "Chat" },
+  { key: "preview", label: "Preview" },
+  { key: "code", label: "Code" },
+  { key: "more", label: "More" },
+] as const;
+
 type Pane = "chat" | "work";
 
 const POLL_MS = 4000;
@@ -129,21 +137,42 @@ export function ProjectWorkspace({
         onDelete={() => setConfirmDelete(true)}
       />
 
-      <div className="flex gap-1 border-b border-line bg-bg-2 p-2 lg:hidden">
-        {(["chat", "work"] as const).map((option) => (
-          <button
-            key={option}
-            type="button"
-            aria-pressed={pane === option}
-            onClick={() => setPane(option)}
-            className={cn(
-              "flex-1 cursor-pointer rounded-full px-3 py-2 text-[13px] font-semibold",
-              pane === option ? "bg-surface-2 text-fg" : "text-muted",
-            )}
-          >
-            {option === "chat" ? "Chat" : "Preview & tools"}
-          </button>
-        ))}
+      {/*
+        One control, not two. A phone had a "Chat | Preview & tools" switcher
+        stacked on top of a "Preview / Code / More" tab row — two rows of
+        navigation choosing between four destinations. Merged, they cost one row
+        and the preview gets the difference.
+      */}
+      <div
+        role="tablist"
+        aria-label="Workspace"
+        className="flex gap-1 border-b border-line bg-bg-2 px-2 py-1.5 lg:hidden"
+      >
+        {MOBILE_NAV.map((item) => {
+          const active = item.key === "chat" ? pane === "chat" : pane === "work" && tab === item.key;
+          return (
+            <button
+              key={item.key}
+              type="button"
+              role="tab"
+              aria-selected={active}
+              onClick={() => {
+                if (item.key === "chat") {
+                  setPane("chat");
+                  return;
+                }
+                setPane("work");
+                updateQuery({ tab: item.key });
+              }}
+              className={cn(
+                "flex-1 cursor-pointer rounded-full px-2 py-1.5 text-[13px] font-semibold transition-colors",
+                active ? "bg-surface-2 text-fg" : "text-muted",
+              )}
+            >
+              {item.label}
+            </button>
+          );
+        })}
       </div>
 
       <div className="flex min-h-0 flex-1">

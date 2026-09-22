@@ -154,7 +154,7 @@ export function Markdown({ children, className }: { children: string; className?
   const blocks = parse(children);
 
   return (
-    <div className={cn("flex flex-col gap-2.5 text-[15px] leading-[1.6] text-fg-2", className)}>
+    <div className={cn("flex flex-col gap-2.5 text-[14px] leading-[1.65] text-fg-2", className)}>
       {blocks.map((block, index) => {
         const key = `b-${index}`;
         switch (block.kind) {
@@ -166,7 +166,7 @@ export function Markdown({ children, className }: { children: string; className?
             );
           case "h2":
             return (
-              <h4 key={key} className="text-[15px] font-bold text-fg">
+              <h4 key={key} className="text-[14px] font-bold text-fg">
                 {inline(block.text, key)}
               </h4>
             );
@@ -186,7 +186,7 @@ export function Markdown({ children, className }: { children: string; className?
             return (
               <pre
                 key={key}
-                className="overflow-x-auto rounded-xl border border-line-2 bg-surface-2 p-3 font-mono text-[12.5px] leading-[1.6] text-fg-2"
+                className="overflow-x-auto rounded-xl border border-line-2 bg-surface-2 p-3 font-mono text-[12px] leading-[1.6] text-fg-2"
               >
                 <code>{block.text}</code>
               </pre>

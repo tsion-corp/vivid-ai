@@ -1,11 +1,15 @@
 "use client";
 
-import { api } from "./client";
+import { API, api } from "./client";
 import { invalidate } from "./cache";
 import type {
+  Analytics,
+  ApiKey,
   Asset,
   Connector,
   ConnectorProvider,
+  CreatedApiKey,
+  FileContent,
   Project,
   PreviewInfo,
   Publish,
@@ -27,7 +31,9 @@ export const key = {
   publishes: (id: string) => `publishes:${id}`,
   assets: (id: string) => `assets:${id}`,
   usage: (id: string) => `usage:${id}`,
+  analytics: (id: string, days: number) => `analytics:${id}:${days}`,
   connectors: "connectors",
+  apiKeys: "api-keys",
 };
 
 const project = (id: string) => `/builder/projects/${id}`;
@@ -41,8 +47,19 @@ export const renameMe = (name: string) => api.patch<User>("/auth/me", { name });
 export const listProjects = () => api.get<Project[]>("/builder/projects");
 export const getProject = (id: string) => api.get<Project>(project(id));
 
-export async function createProject(name: string, skipPlan = false) {
-  const created = await api.post<Project>("/builder/projects", { name, skip_plan: skipPlan });
+/**
+ * Create a project.
+ *
+ * Pass no name and the plan fills one in from the spec — the app's own name,
+ * which the published URL slug then follows. We used to send the first six
+ * words of the prompt, which is why projects were called things like "A
+ * delivery tracking page for a". A name the user actually typed is kept.
+ */
+export async function createProject(name: string | null = null, skipPlan = false) {
+  const created = await api.post<Project>("/builder/projects", {
+    ...(name ? { name } : {}),
+    skip_plan: skipPlan,
+  });
   invalidate(key.projects);
   return created;
 }
@@ -79,8 +96,22 @@ export const listMessages = (id: string) => api.get<StoredMessage[]>(`${project(
 export const getPreview = (id: string) => api.get<PreviewInfo>(`${project(id)}/preview`);
 
 export const listFiles = (id: string) => api.get<{ files: string[] }>(`${project(id)}/files`);
+
+const filePath = (path: string) => path.split("/").map(encodeURIComponent).join("/");
+
 export const readFile = (id: string, path: string) =>
-  api.get<{ path: string; content: string }>(`${project(id)}/files/${path.split("/").map(encodeURIComponent).join("/")}`);
+  api.get<FileContent>(`${project(id)}/files/${filePath(path)}`);
+
+/**
+ * The bytes, with a real content type.
+ *
+ * Not usable as an `<img src>`: the route needs a bearer token either way —
+ * relayed or direct — and an `<img>` request never passes through `authFetch`.
+ * The code browser renders binaries from the `content_base64` it already has
+ * instead. Kept for callers that can carry the header themselves.
+ */
+export const rawFileUrl = (id: string, path: string) =>
+  `${API}${project(id)}/files/${filePath(path)}?raw=1`;
 export const getLogs = (id: string, lines = 100) =>
   api.get<{ lines: string[] }>(`${project(id)}/logs?lines=${lines}`);
 
@@ -207,3 +238,23 @@ export async function disableMaps(id: string) {
 /* -------------------------------------------------------------------- usage */
 
 export const getUsage = (id: string) => api.get<Usage>(`${project(id)}/usage`);
+
+/** Empty until the site is published and visited. */
+export const getAnalytics = (id: string, days = 30) =>
+  api.get<Analytics>(`${project(id)}/analytics?days=${days}`);
+
+/* ----------------------------------------------------------------- api keys */
+
+export const listApiKeys = () => api.get<ApiKey[]>("/keys");
+
+/** The full key is in this response only; it cannot be read back. */
+export async function createApiKey(name: string) {
+  const created = await api.post<CreatedApiKey>("/keys", { name });
+  invalidate(key.apiKeys);
+  return created;
+}
+
+export async function revokeApiKey(id: string) {
+  await api.del<void>(`/keys/${id}`);
+  invalidate(key.apiKeys);
+}

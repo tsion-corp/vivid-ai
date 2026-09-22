@@ -5,6 +5,7 @@ import {
   ExternalLink,
   FolderOpen,
   History,
+  Link2,
   Maximize2,
   PanelLeftClose,
   PanelLeftOpen,
@@ -76,6 +77,22 @@ export function WorkspaceTopBar({
           </span>
         }
         items={[
+          // The first four exist for the phone, where the icon row and the
+          // History button are hidden. On a wider screen they duplicate visible
+          // controls, which costs nothing and keeps one menu rather than two.
+          ...(built
+            ? [
+                {
+                  label: "Open preview full screen",
+                  icon: <Maximize2 className="size-4" />,
+                  onSelect: () => router.push(`/preview/${project.id}`),
+                },
+                { label: "Reload preview", icon: <RotateCw className="size-4" />, onSelect: onReload },
+              ]
+            : []),
+          { label: "History", icon: <History className="size-4" />, onSelect: () => onTabChange("history") },
+          { label: copied ? "Link copied" : "Share", icon: <Link2 className="size-4" />, onSelect: onShare },
+          { type: "divider" as const },
           { label: "Rename", icon: <Pencil className="size-4" />, onSelect: onRename },
           {
             label: "Project settings",
@@ -114,12 +131,19 @@ export function WorkspaceTopBar({
         type="button"
         onClick={() => onTabChange("history")}
         aria-label="History"
-        className={cn(iconButton, tab === "history" && "bg-surface text-fg")}
+        className={cn(iconButton, "hidden lg:flex", tab === "history" && "bg-surface text-fg")}
       >
         <History aria-hidden className="size-4" />
       </button>
 
-      <div role="tablist" aria-label="Workspace tools" className="flex gap-1 rounded-full border border-line-2 p-1">
+      {/* Hidden on mobile: the pane switcher below merges these with Chat into
+          one control, because two rows of navigation doing one job is most of a
+          phone screen spent on chrome. */}
+      <div
+        role="tablist"
+        aria-label="Workspace tools"
+        className="hidden gap-1 rounded-full border border-line-2 p-1 lg:flex"
+      >
         {WORKSPACE_TABS.filter((item) => item.key !== "history").map((item) => (
           <button
             key={item.key}
@@ -137,9 +161,9 @@ export function WorkspaceTopBar({
         ))}
       </div>
 
-      <div className="ml-auto flex items-center gap-2">
+      <div className="ml-auto flex min-w-0 items-center gap-2">
         {tab === "preview" && built && (
-          <>
+          <div className="hidden items-center gap-2 sm:flex">
             <DeviceControls
               device={device}
               preset={preset}
@@ -159,16 +183,17 @@ export function WorkspaceTopBar({
             >
               <Maximize2 aria-hidden className="size-4" />
             </Link>
-          </>
+          </div>
         )}
 
         {project.published_url && (
           <a
             href={project.published_url}
+            data-desktop-only
             target="_blank"
             rel="noreferrer noopener"
             title={project.published_url}
-            className="flex max-w-[220px] items-center gap-1.5 rounded-lg border border-line-2 bg-surface px-2.5 py-1.5 text-[13px] font-semibold text-fg-2 transition-colors hover:text-fg"
+            className="hidden max-w-[220px] items-center gap-1.5 rounded-lg border border-line-2 bg-surface px-2.5 py-1.5 text-[13px] font-semibold text-fg-2 transition-colors hover:text-fg sm:flex"
           >
             <span aria-hidden className="size-1.5 flex-none rounded-full bg-[#4ade80]" />
             <span className="truncate">{project.published_url.replace(/^https?:\/\//, "")}</span>
@@ -179,7 +204,7 @@ export function WorkspaceTopBar({
         <button
           type="button"
           onClick={onShare}
-          className="cursor-pointer rounded-lg border border-line-2 px-3 py-1.5 text-[13px] font-semibold whitespace-nowrap text-fg-2 transition-colors hover:text-fg"
+          className="hidden cursor-pointer rounded-lg border border-line-2 px-3 py-1.5 text-[13px] font-semibold whitespace-nowrap text-fg-2 transition-colors hover:text-fg sm:block"
         >
           {copied ? "Copied" : "Share"}
         </button>

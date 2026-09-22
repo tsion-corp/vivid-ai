@@ -86,8 +86,13 @@ export function PreviewPane({
   };
 
   return (
-    <div className="flex h-full min-h-[420px] flex-col gap-3">
-      <div className="flex min-h-0 flex-1 justify-center overflow-hidden rounded-2xl border border-line-2 bg-surface p-3">
+    // `min-h-0` rather than a pixel floor: the floor was what stopped the
+    // preview growing into the space it had.
+    <div className="flex h-full min-h-0 flex-col gap-2 sm:gap-3">
+      {/* Full-bleed on a phone. A 12px inset and a rounded border around a
+          390px viewport is a frame around a frame, and the pane edge already
+          separates it from the chrome. */}
+      <div className="flex min-h-0 flex-1 justify-center overflow-hidden border-line-2 bg-surface sm:rounded-2xl sm:border sm:p-3">
         <PreviewSurface
           projectId={projectId}
           device={device}
@@ -127,14 +132,17 @@ export function PreviewPane({
         </div>
       )}
 
-      <div className="flex flex-none items-center gap-3">
+      <div className="flex flex-none items-center gap-3 px-2 pb-1 sm:px-0 sm:pb-0">
         <button
           type="button"
           onClick={() => void showLogs()}
           className="flex cursor-pointer items-center gap-1.5 text-[12px] font-semibold text-muted-3 transition-colors hover:text-fg"
         >
-          <ScrollText aria-hidden className="size-3.5" />
-          Preview blank? See the dev server output
+          <ScrollText aria-hidden className="size-3.5 flex-none" />
+          {/* The full sentence does not fit beside Reload on a phone, and
+              truncating it mid-question reads worse than saying less. */}
+          <span className="hidden sm:inline">Preview blank? See the dev server output</span>
+          <span className="sm:hidden">Dev server output</span>
         </button>
         <button
           type="button"

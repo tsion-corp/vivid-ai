@@ -37,19 +37,3 @@ export function toolLabel(toolName: string, input: Input): string {
 
 /** Tools that get their own card rather than an activity row. */
 export const SPECIAL_TOOLS = new Set(["ask_user", "write_spec"]);
-
-/**
- * Tools that actually change the app.
- *
- * A build turn that calls none of these has, by definition, built nothing —
- * however confidently it reported otherwise.
- */
-export const CHANGING_TOOLS = new Set([
-  "write_file",
-  "edit_file",
-  "run_command",
-  "generate_image",
-  "apply_migration",
-  "deploy_edge_function",
-  "set_secret",
-]);
