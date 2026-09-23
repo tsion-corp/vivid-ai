@@ -1,3 +1,4 @@
+import re
 from datetime import datetime
 
 from pydantic import BaseModel, ConfigDict, EmailStr, Field, field_validator
@@ -7,6 +8,9 @@ class WaitlistJoin(BaseModel):
     first_name: str = Field(min_length=1, max_length=80)
     last_name: str = Field(min_length=1, max_length=80)
     email: EmailStr = Field(max_length=320)
+    #: WhatsApp / phone number. Spaces, dashes, dots and brackets are
+    #: dropped; what is left is an optional "+" and 7 to 15 digits (E.164).
+    phone_no: str = Field(pattern=r"^\+?\d{7,15}$")
     use_case: str = Field(min_length=1, max_length=4000)
     heard_from: str = Field(min_length=1, max_length=160)
 
@@ -15,6 +19,11 @@ class WaitlistJoin(BaseModel):
     def _strip(cls, value):
         # "   " would pass min_length, so blank-after-strip fails here instead.
         return value.strip() if isinstance(value, str) else value
+
+    @field_validator("phone_no", mode="before")
+    @classmethod
+    def _normalise_phone(cls, value):
+        return re.sub(r"[\s\-.()]", "", value) if isinstance(value, str) else value
 
 
 class WaitlistJoined(BaseModel):
@@ -32,6 +41,8 @@ class WaitlistEntryOut(BaseModel):
     first_name: str
     last_name: str
     email: str
+    #: Null for people who joined before the form asked for it.
+    phone_no: str | None
     use_case: str
     heard_from: str
     created_at: datetime

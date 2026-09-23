@@ -56,6 +56,7 @@ def client(db_session, monkeypatch) -> TestClient:
 
 def _form(**overrides) -> dict:
     return {"first_name": "Ada", "last_name": "Obi", "email": "ada@example.com",
+            "phone_no": "+234 803 123 4567",
             "use_case": "A booking site for my salon", "heard_from": "Twitter",
             **overrides}
 
@@ -73,6 +74,7 @@ def test_join_stores_the_entry(client):
     assert page["total"] == 1
     entry = page["entries"][0]
     assert (entry["first_name"], entry["last_name"], entry["email"]) == ("Ada", "Obi", "ada@example.com")
+    assert entry["phone_no"] == "+2348031234567"
     assert entry["use_case"] == "A booking site for my salon"
     assert entry["heard_from"] == "Twitter"
 
@@ -93,6 +95,9 @@ def test_joining_twice_updates_rather_than_duplicates(client):
     {"first_name": "   "},
     {"use_case": ""},
     {"heard_from": "x" * 161},
+    {"phone_no": "call me"},
+    {"phone_no": "12345"},
+    {"phone_no": "+1234567890123456"},
 ])
 def test_join_rejects_bad_input(client, bad):
     assert client.post("/v1/waitlist", json=_form(**bad)).status_code == 422
@@ -102,6 +107,24 @@ def test_join_missing_field(client):
     body = _form()
     del body["heard_from"]
     assert client.post("/v1/waitlist", json=body).status_code == 422
+
+
+def test_join_requires_a_phone_number(client):
+    body = _form()
+    del body["phone_no"]
+    assert client.post("/v1/waitlist", json=body).status_code == 422
+
+
+def test_phone_formats_are_normalised(client):
+    client.post("/v1/waitlist", json=_form(phone_no="(0803) 123-4567"))
+    entry = client.get("/v1/waitlist", headers=_admin()).json()["entries"][0]
+    assert entry["phone_no"] == "08031234567"
+
+
+def test_two_people_may_share_a_number(client):
+    assert client.post("/v1/waitlist", json=_form(email="a@example.com")).status_code == 201
+    assert client.post("/v1/waitlist", json=_form(email="b@example.com")).status_code == 201
+    assert client.get("/v1/waitlist", headers=_admin()).json()["total"] == 2
 
 
 def test_join_is_rate_limited_per_address(client, monkeypatch):
@@ -140,6 +163,7 @@ def test_search_filter_and_paging(client):
     client.post("/v1/waitlist", json=_form(email="c@example.com", heard_from="twitter"))
 
     assert client.get("/v1/waitlist?q=bola", headers=_admin()).json()["total"] == 1
+    assert client.get("/v1/waitlist?q=8031234", headers=_admin()).json()["total"] == 3
     assert client.get("/v1/waitlist?heard_from=Twitter", headers=_admin()).json()["total"] == 2
 
     page = client.get("/v1/waitlist?limit=2", headers=_admin()).json()
@@ -152,8 +176,8 @@ def test_csv_export(client):
     assert res.status_code == 200
     assert res.headers["content-type"].startswith("text/csv")
     lines = res.text.strip().splitlines()
-    assert lines[0] == "created_at,first_name,last_name,email,use_case,heard_from"
-    assert "ada@example.com" in lines[1]
+    assert lines[0] == "created_at,first_name,last_name,email,phone_no,use_case,heard_from"
+    assert "ada@example.com" in lines[1] and "+2348031234567" in lines[1]
 
 
 def test_stats_counts_by_source(client):

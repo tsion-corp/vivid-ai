@@ -2,7 +2,7 @@
 
 Joining needs no account, so it is limited per address instead. Reading
 the list is gated by ADMIN_TOKEN rather than a user session: there are no
-admin users yet, and the list is people's names and emails.
+admin users yet, and the list is people's names, emails and phone numbers.
 """
 import csv
 import hmac
@@ -22,7 +22,8 @@ from app.services import rate_limit
 
 router = APIRouter(prefix="/waitlist", tags=["waitlist"])
 
-_CSV_COLUMNS = ("created_at", "first_name", "last_name", "email", "use_case", "heard_from")
+_CSV_COLUMNS = ("created_at", "first_name", "last_name", "email", "phone_no", "use_case",
+                "heard_from")
 
 
 def _client_ip(request: Request) -> str:
@@ -57,6 +58,7 @@ async def join(body: WaitlistJoin, request: Request, response: Response,
         db.add(entry)
     entry.first_name = body.first_name
     entry.last_name = body.last_name
+    entry.phone_no = body.phone_no
     entry.use_case = body.use_case
     entry.heard_from = body.heard_from
     try:
@@ -74,7 +76,7 @@ async def join(body: WaitlistJoin, request: Request, response: Response,
 @router.get("", response_model=WaitlistPage, dependencies=[Depends(require_admin)])
 async def list_entries(
         q: str | None = Query(None, max_length=200,
-                              description="Match on name, email, use case or source"),
+                              description="Match on name, email, phone, use case or source"),
         heard_from: str | None = Query(None, max_length=160),
         limit: int = Query(100, ge=1, le=1000),
         offset: int = Query(0, ge=0),
@@ -87,7 +89,7 @@ async def list_entries(
         like = f"%{q.strip().lower()}%"
         filters.append(or_(*(func.lower(col).like(like) for col in (
             WaitlistEntry.first_name, WaitlistEntry.last_name, WaitlistEntry.email,
-            WaitlistEntry.use_case, WaitlistEntry.heard_from))))
+            WaitlistEntry.phone_no, WaitlistEntry.use_case, WaitlistEntry.heard_from))))
     if heard_from:
         filters.append(func.lower(WaitlistEntry.heard_from) == heard_from.strip().lower())
 
@@ -99,8 +101,8 @@ async def list_entries(
         writer = csv.writer(out)
         writer.writerow(_CSV_COLUMNS)
         for row in rows:
-            writer.writerow([row.created_at.isoformat() if col == "created_at" else getattr(row, col)
-                             for col in _CSV_COLUMNS])
+            writer.writerow([row.created_at.isoformat() if col == "created_at"
+                             else getattr(row, col) or "" for col in _CSV_COLUMNS])
         return Response(out.getvalue(), media_type="text/csv", headers={
             "Content-Disposition": 'attachment; filename="waitlist.csv"'})
 

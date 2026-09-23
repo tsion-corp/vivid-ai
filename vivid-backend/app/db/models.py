@@ -434,6 +434,10 @@ class WaitlistEntry(Base):
     first_name: Mapped[str] = mapped_column(String(80))
     last_name: Mapped[str] = mapped_column(String(80))
     email: Mapped[str] = mapped_column(String(320), unique=True, index=True)
+    #: WhatsApp / phone number, digits with an optional leading "+". Not
+    #: unique: the row is keyed by email, and a household may share a number.
+    #: Null for entries made before the form asked for it.
+    phone_no: Mapped[str | None] = mapped_column(String(16), nullable=True)
     use_case: Mapped[str] = mapped_column(Text)
     #: Where they heard about Vivid: free text, or whatever the form's
     #: dropdown sends ("twitter", "a friend", ...).
