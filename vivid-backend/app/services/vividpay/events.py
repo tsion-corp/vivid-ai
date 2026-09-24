@@ -14,7 +14,7 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.db.models import VividPayCheckout, VividPayPayout, VividPayProject
-from app.services.vividpay import checkouts, payouts
+from app.services.vividpay import checkouts, crypto, payouts
 from app.services.wallet import pouch
 
 log = logging.getLogger("vivid.pay.events")
@@ -61,6 +61,29 @@ async def on_payout_event(db: AsyncSession, payload: dict) -> VividPayPayout | N
     await payouts.refresh(db, payout)
     await db.commit()
     return payout
+
+
+async def on_fill_event(db: AsyncSession, payload: dict) -> VividPayCheckout | None:
+    """Pouch converted crypto sent to a checkout's address. Its credit to the
+    account is an inbound transfer (`transaction_id`), read back from the API
+    and recorded like any transfer; the event body itself credits nothing.
+    Before the credit exists (crypto_received), or if Pouch has not listed
+    it yet, polling and the reconciler pick it up later."""
+    event = payload.get("event") or ""
+    data = payload.get("data") or {}
+    crypto.note_rate(data)
+    if event.endswith(("settlement_failed", "confirmation_failed")) or data.get("flagged_for_review"):
+        log.warning("crypto payment %s into %s: %s (loss_absorbed=%s, loss=%s)", data.get("id"),
+                    data.get("virtual_account_id"), event, data.get("loss_absorbed"),
+                    data.get("loss_amount"))
+    tid = data.get("transaction_id")
+    if not tid or event.endswith(("confirmation_failed", "crypto_received")):
+        return None
+    transfer = await pouch.find_transfer(str(tid))
+    if transfer is None:
+        log.info("crypto payment %s: transfer %s not listed yet", data.get("id"), tid)
+        return None
+    return await on_transfer(db, transfer)
 
 
 def _ids_from_reference(reference: str) -> list[str]:

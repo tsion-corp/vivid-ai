@@ -552,6 +552,17 @@ class Settings(BaseSettings):
     VIVIDPAY_PAYOUT_FEE_KOBO: int = 2_000
     # Where the apps call from, for the account on a checkout's receipts.
     VIVIDPAY_API_BASE: str = ""
+    # Paying in crypto: Pouch gives the order's account a deposit address
+    # and converts what arrives (USDC, USDT, ...) to naira in that account,
+    # so the owner is paid in naira as for a transfer. Off until Pouch has
+    # enabled its crypto conversion ("optimistic fills") for Vivid.
+    VIVIDPAY_CRYPTO_ENABLED: bool = False
+    # Naira per USDC for the estimate a customer is shown, until Pouch has
+    # converted a payment of ours (its own rate is then used). The owner is
+    # always credited what Pouch actually credited.
+    VIVIDPAY_CRYPTO_NGN_RATE: float = 1360.0
+    # Added to that estimate so a small rate move still pays the order.
+    VIVIDPAY_CRYPTO_BUFFER_BPS: int = 150
 
     # -------------------------------------------------------------- plans
     # Free / Pro / Max for the app builder, counted in credits. A credit is

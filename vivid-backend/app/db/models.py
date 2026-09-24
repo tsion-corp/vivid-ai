@@ -2,7 +2,7 @@ import uuid
 from datetime import datetime, timezone
 
 from pgvector.sqlalchemy import Vector
-from sqlalchemy import (BigInteger, Boolean, DateTime, ForeignKey, Index,
+from sqlalchemy import (BigInteger, Boolean, DateTime, Float, ForeignKey, Index,
                         Integer, Numeric, String, Text, UniqueConstraint)
 from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column
@@ -663,6 +663,11 @@ class VividPayCheckout(Base):
     late: Mapped[bool] = mapped_column(Boolean, default=False)
     paid_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), default=None)
     expires_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
+    #: Paying in crypto: the address Pouch gave this order's account, its
+    #: network type (evm, ...) and the naira per USDC the estimate used.
+    crypto_address: Mapped[str | None] = mapped_column(String(128), default=None)
+    crypto_network: Mapped[str | None] = mapped_column(String(16), default=None)
+    crypto_rate: Mapped[float | None] = mapped_column(Float, default=None)
     #: none | done | failed: moving the money to the owner's earnings account.
     sweep_status: Mapped[str] = mapped_column(String(8), default="none")
     swept_kobo: Mapped[int] = mapped_column(BigInteger, default=0)

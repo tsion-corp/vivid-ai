@@ -50,7 +50,7 @@ class FakePouch:
         monkeypatch.setattr(settings, "POUCH_API_KEY", "sk_test")
         for name in ("ensure_customer_ref", "open_account", "account_balance", "banks",
                      "validate_account", "payout_quote", "create_payout", "get_payout",
-                     "find_payout", "kyc_bvn", "find_transfer"):
+                     "find_payout", "kyc_bvn", "find_transfer", "create_static_address"):
             monkeypatch.setattr(pouch, name, getattr(self, name))
 
     async def ensure_customer_ref(self, ref, first, last, email=None, phone=None):
@@ -90,6 +90,10 @@ class FakePouch:
 
     async def find_payout(self, reference, pages=3):
         return next((p for p in self.payouts.values() if p["reference"] == reference), None)
+
+    async def create_static_address(self, va_id, chain_id, refund, kyc):
+        self.calls.append(("static_address", va_id, chain_id, refund, kyc["full_name"]))
+        return {"id": f"sa_{va_id}", "deposit_address": f"0xdep{va_id}", "network_type": "evm"}
 
     async def kyc_bvn(self, bvn, first, last, dob, reference):
         self.calls.append(("kyc", bvn))
@@ -521,3 +525,87 @@ def test_the_mobile_skill_is_the_native_checkout():
     text = skills.payments_block("vividpay", mobile=True)
     assert "EXPO_PUBLIC_VIVIDPAY_KEY" in text and "expo-clipboard" in text
     assert skills.payments_block("paystack", mobile=True) == ""
+
+
+# ------------------------------------------------------------------ crypto
+PAYER = {"name": "Tunde Bakare", "email": "t@x.ng", "phone": "+2348030000000",
+         "address": "12 Allen Avenue, Ikeja"}
+
+
+def _fill(event, fill_id="of_1", tid="tr_c1", va="va_1", naira_kobo=1_500_000, usdc=11.02):
+    return {"event": f"optimistic_fill.{event}",
+            "data": {"id": fill_id, "virtual_account_id": va, "transaction_id": tid,
+                     "crypto_amount": usdc, "crypto_currency": "USDC",
+                     "local_amount_estimated": naira_kobo, "local_amount_final": naira_kobo}}
+
+
+async def test_crypto_opens_one_address_on_the_orders_account(maker, fake, monkeypatch):
+    from app.services.vividpay import crypto
+    monkeypatch.setattr(settings, "DEXTOPUS_SETTLEMENT_ADDRESS", "0xtreasury")
+    pid, _, _ = await _setup(maker)
+    cid = await _checkout(maker, pid)
+    async with maker() as db:
+        c = await db.get(VividPayCheckout, cid)
+        with pytest.raises(VividPayError):                       # off until Pouch enables it
+            await crypto.open_address(db, c, "evm", PAYER)
+        monkeypatch.setattr(settings, "VIVIDPAY_CRYPTO_ENABLED", True)
+        with pytest.raises(VividPayError):                       # Pouch needs the payer's details
+            await crypto.open_address(db, c, "evm", {"name": "Tunde"})
+        await crypto.open_address(db, c, "evm", PAYER)
+        await crypto.open_address(db, c, "evm", PAYER)
+        await db.commit()
+        assert c.crypto_address == "0xdepva_1"
+        view = checkouts.view(c)["crypto"]
+        # ₦15,000 at ₦1,360 per USDC is 11.03 USDC, plus 1.5%, rounded up.
+        assert view["due_usdc"] == "11.20" and view["estimate"] is True
+    assert [x for x in fake.calls if x[0] == "static_address"] == [
+        ("static_address", "va_1", 8453, "0xtreasury", "Tunde Bakare")]
+
+
+async def test_a_crypto_payment_is_credited_from_the_transfer_pouch_lists(maker, fake, monkeypatch):
+    """The fill webhook only points at the transfer; the transfer the API
+    lists is what pays, once, whichever event comes first."""
+    pid, _, _ = await _setup(maker)
+    cid = await _checkout(maker, pid)
+    async with maker() as db:
+        assert await deposits.on_pouch_event(db, _fill("crypto_received")) is None
+        assert await deposits.on_pouch_event(db, _fill("credited")) is None   # not listed yet
+        fake.transfers["tr_c1"] = {"id": "tr_c1", "virtual_account_id": "va_1",
+                                   "amount": 1_500_000, "net_amount": 1_500_000}
+        out = await deposits.on_pouch_event(db, _fill("settled"))
+        assert isinstance(out, VividPayCheckout) and out.status == "paid"
+        assert await deposits.on_pouch_event(db, _fill("credited")) is None   # paid once
+        assert (await earnings.account_for(db, "u1")).balance_kobo == 1_500_000 - 22_500
+        c = await db.get(VividPayCheckout, cid)
+        assert c.sweep_status == "done"
+        # A forged fill naming a transfer the API does not list pays nothing.
+        assert await deposits.on_pouch_event(db, _fill("credited", "of_x", "tr_forged")) is None
+        assert await deposits.on_pouch_event(db, _fill("settlement_failed")) is None
+
+
+def test_the_estimate_rate_follows_pouch_but_not_far():
+    from app.services.vividpay import crypto
+    crypto._last_rate = None
+    assert crypto.rate() == settings.VIVIDPAY_CRYPTO_NGN_RATE
+    crypto.note_rate({"crypto_amount": 10, "crypto_currency": "USDC", "local_amount_final": 1_400_000})
+    assert crypto.rate() == 1400
+    crypto.note_rate({"crypto_amount": 10, "crypto_currency": "USDC", "local_amount_final": 100_000})
+    assert crypto.rate() == 1400                                    # implausible: ignored
+    crypto._last_rate = None
+
+
+def test_the_crypto_route_in_test_mode_never_calls_pouch(api, maker, fake, monkeypatch):
+    monkeypatch.setattr(settings, "VIVIDPAY_CRYPTO_ENABLED", True)
+    asyncio.run(_setup(maker))
+    test = _create(api, "https://5173-abc123.e2b.app", reference="o-c")
+    assert test.json()["crypto_enabled"] is True and test.json()["crypto"] is None
+    cid = test.json()["id"]
+    out = api.post(f"/v1/pay/checkouts/{cid}/crypto",
+                   content=json.dumps({"key": "vpk_test", "network": "evm", "payer": PAYER}))
+    assert out.status_code == 200 and out.json()["crypto"]["address"].startswith("0x0000")
+    assert fake.calls == []
+    assert api.options(f"/v1/pay/checkouts/{cid}/crypto").status_code == 204
+    api.post(f"/v1/pay/checkouts/{cid}/simulate", content=json.dumps({"key": "vpk_test"}))
+    again = api.post(f"/v1/pay/checkouts/{cid}/crypto",
+                     content=json.dumps({"key": "vpk_test", "network": "evm", "payer": PAYER}))
+    assert again.status_code == 409                                 # already paid

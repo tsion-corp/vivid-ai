@@ -710,7 +710,7 @@ def _vividpay_out(pay: VividPayProject, secret_key: str | None = None) -> dict:
     out = {"enabled": pay.enabled, "publishable_key": pay.publishable_key, "test_key": pay.test_key,
            "webhook_url": pay.webhook_url, "api": _vividpay_api(),
            "fee_bps": settings.VIVIDPAY_FEE_BPS, "min_fee_kobo": settings.VIVIDPAY_MIN_FEE_KOBO,
-           "fee_cap_kobo": settings.VIVIDPAY_FEE_CAP_KOBO}
+           "fee_cap_kobo": settings.VIVIDPAY_FEE_CAP_KOBO, "crypto": settings.VIVIDPAY_CRYPTO_ENABLED}
     if secret_key:
         out["secret_key"] = secret_key                 # shown once, when it is made
     return out
@@ -724,7 +724,7 @@ async def get_vivid_pay(project_id: str, user: User = Depends(get_current_user),
     if pay is None:
         return {"enabled": False, "fee_bps": settings.VIVIDPAY_FEE_BPS,
                 "min_fee_kobo": settings.VIVIDPAY_MIN_FEE_KOBO,
-                "fee_cap_kobo": settings.VIVIDPAY_FEE_CAP_KOBO}
+                "fee_cap_kobo": settings.VIVIDPAY_FEE_CAP_KOBO, "crypto": settings.VIVIDPAY_CRYPTO_ENABLED}
     return _vividpay_out(pay)
 
 

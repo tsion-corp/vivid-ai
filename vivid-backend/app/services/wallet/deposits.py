@@ -160,6 +160,8 @@ async def on_pouch_event(db: AsyncSession, payload: dict):
     event = payload.get("event") or ""
     if event.startswith("payout."):
         return await pay_events.on_payout_event(db, payload)
+    if event.startswith("optimistic_fill."):
+        return await pay_events.on_fill_event(db, payload)
     if event != "virtual_account.credited":
         return None
     transfer_id = (payload.get("data") or {}).get("id")

@@ -44,6 +44,7 @@ def _aware(dt: datetime) -> datetime:
 
 def view(c: VividPayCheckout) -> dict:
     """What an app sees about a checkout."""
+    from app.services.vividpay import crypto
     status = c.status
     if status == "pending" and _aware(c.expires_at) < _now():
         status = "expired"
@@ -51,7 +52,8 @@ def view(c: VividPayCheckout) -> dict:
             "amount_kobo": c.amount_kobo, "paid_kobo": c.paid_kobo,
             "account_number": c.account_number, "account_name": c.account_name,
             "bank_name": c.bank_name, "expires_at": _aware(c.expires_at).isoformat(),
-            "paid_at": _aware(c.paid_at).isoformat() if c.paid_at else None, "late": c.late}
+            "paid_at": _aware(c.paid_at).isoformat() if c.paid_at else None, "late": c.late,
+            "crypto_enabled": crypto.enabled(), "crypto": crypto.view(c)}
 
 
 def _names(app_name: str) -> tuple[str, str]:

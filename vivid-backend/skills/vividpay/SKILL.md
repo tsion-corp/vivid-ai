@@ -23,6 +23,10 @@ export type Checkout = {
   amount_kobo: number; paid_kobo: number;
   account_number: string; account_name: string; bank_name: string;
   expires_at: string; paid_at: string | null; late: boolean;
+  /** Paying in crypto is offered only when this is true. */
+  crypto_enabled: boolean;
+  crypto: null | { address: string; network: string; accepts: string; due_usdc: string;
+                   rate: number; estimate: true };
 };
 
 async function call<T>(path: string, init?: RequestInit): Promise<T> {
@@ -53,6 +57,15 @@ export const getCheckout = (id: string) =>
 export const simulatePayment = (id: string) =>
   call<Checkout>(`/checkouts/${id}/simulate`, {
     method: "POST", headers: { "Content-Type": "text/plain" }, body: JSON.stringify({ key: KEY }),
+  });
+
+/** Pay this checkout in crypto instead: returns the checkout with `crypto` set
+ *  (the deposit address). Pouch converts what arrives and it confirms like a
+ *  transfer. The payer's name, email, phone and address are required. */
+export const payWithCrypto = (id: string, payer: { name: string; email: string; phone: string; address: string }) =>
+  call<Checkout>(`/checkouts/${id}/crypto`, {
+    method: "POST", headers: { "Content-Type": "text/plain" },
+    body: JSON.stringify({ key: KEY, network: "evm", payer }),
   });
 
 /** Polls every 3s until paid, partial or expired. */
@@ -96,6 +109,23 @@ Make it feel trustworthy:
 - no clutter.
 
 On phones, the copy button is the primary action.
+
+## Paying in crypto (only when `checkout.crypto_enabled`)
+Customers can pay in USDC or USDT; Vivid converts it and the owner is paid in naira, so
+the order confirms exactly like a transfer (same polling, same states).
+- Two tabs on the checkout: **Bank transfer** (default) and **Crypto**. Hide the Crypto tab
+  when `crypto_enabled` is false.
+- Crypto asks for the payer's name, email, phone and address (required by our partner;
+  prefill from the order), then calls `payWithCrypto` once.
+- Then show: the **address** in monospace with a Copy button and a QR code of it
+  (`npm install qrcode.react`, `<QRCodeSVG value={address} size={176} />`), `crypto.accepts` as the networks line, and "Send about
+  **{crypto.due_usdc} USDC**" labelled as an estimate ("rates move; any shortfall shows
+  here and you can top up to the same address").
+- A warning line: "Only send USDC or USDT on the networks listed. Other coins or networks
+  can be lost." Minimum about $3.
+- Keep polling as for transfers. On `partial`, show what is left in naira and the new
+  `crypto.due_usdc` for the rest, to the same address.
+- Test mode: the address is a placeholder; show it with the Simulate payment button.
 
 ## Orders
 - **Without a backend:** keep the order locally. When the checkout polls `paid`, mark it

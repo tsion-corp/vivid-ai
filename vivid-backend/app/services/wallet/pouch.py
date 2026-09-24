@@ -253,6 +253,16 @@ async def find_payout(reference: str, pages: int = 3) -> dict | None:
     return None
 
 
+async def create_static_address(va_id: str, chain_id: int, refund_address: str,
+                                kyc: dict) -> dict:
+    """A crypto deposit address on a virtual account: what arrives is
+    converted and credited to the account in naira. Pouch returns the
+    account's existing address for the same network type."""
+    return (await _call("POST", "/static-addresses", json={
+        "virtual_account_id": va_id, "chain_id": chain_id,
+        "evm_refund_address": refund_address, "user_kyc": kyc})).get("data") or {}
+
+
 async def kyc_bvn(bvn: str, first_name: str, last_name: str, dob: str | None,
                   reference: str) -> dict:
     """A BVN checked against the registry (billable to Vivid)."""

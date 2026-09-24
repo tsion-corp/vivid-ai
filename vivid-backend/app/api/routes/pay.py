@@ -3,6 +3,7 @@
     POST /v1/pay/checkouts                 {key, amount_kobo, reference, customer?, metadata?}
     GET  /v1/pay/checkouts/{id}?key=       status, polled by the app
     POST /v1/pay/checkouts/{id}/simulate   {key}; test checkouts only
+    POST /v1/pay/checkouts/{id}/crypto     {key, network, payer}; pay in crypto instead
     GET  /v1/pay/checkouts?reference=      Authorization: Bearer vsk_... (the app's server side)
 
 The publishable key (vpk_) is in the app's bundle, so it is honoured only
@@ -25,7 +26,7 @@ from app.core.config import settings
 from app.core.errors import APIError
 from app.db.models import BuilderProject, VividPayCheckout, VividPayProject
 from app.services import rate_limit
-from app.services.vividpay import VividPayError, checkouts, events, key_hash
+from app.services.vividpay import VividPayError, checkouts, crypto, events, key_hash
 
 router = APIRouter(prefix="/pay", tags=["vivid-pay"])
 log = logging.getLogger("vivid.pay")
@@ -113,6 +114,7 @@ async def _by_key(db: AsyncSession, key: str | None) -> tuple[VividPayProject, B
 @router.options("/checkouts")
 @router.options("/checkouts/{checkout_id}")
 @router.options("/checkouts/{checkout_id}/simulate")
+@router.options("/checkouts/{checkout_id}/crypto")
 async def preflight(checkout_id: str | None = None):
     return Response(status_code=204, headers=CORS)
 
@@ -195,6 +197,27 @@ async def simulate_checkout(checkout_id: str, request: Request, db: AsyncSession
         return _fail(e)
     if pay is not None:
         await checkouts.notify_app(pay, c)
+    return _json(checkouts.view(c))
+
+
+@router.post("/checkouts/{checkout_id}/crypto")
+async def crypto_checkout(checkout_id: str, request: Request, db: AsyncSession = Depends(get_db)):
+    """A crypto address for the order: what arrives is converted by Pouch
+    and credited in naira, like a transfer."""
+    try:
+        data = await _body(request)
+        c = await _checkout_for_key(db, checkout_id, data.get("key"))
+        redis = getattr(request.app.state, "redis", None)
+        if redis is not None and c.mode == "live" and not c.crypto_address and \
+           not await rate_limit.check_bucket(redis, f"pay:{c.project_id}:{_ip(request)}",
+                                             settings.VIVIDPAY_CHECKOUTS_PER_IP_MINUTE):
+            raise VividPayError("Too many requests; try again in a minute.", "rate_limited", 429)
+        await crypto.open_address(db, c, str(data.get("network") or "evm"),
+                                  data.get("payer") if isinstance(data.get("payer"), dict) else None)
+        await db.commit()
+    except VividPayError as e:
+        await db.rollback()
+        return _fail(e)
     return _json(checkouts.view(c))
 
 

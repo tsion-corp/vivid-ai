@@ -98,6 +98,10 @@ async def init_db() -> None:
         await conn.execute(text(
             "CREATE UNIQUE INDEX IF NOT EXISTS ix_vivid_pay_projects_test_key "
             "ON vivid_pay_projects (test_key)"))
+        for col in ("crypto_address VARCHAR(128)", "crypto_network VARCHAR(16)",
+                    "crypto_rate DOUBLE PRECISION"):
+            await conn.execute(text(
+                f"ALTER TABLE vivid_pay_checkouts ADD COLUMN IF NOT EXISTS {col}"))
 
     async with async_session() as db:
         # Prompts are product config and deploy with the backend: upsert so a
