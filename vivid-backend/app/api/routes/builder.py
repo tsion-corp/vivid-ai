@@ -16,6 +16,9 @@
     GET    /builder/projects/{id}/preview    the sandbox URL (starts one)
     GET    /builder/projects/{id}/files      source file list
     GET    /builder/projects/{id}/files/{path}
+    PUT    /builder/projects/{id}/files/{path}   replace an image in place (multipart)
+    POST   /builder/projects/{id}/images/replace  replace an image seen in the preview
+    POST   /builder/projects/{id}/edits      change copy by hand, no chat turn
     GET    /builder/projects/{id}/snapshots  one per turn that changed files
     POST   /builder/projects/{id}/snapshots  take one now (after a failed auto-snapshot)
     POST   /builder/projects/{id}/undo       back to the version before the current one
@@ -43,14 +46,14 @@ import base64
 import logging
 from datetime import datetime, timezone
 
-from fastapi import APIRouter, Depends, File, Request, UploadFile
+from fastapi import APIRouter, Depends, File, Form, Request, UploadFile
 from fastapi.responses import Response, StreamingResponse
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.deps import get_current_user, get_db
 from app.builder import (analytics, assets, blob, chain as chain_mod, images, pgdirect, planning, publish, routing, secrets, skills,
-                         snapshots, stream, supabase, tools, usage)
+                         snapshots, stream, supabase, tools, usage, visual)
 from app.builder.loop import FEED_DONE, ModelCall, TurnRunner, turns
 from app.builder.planning import PlanRunner
 from app.builder.sandbox.base import PathError, SandboxError, safe_path
@@ -62,9 +65,10 @@ from app.db.models import (BuilderAsset, BuilderMessage, BuilderProject, Builder
 from app.services.connectors import supabase as supabase_connector
 from app.services.connectors import tokens as connector_tokens
 from app.db.session import async_session
-from app.schemas.builder import (AnalyticsOut, AssetOut, CancelOut, ChatIn, FileOut, FilesOut, MessageOut,
-                                 PreviewOut, ProjectCreate, ProjectOut, ProjectUpdate,
-                                 PublishOut, SnapshotOut, SupabaseLinkIn, UsageOut)
+from app.schemas.builder import (AnalyticsOut, AssetOut, CancelOut, ChatIn, EditsIn, EditsOut, FileOut,
+                                 FilesOut, ImageReplaceOut, MessageOut, PreviewOut, ProjectCreate,
+                                 ProjectOut, ProjectUpdate, PublishOut, SnapshotOut, SupabaseLinkIn,
+                                 TextEditOut, UsageOut)
 from app.services import rate_limit
 from app.services.models_gateway import provider
 
@@ -785,12 +789,14 @@ async def start_publish(project_id: str, request: Request,
         raise APIError(409, "busy", "Wait for the running turn to finish first.")
     if project_id in _publishing and not _publishing[project_id].done():
         raise APIError(409, "busy", "A publish is already running for this project.")
-    if project.current_snapshot_id is None:
+    # current(), not the column: projects built before the column was kept
+    # up to date have snapshots but a null current_snapshot_id.
+    snapshot = await snapshots.current(db, project)
+    if snapshot is None:
         # Nothing has been built: publishing the empty template would put
         # "Your app starts here" on a real URL and call the project live.
         raise APIError(409, "nothing_to_publish", "Build the app before publishing it.")
-    row = BuilderPublish(project_id=project_id, snapshot_id=project.current_snapshot_id,
-                         status="pending")
+    row = BuilderPublish(project_id=project_id, snapshot_id=snapshot.id, status="pending")
     db.add(row)
     await db.commit()
     alias = publish.alias_for(project.name, project.id)
@@ -884,6 +890,10 @@ async def preview(project_id: str, request: Request,
                   db: AsyncSession = Depends(get_db)):
     await _owned(project_id, user, db)
     sandbox = await _sandbox(project_id, request)
+    try:
+        await visual.ensure_editor(sandbox)
+    except SandboxError as e:                       # the preview works without it
+        log.warning("editor not placed in %s: %s", project_id, e)
     return PreviewOut(url=sandbox.preview_url(), sandbox_id=sandbox.id,
                       driver=sandbox.driver)
 
@@ -921,6 +931,155 @@ async def read_file(project_id: str, path: str, request: Request,
                        content_base64=base64.b64encode(data).decode(), content_type=ctype)
     return FileOut(path=clean, content=data.decode("utf-8", errors="replace"),
                    content_type=ctype)
+
+
+# ---------------------------------------------------------- visual edits
+#: One hand edit at a time per project, so two never race a snapshot.
+_editing: dict[str, asyncio.Lock] = {}
+
+
+async def _hand_edit_target(project_id: str, user: User, db: AsyncSession) -> BuilderProject:
+    project = await _owned(project_id, user, db)
+    if turns.running(project_id):
+        raise APIError(409, "busy", "Wait for the running turn to finish first.")
+    if await snapshots.current(db, project) is None:
+        raise APIError(409, "nothing_to_edit", "Build the app before editing it.")
+    return project
+
+
+async def _save_hand_edit(db: AsyncSession, sandbox, project: BuilderProject,
+                          summary: str) -> BuilderSnapshot | None:
+    """A version for the edit, like a turn's. A failure to store it does not
+    undo the edit, which is already in the preview; the client is told."""
+    try:
+        row = await snapshots.take(db, sandbox, project, summary)
+        await db.commit()
+    except (snapshots.SnapshotError, SandboxError) as e:
+        log.error("snapshot after a hand edit in %s failed: %s", project.id, e)
+        await db.rollback()
+        return None
+    await manager.touch(project.id)
+    return row or await snapshots.latest(db, project.id)
+
+
+async def _read_upload(file: UploadFile) -> bytes:
+    data = await file.read(visual.MAX_IMAGE_BYTES + 1)
+    if not data:
+        raise APIError(400, "bad_image", "The file is empty.")
+    return data
+
+
+@router.put("/projects/{project_id}/files/{path:path}", response_model=ImageReplaceOut)
+async def replace_file(project_id: str, path: str, request: Request,
+                       file: UploadFile = File(...),
+                       user: User = Depends(get_current_user),
+                       db: AsyncSession = Depends(get_db)):
+    """Swap the picture at `path` for another. It keeps its path, re-encoded
+    into the file's own format when the upload is a different one, so every
+    import of it keeps working; the preview hot-reloads."""
+    project = await _hand_edit_target(project_id, user, db)
+    try:
+        clean = safe_path(path)
+    except PathError as e:
+        raise APIError(400, "bad_path", str(e))
+    if not visual.is_image_path(clean):
+        raise APIError(400, "not_an_image", "Only images can be replaced here. Ask Vivid to change other files.")
+    if clean.startswith(visual.UPLOAD_DIR + "/"):
+        raise APIError(400, "uploaded_file",
+                       "This is one of your uploads. Upload a new file instead, or replace it from the preview.")
+    data = await _read_upload(file)
+    async with _editing.setdefault(project_id, asyncio.Lock()):
+        sandbox = await _sandbox(project_id, request)
+        if clean not in await sandbox.list_files():
+            raise APIError(404, "not_found", "File not found")
+        try:
+            fitted = visual.fit_to(data, clean)
+        except visual.VisualError as e:
+            raise APIError(400, "bad_image", str(e))
+        if fitted is None:
+            ext = pathlib.PurePosixPath(clean).suffix
+            raise APIError(400, "bad_image", f"Upload a {ext} image to replace this file.")
+        await sandbox.write_bytes(clean, fitted)
+        row = await _save_hand_edit(db, sandbox, project, f"Replaced {clean}")
+    return ImageReplaceOut(path=clean, snapshot=row)
+
+
+@router.post("/projects/{project_id}/images/replace", response_model=ImageReplaceOut)
+async def replace_image(project_id: str, request: Request,
+                        src: str = Form(..., max_length=4096),
+                        file: UploadFile = File(...),
+                        user: User = Depends(get_current_user),
+                        db: AsyncSession = Depends(get_db)):
+    """Swap a picture picked in the preview, named by the URL the page loaded
+    it from. One of the app's files is replaced in place; a picture that is
+    not (a stock photo URL, an upload) gets a new file under public/images
+    and the source is repointed at it."""
+    project = await _hand_edit_target(project_id, user, db)
+    data = await _read_upload(file)
+    async with _editing.setdefault(project_id, asyncio.Lock()):
+        sandbox = await _sandbox(project_id, request)
+        files = await sandbox.list_files()
+        try:
+            target = visual.resolve_src(src, sandbox.preview_url(), files)
+            fitted = visual.fit_to(data, target.path) if target.path else None
+        except visual.VisualError as e:
+            raise APIError(400, "bad_image", str(e))
+        if fitted is not None:
+            await sandbox.write_bytes(target.path, fitted)
+            row = await _save_hand_edit(db, sandbox, project, f"Replaced {target.path}")
+            return ImageReplaceOut(path=target.path, snapshot=row)
+
+        # A new file, and every reference moved to it.
+        refs = target.refs
+        if target.path and not refs:
+            # An import (./assets/logo.svg) cannot be repointed by URL.
+            ext = pathlib.PurePosixPath(target.path).suffix
+            raise APIError(400, "bad_image", f"Upload a {ext} image to replace this picture.")
+        sources = await visual.read_sources(sandbox, files)
+        if not any(ref in content for ref in refs for content in sources.values()):
+            raise APIError(404, "not_found",
+                           "Could not find where the app uses that picture. Ask Vivid to change it.")
+        new_path = visual.new_image_path(file.filename or "image", visual.upload_ext(data))
+        await sandbox.write_bytes(new_path, data)
+        changed = visual.relink(sources, refs, "/" + new_path.removeprefix("public/"))
+        for path in changed:
+            await sandbox.write_file(path, sources[path])
+        row = await _save_hand_edit(db, sandbox, project, f"Replaced an image with {new_path}")
+    return ImageReplaceOut(path=new_path, relinked=changed, snapshot=row)
+
+
+@router.post("/projects/{project_id}/edits", response_model=EditsOut)
+async def edit_text(project_id: str, body: EditsIn, request: Request,
+                    user: User = Depends(get_current_user),
+                    db: AsyncSession = Depends(get_db)):
+    """Change copy the way the page shows it: each edit names the text as
+    seen and what it should say. It is found in the source however the
+    source spells it; one match is changed, several need `all`, none (text
+    the page builds from data) is reported, never guessed at. The edits that
+    applied are saved as one version."""
+    project = await _hand_edit_target(project_id, user, db)
+    async with _editing.setdefault(project_id, asyncio.Lock()):
+        sandbox = await _sandbox(project_id, request)
+        sources = await visual.read_sources(sandbox, await sandbox.list_files())
+        before = dict(sources)
+        results = []
+        for edit in body.edits:
+            try:
+                r = visual.apply_text_edit(sources, edit.old, edit.new, edit.all)
+            except visual.VisualError as e:
+                raise APIError(400, "bad_edit", str(e))
+            results.append(TextEditOut(old=edit.old, new=edit.new, status=r.status,
+                                       files=r.files, count=r.count))
+        changed = [p for p in sources if sources[p] != before[p]]
+        for path in changed:
+            await sandbox.write_file(path, sources[path])
+        row = None
+        if changed:
+            first = next(r for r in results if r.status == "applied")
+            label = " ".join(first.new.split())
+            label = label if len(label) <= 60 else label[:57] + "..."
+            row = await _save_hand_edit(db, sandbox, project, f"Edited text: {label}")
+    return EditsOut(results=results, snapshot=row)
 
 
 _BINARY_EXT = {".png", ".jpg", ".jpeg", ".gif", ".webp", ".ico", ".pdf", ".woff", ".woff2",

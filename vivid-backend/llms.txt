@@ -26,6 +26,7 @@ Turns       POST /builder/projects/{id}/chat (SSE) · GET /builder/projects/{id}
 Thread      GET /builder/projects/{id}/messages
 Preview     GET /builder/projects/{id}/preview · GET /builder/projects/{id}/files · GET /builder/projects/{id}/files/{path}[?raw=1]
             GET /builder/projects/{id}/logs?lines=100
+Hand edits  PUT /builder/projects/{id}/files/{path} (replace an image) · POST .../images/replace · POST .../edits
 Uploads     POST/GET /builder/projects/{id}/assets · DELETE /builder/projects/{id}/assets/{asset_id}
 Versions    GET/POST /builder/projects/{id}/snapshots · POST .../snapshots/{seq}/restore · POST /builder/projects/{id}/undo
 Connectors  GET /connectors · POST /connectors · DELETE /connectors/{id} · GET /connectors/supabase/authorize
@@ -386,6 +387,51 @@ Show them in a small panel with a "Fix this" button that sends a chat turn:
 server's own output (compile errors, Vite overlay text) is at
 GET /builder/projects/{id}/logs?lines=100 -> {lines: string[]}; show it the
 same way when the preview is blank.
+
+### Hand edits: replace a picture, change copy, click-to-edit
+
+Small changes a person makes without a chat turn. Each one writes the files
+(the preview hot-reloads) and is saved as a version, so undo covers it. All
+three answer 409 busy while a turn runs and 409 nothing_to_edit before the
+first build.
+
+PUT  /builder/projects/{id}/files/{path}     multipart `file`   -> {path, relinked: [], snapshot}
+     Replace the image at `path` (a Files panel "Replace" button). The upload
+     keeps the path: a PNG for hero.jpg is re-encoded to JPEG, so every import
+     still works. 400 not_an_image for a non-image path, 400 bad_image for an
+     upload that is not a picture, over 10 MB, or cannot become the file's
+     format (a PNG for an .svg). 400 uploaded_file for public/uploads/*.
+POST /builder/projects/{id}/images/replace   multipart `src`, `file` -> {path, relinked, snapshot}
+     Replace a picture picked in the preview, named by the URL it loaded from
+     (img.currentSrc, or a CSS background url). An app file is replaced in
+     place; a stock photo URL or an upload gets a new file under
+     public/images/ and `relinked` lists the source files repointed at it.
+     404 not_found when the source never names it (ask the model instead).
+POST /builder/projects/{id}/edits  {edits: [{old, new, all?}]}  -> {results, snapshot}
+     Change copy as the page shows it. `old` is the element's text; it is
+     found in src/ and index.html however the source spells it (line wraps,
+     &apos;, entities) and `new` is escaped for where it lands (JSX text, a
+     quoted string, JSON). Each result has status applied | not_found (text
+     built from data or variables: offer to send it as a chat turn) |
+     ambiguous (count places, files listed: resend with all=true or ask the
+     model). The applied ones are one version; snapshot is null when none
+     applied or storing it failed (the change is still in the preview).
+
+Click-to-edit in the preview. The preview's index.html carries a small
+editor (placed on every GET .../preview, stripped from published sites). It
+is off until the parent turns it on, and only talks to the origin that did:
+
+  iframe.contentWindow.postMessage({type: "vivid:edit-mode", on: true}, previewOrigin)
+
+Messages from the preview (check e.origin as for vivid:error):
+  {type: "vivid:editor-ready"}              the page (re)loaded: send edit-mode again
+  {type: "vivid:text-edit", old, new}      a text element was edited (Enter or blur;
+                                            Escape reverts): POST .../edits
+  {type: "vivid:image-pick", src}          a picture was clicked: ask for a file,
+                                            POST .../images/replace with this src
+  {type: "vivid:edit-hint", reason: "not_text"}  the click was on a mixed element
+After replacing a picture in public/, post {type: "vivid:image-updated", src}
+to the preview so it reloads that image (Vite does not hot-reload public/).
 
 ------------------------------------------------------------------------
 ## 7. Uploads (logo, product photos, fonts)

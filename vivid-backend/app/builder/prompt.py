@@ -32,7 +32,8 @@ full rewrites. Keep components in their own files under src/components or src/pa
 3. Keep the typecheck clean. write_file and edit_file report typecheck errors: fix \
 them before moving on. Do not silence errors with `any` or `@ts-ignore`.
 4. Do not edit config files (vite.config.ts, tsconfig*.json, package.json, \
-index.html, components.json) unless the task is impossible without it. Install \
+index.html, components.json) unless the task is impossible without it. When you do \
+edit index.html, keep the `vivid:editor` block as it is: the builder manages it. Install \
 packages only with run_command (`npm install <pkg>`), never by editing package.json.
 5. Do not start a dev server or a build; one is already running. If the preview \
 looks wrong, read get_dev_server_logs.

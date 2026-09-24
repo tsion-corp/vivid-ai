@@ -613,7 +613,7 @@ def test_supabase_oauth_routes(client, maker, monkeypatch):
     assert client.get("/v1/connectors").json()[0]["projects"][0]["ref"] == "refone"
 
 
-def test_publish_job_updates_row_and_project(client, monkeypatch, fake_manager, fake_blob):
+def test_publish_job_updates_row_and_project(client, maker, monkeypatch, fake_manager, fake_blob):
     """POST publish answers 202 with a pending row; the job builds in the
     sandbox, uploads, and the row and project carry the live URL."""
     import asyncio
@@ -658,6 +658,14 @@ def test_publish_job_updates_row_and_project(client, monkeypatch, fake_manager, 
     monkeypatch.setattr(code_llm, "stream_chat", stream_chat)
     client.post(f"/v1/builder/projects/{pid}/chat", json={"text": "build"})
     assert client.get(f"/v1/builder/projects/{pid}").json()["published_at"] is None
+
+    # Projects built before current_snapshot_id was kept up to date have
+    # snapshots but a null column; they are built, so they still publish.
+    async def forget_current():
+        async with maker() as db:
+            (await db.get(BuilderProject, pid)).current_snapshot_id = None
+            await db.commit()
+    asyncio.run(forget_current())
     r = client.post(f"/v1/builder/projects/{pid}/publish")
     assert r.status_code == 202 and r.json()["status"] == "pending"
     pub_id = r.json()["id"]

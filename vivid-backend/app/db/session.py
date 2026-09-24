@@ -63,6 +63,15 @@ async def init_db() -> None:
             "ALTER TABLE builder_projects ADD COLUMN IF NOT EXISTS deployer_address VARCHAR(64)"))
         await conn.execute(text(
             "ALTER TABLE builder_projects ADD COLUMN IF NOT EXISTS published_at TIMESTAMPTZ"))
+        # Projects published before the column existed: date them from their
+        # latest live publish, so clients keying "is live" on it keep them.
+        await conn.execute(text(
+            "UPDATE builder_projects p SET published_at = ("
+            " SELECT max(b.updated_at) FROM builder_publishes b"
+            " WHERE b.project_id = p.id AND b.status = 'live')"
+            " WHERE p.published_at IS NULL AND EXISTS ("
+            " SELECT 1 FROM builder_publishes b"
+            " WHERE b.project_id = p.id AND b.status = 'live')"))
         await conn.execute(text(
             "ALTER TABLE waitlist_entries ADD COLUMN IF NOT EXISTS phone_no VARCHAR(16)"))
 

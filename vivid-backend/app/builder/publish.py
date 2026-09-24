@@ -25,6 +25,7 @@ from dataclasses import dataclass
 import httpx
 from blake3 import blake3
 
+from app.builder import visual
 from app.builder.sandbox.base import Sandbox, SandboxError
 from app.core.config import settings
 from app.services.models_gateway import http
@@ -116,6 +117,8 @@ async def build_site(sandbox: Sandbox, project_id: str | None = None) -> BuiltSi
     files = _untar(data)
     if "index.html" not in files:
         raise PublishError("The build produced no index.html.")
+    # The preview's click-to-edit script is for the builder, never the live app.
+    files["index.html"] = visual.strip_editor(files["index.html"])
     if project_id:
         files["index.html"] = inject_analytics(files["index.html"], project_id)
     site = BuiltSite(files)

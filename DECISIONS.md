@@ -720,3 +720,31 @@ pins that.
 - A deploy failed because eth-account was installed locally but not
   pinned; now in requirements.txt. Rule kept: every new import gets its
   pin in the same commit.
+
+## 20. Hand edits: replace pictures, click-to-edit copy (2026-09-24)
+
+- A finished app gets small changes without a chat turn. Three routes, all
+  refused while a turn runs (409 busy) and before the first build (409
+  nothing_to_edit), each writing into the sandbox (Vite hot-reloads) and
+  saving a version so undo covers it:
+  - `PUT /files/{path}` replaces an image in place; an upload in another
+    format is re-encoded (Pillow) into the file's own, so imports still work.
+  - `POST /images/replace {src, file}` takes the URL the preview loaded a
+    picture from: an app file is replaced in place; a stock photo URL or an
+    upload (re-copied from the store on every sandbox start, so overwriting
+    it would not stick) gets a new file under public/images and the source
+    is repointed.
+  - `POST /edits {edits: [{old, new, all?}]}` finds copy as the page shows
+    it, however the source spells it (line wraps, entities), and escapes the
+    new text for where it lands (JSX text, a quoted string, JSON). One match
+    changes; several need `all`; none (text built from data) is reported,
+    never guessed, and the client offers to send it as a chat turn.
+- The click-to-edit script lives in index.html between `vivid:editor`
+  markers, placed on every GET /preview (so existing projects get it without
+  a template rebuild) and stripped from dist at publish. It stays off until
+  the framed parent switches it on, and posts only to that origin. No
+  source-location plugin: matching the text keeps vite.config untouched and
+  works for every existing project.
+- Legacy fixes alongside: `published_at` backfilled from each project's
+  latest live publish; `/publish` falls back to the latest snapshot when
+  `current_snapshot_id` was never set, instead of a wrong nothing_to_publish.

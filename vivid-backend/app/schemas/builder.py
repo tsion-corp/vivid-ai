@@ -153,3 +153,39 @@ class AssetOut(BaseModel):
     url: str = ""
     meta: dict | None = None
     created_at: datetime
+
+
+class TextEditIn(BaseModel):
+    #: The text as the page showed it, and what it should say.
+    old: str = Field(min_length=1, max_length=5000)
+    new: str = Field(min_length=1, max_length=5000)
+    #: Change every place the text appears, when it appears in more than one.
+    all: bool = False
+
+
+class EditsIn(BaseModel):
+    edits: list[TextEditIn] = Field(min_length=1, max_length=50)
+
+
+class TextEditOut(BaseModel):
+    old: str
+    new: str
+    #: applied | not_found | ambiguous
+    status: str
+    files: list[str] = []
+    count: int = 0
+
+
+class EditsOut(BaseModel):
+    results: list[TextEditOut]
+    #: The version the edits were saved as; null when none applied, or when
+    #: storing it failed (the preview still has the change).
+    snapshot: SnapshotOut | None = None
+
+
+class ImageReplaceOut(BaseModel):
+    #: The file that now holds the picture.
+    path: str
+    #: Source files repointed at it, when the picture got a new file.
+    relinked: list[str] = []
+    snapshot: SnapshotOut | None = None
