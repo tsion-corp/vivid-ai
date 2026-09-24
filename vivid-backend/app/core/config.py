@@ -525,25 +525,32 @@ class Settings(BaseSettings):
     WALLET_CRYPTO_MIN_USD: float = 2.0
 
     # -------------------------------------------------------------- plans
-    # Free / Pro / Team for the app builder. Tokens are every builder token
-    # (plan, build, edit, critique) as recorded in builder_usage_events.
-    # Sized at about $0.20 of cost per 1M tokens for ~70% gross margin;
-    # re-tune from `python -m app.scripts.token_economics`.
+    # Free / Pro / Team for the app builder, counted in credits. A credit is
+    # PLAN_TOKENS_PER_CREDIT builder tokens (plan, build, edit, critique, as
+    # recorded in builder_usage_events); allowances are credits per month and
+    # per rolling PLAN_WINDOW_HOURS window. At ~$0.20 of cost per 1M tokens a
+    # credit costs us ~$0.10; re-tune from `python -m app.scripts.token_economics`.
+    PLAN_TOKENS_PER_CREDIT: int = 500_000
     PLAN_WINDOW_HOURS: int = 5
     PLAN_FREE_APPS: int = 2
-    PLAN_FREE_WINDOW_TOKENS: int = 2_000_000
-    PLAN_FREE_MONTH_TOKENS: int = 12_000_000
-    PLAN_PRO_PRICE_USD: float = 32.0
-    PLAN_PRO_YEARLY_PRICE_USD: float = 26.0
-    PLAN_PRO_WINDOW_TOKENS: int = 8_000_000
-    PLAN_PRO_MONTH_TOKENS: int = 50_000_000
-    PLAN_TEAM_PRICE_USD: float = 78.0
-    PLAN_TEAM_YEARLY_PRICE_USD: float = 62.0
-    PLAN_TEAM_WINDOW_TOKENS: int = 12_000_000
-    PLAN_TEAM_MONTH_TOKENS: int = 120_000_000
-    # Extra tokens bought from the wallet once the plan is used up.
-    PLAN_EXTRA_TOKEN_PRICE_USD: float = 0.60
-    PLAN_TOKEN_PACKS: list[int] = [5_000_000, 25_000_000, 100_000_000]
+    PLAN_FREE_WINDOW_CREDITS: float = 4
+    PLAN_FREE_MONTH_CREDITS: float = 20
+    # Launch prices while payments are being tested; the intended prices are
+    # Pro $32 ($26/mo yearly) and Team $78 ($62/mo yearly) per seat. Set
+    # these in app.env to change them without a deploy.
+    PLAN_PRO_PRICE_USD: float = 0.50
+    PLAN_PRO_YEARLY_PRICE_USD: float = 0.40
+    PLAN_PRO_WINDOW_CREDITS: float = 16
+    PLAN_PRO_MONTH_CREDITS: float = 100
+    PLAN_TEAM_PRICE_USD: float = 1.00
+    PLAN_TEAM_YEARLY_PRICE_USD: float = 0.80
+    # Team allowances are per seat, pooled across the team.
+    PLAN_TEAM_WINDOW_CREDITS: float = 24
+    PLAN_TEAM_MONTH_CREDITS: float = 200
+    # Extra credits bought from the wallet once the plan is used up; they
+    # never expire.
+    PLAN_CREDIT_PRICE_USD: float = 0.30
+    PLAN_CREDIT_PACKS: list[int] = [10, 50, 200]
     # A generated image counts as this many tokens against the allowance.
     PLAN_IMAGE_TOKEN_EQUIVALENT: int = 20_000
     # A renewal the wallet cannot pay keeps the plan this many days.

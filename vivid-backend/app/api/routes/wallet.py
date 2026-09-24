@@ -8,7 +8,7 @@ plan it pays for.
     POST   /v1/wallet/bank-account      the user's naira virtual account (made on first call)
     GET    /v1/wallet/crypto/options    tokens and chains to top up with
     POST   /v1/wallet/crypto/address    the user's address for one option (made on first call)
-    POST   /v1/wallet/token-packs       buy extra builder tokens
+    POST   /v1/wallet/credit-packs      buy extra builder credits
     GET    /v1/plans                    the plans and their prices
     GET    /v1/me/plan                  the user's plan, usage meters and extra tokens
     POST   /v1/me/plan                  subscribe or change plan (paid from the wallet)
@@ -58,7 +58,7 @@ async def get_wallet(currency: str = Query("NGN", max_length=3),
     return {"balance_micro": wallet.balance_micro, "balance_usd": _usd(wallet.balance_micro),
             "display": await _display(wallet.balance_micro, currency),
             "currencies": settings.WALLET_DISPLAY_CURRENCIES,
-            "extra_tokens": wallet.extra_tokens,
+            "extra_credits": catalog.to_credits(wallet.extra_tokens),
             "bank_available": pouch.configured(), "crypto_available": dextopus.configured()}
 
 
@@ -172,22 +172,22 @@ async def crypto_address(body: CryptoAddressIn, user: User = Depends(get_session
 
 
 class PackIn(BaseModel):
-    tokens: int
+    credits: int
 
 
-@router.post("/wallet/token-packs")
-async def buy_token_pack(body: PackIn, user: User = Depends(get_session_user),
-                         db: AsyncSession = Depends(get_db)):
+@router.post("/wallet/credit-packs")
+async def buy_credit_pack(body: PackIn, user: User = Depends(get_session_user),
+                          db: AsyncSession = Depends(get_db)):
     account = await usage.account_for(db, user.id)
     try:
-        extra = await subscriptions.buy_pack(db, user.id, body.tokens, owner_id=account.owner_id)
+        extra = await subscriptions.buy_pack(db, user.id, body.credits, owner_id=account.owner_id)
     except subscriptions.PlanError as e:
         raise APIError(400, "bad_request", str(e))
     except ledger.InsufficientFunds as e:
         await db.rollback()
         raise _insufficient(e)
     await db.commit()
-    return {"extra_tokens": extra}
+    return {"extra_credits": extra}
 
 
 def _insufficient(e: ledger.InsufficientFunds) -> APIError:
@@ -200,20 +200,21 @@ def _insufficient(e: ledger.InsufficientFunds) -> APIError:
 def _plan_out(p: catalog.Plan) -> dict:
     return {"id": p.id, "name": p.name, "price_usd": p.price_usd,
             "yearly_price_usd": p.yearly_price_usd, "per_seat": p.per_seat,
-            "max_apps": p.max_apps, "window_tokens": p.window_tokens,
-            "window_hours": settings.PLAN_WINDOW_HOURS, "month_tokens": p.month_tokens}
+            "max_apps": p.max_apps, "window_credits": p.window_credits,
+            "window_hours": settings.PLAN_WINDOW_HOURS, "month_credits": p.month_credits}
 
 
 @router.get("/plans")
 async def list_plans():
-    packs = [{"tokens": t, "price_usd": catalog.pack_price_usd(t)} for t in settings.PLAN_TOKEN_PACKS]
+    packs = [{"credits": c, "price_usd": catalog.pack_price_usd(c)} for c in settings.PLAN_CREDIT_PACKS]
     try:
         ngn = await fx.rate("NGN")
     except fx.RatesUnavailable:
         ngn = None
     return {"plans": [_plan_out(p) for p in catalog.plans().values()],
-            "extra_token_price_usd_per_million": settings.PLAN_EXTRA_TOKEN_PRICE_USD,
-            "token_packs": packs, "usd_ngn": ngn}
+            "tokens_per_credit": catalog.tokens_per_credit(),
+            "credit_price_usd": settings.PLAN_CREDIT_PRICE_USD,
+            "credit_packs": packs, "usd_ngn": ngn}
 
 
 async def _me_plan(db: AsyncSession, user: User) -> dict:
@@ -230,10 +231,12 @@ async def _me_plan(db: AsyncSession, user: User) -> dict:
             "period_end": sub.period_end if sub else None,
             "grace_until": sub.grace_until if sub else None,
             "apps": {"used": owned, "limit": account.plan.max_apps},
-            "window": {"used": m.window_used, "limit": m.window_limit,
+            "window": {"used": catalog.to_credits(m.window_used),
+                       "limit": catalog.to_credits(m.window_limit),
                        "resets_at": m.window_resets_at, "hours": settings.PLAN_WINDOW_HOURS},
-            "month": {"used": m.month_used, "limit": m.month_limit, "resets_at": m.month_resets_at},
-            "extra_tokens": wallet.extra_tokens}
+            "month": {"used": catalog.to_credits(m.month_used),
+                      "limit": catalog.to_credits(m.month_limit), "resets_at": m.month_resets_at},
+            "extra_credits": catalog.to_credits(wallet.extra_tokens)}
 
 
 @router.get("/me/plan")

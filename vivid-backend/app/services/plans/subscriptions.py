@@ -6,7 +6,7 @@
 - Cancelling keeps the plan to the end of the period, then it lapses to Free.
 - Renewal runs from a daily poller: the wallet pays the next period; when it
   cannot, the plan stays in grace for BILLING_GRACE_DAYS, then lapses.
-- Extra tokens are bought in packs, added to the account's wallet.
+- Extra credits are bought in packs, added to the account's wallet.
 """
 import asyncio
 import logging
@@ -94,19 +94,19 @@ async def cancel(db: AsyncSession, user_id: str) -> Subscription | None:
     return sub
 
 
-async def buy_pack(db: AsyncSession, user_id: str, tokens: int, owner_id: str | None = None) -> int:
-    """Extra tokens from the wallet; they go to the account that pays (the
-    team owner on Team). Returns the account's new extra-token balance."""
-    if tokens not in settings.PLAN_TOKEN_PACKS:
-        raise PlanError(f"packs are {', '.join(f'{p // 1_000_000}M' for p in settings.PLAN_TOKEN_PACKS)}")
-    price = catalog.pack_price_usd(tokens)
+async def buy_pack(db: AsyncSession, user_id: str, credits: int, owner_id: str | None = None) -> float:
+    """Extra credits from the wallet; they go to the account that pays (the
+    team owner on Team). Kept as tokens underneath so a turn's exact usage
+    can be taken off. Returns the account's extra credits."""
+    if credits not in settings.PLAN_CREDIT_PACKS:
+        raise PlanError(f"packs are {', '.join(str(p) for p in settings.PLAN_CREDIT_PACKS)} credits")
+    price = catalog.pack_price_usd(credits)
     await ledger.debit(db, user_id, to_micro(price), ledger.TOKEN_PACK, VIVID,
-                       f"pack:{user_id}:{uuid.uuid4().hex}", ref=str(tokens), original_amount=str(price),
-                       original_currency="USD",
-                       description=f"{tokens // 1_000_000}M extra tokens")
+                       f"pack:{user_id}:{uuid.uuid4().hex}", ref=str(credits), original_amount=str(price),
+                       original_currency="USD", description=f"{credits} extra credits")
     wallet = await ledger.wallet_for(db, owner_id or user_id, lock=True)
-    wallet.extra_tokens += tokens
-    return wallet.extra_tokens
+    wallet.extra_tokens += catalog.to_tokens(credits)
+    return catalog.to_credits(wallet.extra_tokens)
 
 
 async def renew_due(db: AsyncSession) -> dict:

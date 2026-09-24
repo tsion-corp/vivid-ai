@@ -370,9 +370,9 @@ def _limit_message(check) -> str:
         when = f"your allowance renews {m.month_resets_at:%d %b}"
     else:
         minutes = max(int((m.window_resets_at - datetime.now(timezone.utc)).total_seconds() // 60), 1)
-        when = f"more tokens free up in {minutes // 60}h {minutes % 60:02d}m"
-    return (f"You've used your {check.account.plan.name} plan's tokens for now: {when}. "
-            "Buy extra tokens from your wallet or upgrade to keep going.")
+        when = f"more credits free up in {minutes // 60}h {minutes % 60:02d}m"
+    return (f"You've used your {check.account.plan.name} plan's credits for now: {when}. "
+            "Buy extra credits from your wallet or upgrade to keep going.")
 
 
 async def _settle_plan(check) -> None:

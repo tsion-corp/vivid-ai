@@ -11,8 +11,9 @@ from datetime import datetime
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.core.config import settings
 from app.db.models import BuilderProject
-from app.services.plans import usage
+from app.services.plans import catalog, usage
 from app.services.wallet import ledger
 
 
@@ -21,18 +22,22 @@ class TurnCheck:
     ok: bool
     account: usage.Account
     meter: usage.Meter
+    #: Extra credits, kept in tokens; shown as credits.
     extra_tokens: int
     #: The project is past the plan's app limit (after a downgrade).
     read_only: bool = False
 
     def body(self) -> dict:
+        """What a client shows, in credits."""
+        c = catalog.to_credits
         return {"plan": self.account.plan.id,
-                "window_used": self.meter.window_used, "window_limit": self.meter.window_limit,
+                "window_used": c(self.meter.window_used), "window_limit": c(self.meter.window_limit),
+                "window_hours": settings.PLAN_WINDOW_HOURS,
                 "window_resets_at": _iso(self.meter.window_resets_at),
-                "month_used": self.meter.month_used, "month_limit": self.meter.month_limit,
+                "month_used": c(self.meter.month_used), "month_limit": c(self.meter.month_limit),
                 "month_resets_at": _iso(self.meter.month_resets_at),
-                "extra_tokens": self.extra_tokens,
-                "options": ["wait", "buy_tokens", "upgrade"]}
+                "extra_credits": c(self.extra_tokens),
+                "options": ["wait", "buy_credits", "upgrade"]}
 
 
 def _iso(dt: datetime) -> str:

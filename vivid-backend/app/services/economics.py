@@ -104,7 +104,8 @@ async def report(db: AsyncSession, days: int = 30) -> dict:
         p90 = min(_pct(monthly_tokens, 90), allowance)
         price = plan.price_usd
         plans.append({
-            "plan": plan.id, "price_usd": price, "month_tokens": allowance,
+            "plan": plan.id, "price_usd": price, "month_credits": plan.month_credits,
+            "month_tokens": allowance,
             "cost_if_fully_used_usd": round(cost_full, 2),
             "cost_at_p50_usd": round(p50 / M * all_in_per_m, 2),
             "cost_at_p90_usd": round(p90 / M * all_in_per_m, 2),
@@ -137,6 +138,10 @@ async def report(db: AsyncSession, days: int = 30) -> dict:
         "cost_per_project_usd": round((model_cost + sandbox_cost + image_cost) / max(len(projects), 1), 4),
         "eas": {"builds": len(builds), "cost_usd": round(eas_cost, 2), "revenue_usd": round(eas_revenue, 2)},
         "plans": plans,
-        "extra_tokens": {"price_per_million_usd": settings.PLAN_EXTRA_TOKEN_PRICE_USD,
-                         "margin": round(1 - all_in_per_m / settings.PLAN_EXTRA_TOKEN_PRICE_USD, 3)},
+        "credits": {"tokens_per_credit": catalog.tokens_per_credit(),
+                    "cost_per_credit_usd": round(all_in_per_m * catalog.tokens_per_credit() / M, 4),
+                    "price_per_credit_usd": settings.PLAN_CREDIT_PRICE_USD,
+                    "extra_credit_margin": round(
+                        1 - all_in_per_m * catalog.tokens_per_credit() / M
+                        / settings.PLAN_CREDIT_PRICE_USD, 3)},
     }

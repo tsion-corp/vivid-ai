@@ -1,6 +1,6 @@
 """Plans: usage sums over the rolling window and the month, the turn gate
-refuses at the limit and lets extra tokens through, overshoot is settled
-against extra tokens, Free stops at two apps, subscriptions are paid from
+refuses at the limit and lets extra credits through, overshoot is settled
+against extra credits, Free stops at two apps, subscriptions are paid from
 the wallet (with proration, grace and lapse), Team pools its members, and
 the economics report prices a million tokens from real rows."""
 from datetime import datetime, timedelta, timezone
@@ -19,12 +19,19 @@ NOW = datetime.now(timezone.utc)
 
 @pytest.fixture(autouse=True)
 def small_plans(monkeypatch):
-    monkeypatch.setattr(settings, "PLAN_FREE_WINDOW_TOKENS", 1000)
-    monkeypatch.setattr(settings, "PLAN_FREE_MONTH_TOKENS", 5000)
-    monkeypatch.setattr(settings, "PLAN_PRO_WINDOW_TOKENS", 10_000)
-    monkeypatch.setattr(settings, "PLAN_PRO_MONTH_TOKENS", 50_000)
-    monkeypatch.setattr(settings, "PLAN_TEAM_WINDOW_TOKENS", 3000)
-    monkeypatch.setattr(settings, "PLAN_TEAM_MONTH_TOKENS", 30_000)
+    # 100 tokens a credit keeps the numbers small; allowances are in credits.
+    monkeypatch.setattr(settings, "PLAN_TOKENS_PER_CREDIT", 100)
+    monkeypatch.setattr(settings, "PLAN_FREE_WINDOW_CREDITS", 10)        # 1,000 tokens
+    monkeypatch.setattr(settings, "PLAN_FREE_MONTH_CREDITS", 50)         # 5,000
+    monkeypatch.setattr(settings, "PLAN_PRO_WINDOW_CREDITS", 100)
+    monkeypatch.setattr(settings, "PLAN_PRO_MONTH_CREDITS", 500)         # 50,000
+    monkeypatch.setattr(settings, "PLAN_TEAM_WINDOW_CREDITS", 30)
+    monkeypatch.setattr(settings, "PLAN_TEAM_MONTH_CREDITS", 300)
+    # Prices pinned so the arithmetic below does not follow launch pricing.
+    monkeypatch.setattr(settings, "PLAN_PRO_PRICE_USD", 32.0)
+    monkeypatch.setattr(settings, "PLAN_PRO_YEARLY_PRICE_USD", 26.0)
+    monkeypatch.setattr(settings, "PLAN_TEAM_PRICE_USD", 78.0)
+    monkeypatch.setattr(settings, "PLAN_TEAM_YEARLY_PRICE_USD", 62.0)
     monkeypatch.setattr(settings, "PLAN_IMAGE_TOKEN_EQUIVALENT", 100)
     fx.set_rates({"USD": 1.0, "NGN": 1500.0})
 
@@ -78,14 +85,18 @@ async def test_the_gate_refuses_past_the_window_and_extra_tokens_let_it_through(
     async with maker() as db:
         check = await gate.can_start_turn(db, "u1", pid)
     assert not check.ok and not check.read_only
-    assert check.body()["window_used"] == 1200 and "buy_tokens" in check.body()["options"]
+    # Shown in credits: 1,200 tokens at 100 a credit.
+    assert check.body()["window_used"] == 12 and check.body()["window_limit"] == 10
+    assert "buy_credits" in check.body()["options"]
 
     await _fund(maker, 10)
     async with maker() as db:
-        await subscriptions.buy_pack(db, "u1", settings.PLAN_TOKEN_PACKS[0])
+        assert await subscriptions.buy_pack(db, "u1", settings.PLAN_CREDIT_PACKS[0]) == 10
         await db.commit()
         check = await gate.can_start_turn(db, "u1", pid)
-    assert check.ok and check.extra_tokens == settings.PLAN_TOKEN_PACKS[0]
+    assert check.ok and check.extra_tokens == 1000 and check.body()["extra_credits"] == 10
+    async with maker() as db:                                        # 10 credits at $0.30
+        assert await ledger.balance(db, "u1") == 7_000_000
 
     # The turn uses 500 more, all beyond the allowance: 500 extra tokens go.
     await _use(maker, pid, tokens=500)
@@ -93,7 +104,7 @@ async def test_the_gate_refuses_past_the_window_and_extra_tokens_let_it_through(
         taken = await gate.settle_turn(db, check)
         await db.commit()
         assert taken == 500
-        assert (await ledger.wallet_for(db, "u1")).extra_tokens == settings.PLAN_TOKEN_PACKS[0] - 500
+        assert (await ledger.wallet_for(db, "u1")).extra_tokens == 500      # 5 credits left
 
 
 async def test_a_turn_that_crosses_the_limit_pays_only_the_overshoot(maker):
@@ -217,7 +228,9 @@ async def test_the_report_prices_a_million_tokens(maker):
     assert r["cache_hit_ratio"] == pytest.approx(0.6 / 0.9, abs=0.01)
     pro = next(p for p in r["plans"] if p["plan"] == "pro")
     assert pro["cost_if_fully_used_usd"] == pytest.approx(50_000 / 1e6 * per_m["all_in"], abs=0.01)
-    assert r["extra_tokens"]["margin"] < 1
+    assert r["credits"]["tokens_per_credit"] == 100
+    assert r["credits"]["cost_per_credit_usd"] == pytest.approx(per_m["all_in"] * 100 / 1e6, abs=1e-4)
+    assert pro["month_credits"] == 500
 
 
 # ------------------------------------------------------------------ routes
@@ -233,5 +246,6 @@ def test_routes_enforce_the_plan(client, maker):
     assert r.status_code == 429
     err = r.json()["error"]
     assert err["code"] == "limit_reached" and "Free" in err["message"]
-    assert err["details"]["window_used"] == 1500 and err["details"]["window_limit"] == 1000
+    assert err["details"]["window_used"] == 15 and err["details"]["window_limit"] == 10
+    assert "credits" in err["message"]
     assert err["details"]["window_resets_at"]

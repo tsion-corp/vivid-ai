@@ -32,10 +32,13 @@ def _print(r: dict) -> None:
         print(f"    {stage:<12} {v['calls']:>6} calls  {v['avg_tokens']:>9,} avg tokens  ${v['cost_usd']:.4f}")
     print("  plans:")
     for p in r["plans"]:
-        print(f"    {p['plan']:<5} ${p['price_usd']:>5.2f}  {p['month_tokens'] / 1e6:>5.0f}M/mo  "
+        print(f"    {p['plan']:<5} ${p['price_usd']:>5.2f}  {p['month_credits']:>5.0f} credits/mo "
+              f"({p['month_tokens'] / 1e6:.0f}M tokens)  "
               f"cost if all used ${p['cost_if_fully_used_usd']:.2f}  margin {p['margin_if_fully_used']}  "
               f"at p90 {p['margin_at_p90']}")
-    print(f"  extra tokens at ${r['extra_tokens']['price_per_million_usd']}/M: margin {r['extra_tokens']['margin']}")
+    c = r["credits"]
+    print(f"  1 credit = {c['tokens_per_credit']:,} tokens, costs us ${c['cost_per_credit_usd']:.4f}; "
+          f"extra credits sell at ${c['price_per_credit_usd']} (margin {c['extra_credit_margin']})")
     print(f"  EAS: {r['eas']['builds']} builds, cost ${r['eas']['cost_usd']}, revenue ${r['eas']['revenue_usd']}")
 
 
