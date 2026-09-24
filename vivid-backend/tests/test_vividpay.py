@@ -417,6 +417,7 @@ def test_the_owner_sees_earnings_and_withdraws(api, maker, fake):
     history = api.get("/v1/earnings/entries").json()["items"]
     assert [(h["kind"], h["amount_kobo"]) for h in history] == [
         ("withdrawal", -1_010_000), ("payment", 5_000_000)]
+    assert history[0]["status"] == "pending" and history[1]["status"] is None
 
 
 def test_history_folds_fees_filters_and_pages(api, maker, fake):

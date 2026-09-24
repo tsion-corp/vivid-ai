@@ -135,6 +135,8 @@ async def my_entries(kind: str | None = None, project: str | None = None,
     checkout_ids = {e.checkout_id for e in rows if e.checkout_id}
     orders = {c.id: c for c in (await db.execute(select(VividPayCheckout).where(
         VividPayCheckout.id.in_(checkout_ids)))).scalars()} if checkout_ids else {}
+    sent = {p.id: p for p in (await db.execute(select(VividPayPayout).where(
+        VividPayPayout.id.in_(payout_ids)))).scalars()} if payout_ids else {}
     project_ids = {e.project_id for e in rows if e.project_id}
     apps = dict((await db.execute(select(BuilderProject.id, BuilderProject.name).where(
         BuilderProject.id.in_(project_ids)))).all()) if project_ids else {}
@@ -149,7 +151,9 @@ async def my_entries(kind: str | None = None, project: str | None = None,
         elif e.kind == earnings.WITHDRAWAL:
             amount += extra.get(f"payout:{e.payout_id}", 0)
         c = orders.get(e.checkout_id or "")
+        p = sent.get(e.payout_id or "") if e.kind == earnings.WITHDRAWAL else None
         items.append({"id": e.id, "kind": e.kind, "amount_kobo": amount, "title": title,
+                      "status": p.status if p else None, "error": p.error if p else None,
                       "customer": (c.customer or {}).get("name") if c else None,
                       "project_id": e.project_id, "app": apps.get(e.project_id or ""),
                       "created_at": e.created_at})
