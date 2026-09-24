@@ -525,7 +525,7 @@ class Settings(BaseSettings):
     WALLET_CRYPTO_MIN_USD: float = 2.0
 
     # -------------------------------------------------------------- plans
-    # Free / Pro / Team for the app builder, counted in credits. A credit is
+    # Free / Pro / Max for the app builder, counted in credits. A credit is
     # PLAN_TOKENS_PER_CREDIT builder tokens (plan, build, edit, critique, as
     # recorded in builder_usage_events); allowances are credits per month and
     # per rolling PLAN_WINDOW_HOURS window. At ~$0.20 of cost per 1M tokens a
@@ -536,17 +536,16 @@ class Settings(BaseSettings):
     PLAN_FREE_WINDOW_CREDITS: float = 4
     PLAN_FREE_MONTH_CREDITS: float = 20
     # Launch prices while payments are being tested; the intended prices are
-    # Pro $32 ($26/mo yearly) and Team $78 ($62/mo yearly) per seat. Set
-    # these in app.env to change them without a deploy.
+    # Pro $32 ($26/mo yearly) and Max $78 ($62/mo yearly). Set these in
+    # app.env to change them without a deploy.
     PLAN_PRO_PRICE_USD: float = 0.50
     PLAN_PRO_YEARLY_PRICE_USD: float = 0.40
     PLAN_PRO_WINDOW_CREDITS: float = 16
     PLAN_PRO_MONTH_CREDITS: float = 100
-    PLAN_TEAM_PRICE_USD: float = 1.00
-    PLAN_TEAM_YEARLY_PRICE_USD: float = 0.80
-    # Team allowances are per seat, pooled across the team.
-    PLAN_TEAM_WINDOW_CREDITS: float = 24
-    PLAN_TEAM_MONTH_CREDITS: float = 200
+    PLAN_MAX_PRICE_USD: float = 1.00
+    PLAN_MAX_YEARLY_PRICE_USD: float = 0.80
+    PLAN_MAX_WINDOW_CREDITS: float = 24
+    PLAN_MAX_MONTH_CREDITS: float = 200
     # Extra credits bought from the wallet once the plan is used up; they
     # never expire.
     PLAN_CREDIT_PRICE_USD: float = 0.30

@@ -13,10 +13,6 @@ plan it pays for.
     GET    /v1/me/plan                  the user's plan, usage meters and extra tokens
     POST   /v1/me/plan                  subscribe or change plan (paid from the wallet)
     DELETE /v1/me/plan                  cancel at the end of the period
-    GET    /v1/team                     Team: seats and members
-    POST   /v1/team/invites             Team: invite by email
-    POST   /v1/team/accept              accept an invite sent to this user's email
-    DELETE /v1/team/members/{id}
 """
 import logging
 from datetime import datetime
@@ -29,7 +25,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.api.deps import get_db, get_session_user
 from app.core.config import settings
 from app.core.errors import APIError
-from app.db.models import BuilderProject, TeamMember, User, WalletFunding
+from app.db.models import BuilderProject, User, WalletFunding
 from app.services.plans import catalog, subscriptions, usage
 from app.services.wallet import MICRO, crypto_options, dextopus, fx, ledger, pouch
 
@@ -199,7 +195,7 @@ def _insufficient(e: ledger.InsufficientFunds) -> APIError:
 # ------------------------------------------------------------------- plans
 def _plan_out(p: catalog.Plan) -> dict:
     return {"id": p.id, "name": p.name, "price_usd": p.price_usd,
-            "yearly_price_usd": p.yearly_price_usd, "per_seat": p.per_seat,
+            "yearly_price_usd": p.yearly_price_usd,
             "max_apps": p.max_apps, "window_credits": p.window_credits,
             "window_hours": settings.PLAN_WINDOW_HOURS, "month_credits": p.month_credits}
 
@@ -224,8 +220,7 @@ async def _me_plan(db: AsyncSession, user: User) -> dict:
     owned = int((await db.execute(select(func.count()).select_from(BuilderProject).where(
         BuilderProject.owner_id == user.id))).scalar_one())
     sub = account.subscription
-    return {"plan": _plan_out(account.plan), "seats": account.seats,
-            "team_owner": account.owner_id if account.owner_id != user.id else None,
+    return {"plan": _plan_out(account.plan),
             "status": sub.status if sub else "active",
             "yearly": bool(sub and sub.yearly),
             "period_end": sub.period_end if sub else None,
@@ -249,14 +244,13 @@ async def my_plan(user: User = Depends(get_session_user), db: AsyncSession = Dep
 class PlanIn(BaseModel):
     plan: str
     yearly: bool = False
-    seats: int = Field(default=1, ge=1, le=50)
 
 
 @router.post("/me/plan")
 async def change_plan(body: PlanIn, user: User = Depends(get_session_user),
                       db: AsyncSession = Depends(get_db)):
     try:
-        await subscriptions.subscribe(db, user.id, body.plan, body.yearly, body.seats)
+        await subscriptions.subscribe(db, user.id, body.plan, body.yearly)
     except subscriptions.PlanError as e:
         raise APIError(400, "bad_request", str(e))
     except ledger.InsufficientFunds as e:
@@ -271,62 +265,3 @@ async def cancel_plan(user: User = Depends(get_session_user), db: AsyncSession =
     await subscriptions.cancel(db, user.id)
     await db.commit()
     return await _me_plan(db, user)
-
-
-# -------------------------------------------------------------------- team
-@router.get("/team")
-async def my_team(user: User = Depends(get_session_user), db: AsyncSession = Depends(get_db)):
-    account = await usage.account_for(db, user.id)
-    rows = (await db.execute(select(TeamMember).where(
-        TeamMember.team_owner_id == account.owner_id).order_by(TeamMember.created_at))).scalars()
-    return {"owner": account.owner_id, "is_owner": account.owner_id == user.id,
-            "plan": account.plan.id, "seats": account.seats,
-            "members": [{"id": m.id, "email": m.email, "status": m.status, "user_id": m.user_id}
-                        for m in rows]}
-
-
-class InviteIn(BaseModel):
-    email: str = Field(max_length=320, pattern=r"^[^@\s]+@[^@\s]+\.[^@\s]+$")
-
-
-@router.post("/team/invites", status_code=201)
-async def invite(body: InviteIn, user: User = Depends(get_session_user),
-                 db: AsyncSession = Depends(get_db)):
-    account = await usage.account_for(db, user.id)
-    if account.plan.id != catalog.TEAM or account.owner_id != user.id:
-        raise APIError(403, "forbidden", "Only the owner of a Team plan can invite people.")
-    members = (await db.execute(select(func.count()).select_from(TeamMember).where(
-        TeamMember.team_owner_id == user.id))).scalar_one()
-    if members + 1 >= account.seats:                  # the owner holds a seat
-        raise APIError(402, "plan_limit", "Every seat is taken. Add seats to invite more people.")
-    email = body.email.strip().lower()
-    db.add(TeamMember(team_owner_id=user.id, email=email))
-    try:
-        await db.commit()
-    except Exception:
-        await db.rollback()
-        raise APIError(409, "conflict", "That person is already invited.")
-    return {"email": email, "status": "invited"}
-
-
-@router.post("/team/accept")
-async def accept_invite(user: User = Depends(get_session_user), db: AsyncSession = Depends(get_db)):
-    emails = {e.lower() for e in (user.email, user.profile_email) if e and "@" in e}
-    invite_row = (await db.execute(select(TeamMember).where(
-        TeamMember.email.in_(emails), TeamMember.status == "invited"))).scalars().first() \
-        if emails else None
-    if invite_row is None:
-        raise APIError(404, "not_found", "No team invite for this account.")
-    invite_row.user_id, invite_row.status = user.id, "active"
-    await db.commit()
-    return {"team_owner": invite_row.team_owner_id, "status": "active"}
-
-
-@router.delete("/team/members/{member_id}", status_code=204)
-async def remove_member(member_id: str, user: User = Depends(get_session_user),
-                        db: AsyncSession = Depends(get_db)):
-    row = await db.get(TeamMember, member_id)
-    if row is None or (row.team_owner_id != user.id and row.user_id != user.id):
-        raise APIError(404, "not_found", "No such member")
-    await db.delete(row)
-    await db.commit()

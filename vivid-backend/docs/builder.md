@@ -354,9 +354,8 @@ POST   /v1/wallet/crypto/address        {option} -> the user's address (made onc
 POST   /v1/wallet/credit-packs          {credits} buy extra builder credits
 GET    /v1/plans                        plans, prices, packs
 GET    /v1/me/plan                      plan, 5-hour and monthly meters, extra credits
-POST   /v1/me/plan                      {plan, yearly, seats} subscribe or change
+POST   /v1/me/plan                      {plan, yearly} subscribe or change (pro | max)
 DELETE /v1/me/plan                      cancel at the end of the period
-GET    /v1/team, POST /v1/team/invites, POST /v1/team/accept, DELETE /v1/team/members/{id}
 POST   /v1/webhooks/pouch, /v1/webhooks/dextopus   provider webhooks
 GET    /v1/admin/economics?days=30      cost per 1M tokens and plan margins (ADMIN_TOKEN)
 ```
@@ -370,7 +369,7 @@ convert at the day's rate less `WALLET_FX_SPREAD_BPS`.
 Plans (all `PLAN_*` settings) are counted in credits: one credit is
 `PLAN_TOKENS_PER_CREDIT` builder tokens (500,000 by default). Free has 2
 apps and 20 credits a month (4 per rolling 5-hour window); Pro 100 a month;
-Team 200 a month per seat, pooled. A turn is checked when it starts (429
+Max 200 a month (24 per 5 hours), for one person. A turn is checked when it starts (429
 `limit_reached` with credits and reset times in `error.details`) and always
 finishes; usage beyond the allowance comes off extra credits
 (`PLAN_CREDIT_PRICE_USD` each, never expiring). Creating a third app on Free is 402 `plan_limit`.

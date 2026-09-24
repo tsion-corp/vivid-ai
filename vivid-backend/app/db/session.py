@@ -89,6 +89,10 @@ async def init_db() -> None:
             " WHERE b.project_id = p.id AND b.status = 'live')"))
         await conn.execute(text(
             "ALTER TABLE waitlist_entries ADD COLUMN IF NOT EXISTS phone_no VARCHAR(16)"))
+        # The $1 plan was "team" (per seat, pooled); it is "max" now, for one
+        # person. Existing subscribers keep it under the new name.
+        await conn.execute(text(
+            "UPDATE subscriptions SET plan = 'max', seats = 1 WHERE plan = 'team'"))
 
     async with async_session() as db:
         # Prompts are product config and deploy with the backend: upsert so a

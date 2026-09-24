@@ -48,22 +48,21 @@ def _unused_credit_micro(sub: Subscription, now: datetime) -> int:
     left = (end - now).total_seconds()
     if total <= 0 or left <= 0:
         return 0
-    paid = catalog.get(sub.plan).charge_usd(sub.yearly, sub.seats)
+    paid = catalog.get(sub.plan).charge_usd(sub.yearly)
     return int(to_micro(paid) * left / total)
 
 
-async def subscribe(db: AsyncSession, user_id: str, plan_id: str, yearly: bool = False,
-                    seats: int = 1) -> Subscription:
+async def subscribe(db: AsyncSession, user_id: str, plan_id: str,
+                    yearly: bool = False) -> Subscription:
     """Start or change a paid plan now. Raises ledger.InsufficientFunds when
     the wallet cannot pay the difference. The caller commits."""
-    if plan_id not in (catalog.PRO, catalog.TEAM):
-        raise PlanError("pick Pro or Team; Free is what you get by cancelling")
+    if plan_id not in (catalog.PRO, catalog.MAX):
+        raise PlanError("pick Pro or Max; Free is what you get by cancelling")
     plan = catalog.get(plan_id)
-    seats = max(1, seats) if plan.per_seat else 1
     now = datetime.now(timezone.utc)
     sub = await db.get(Subscription, user_id)
     credit = _unused_credit_micro(sub, now) if sub is not None else 0
-    price = to_micro(plan.charge_usd(yearly, seats))
+    price = to_micro(plan.charge_usd(yearly))
     # A plan change is a deliberate action, never a retried delivery: each
     # gets its own reference (two changes in one second must both be paid).
     change_ref = uuid.uuid4().hex
@@ -72,14 +71,14 @@ async def subscribe(db: AsyncSession, user_id: str, plan_id: str, yearly: bool =
                             f"plan-unused:{user_id}:{change_ref}", ref=sub.plan,
                             description=f"Unused {catalog.get(sub.plan).name} time")
     await ledger.debit(db, user_id, price, ledger.PLAN, VIVID, f"plan:{user_id}:{change_ref}",
-                       ref=plan_id, original_amount=str(plan.charge_usd(yearly, seats)),
+                       ref=plan_id, original_amount=str(plan.charge_usd(yearly)),
                        original_currency="USD",
-                       description=f"{plan.name}{f' x{seats}' if plan.per_seat else ''}, "
+                       description=f"{plan.name}, "
                                    f"{'1 year' if yearly else '1 month'}")
     if sub is None:
         sub = Subscription(user_id=user_id, plan=plan_id)
         db.add(sub)
-    sub.plan, sub.seats, sub.yearly = plan_id, seats, yearly
+    sub.plan, sub.seats, sub.yearly = plan_id, 1, yearly
     sub.status, sub.auto_renew, sub.grace_until = "active", True, None
     sub.period_start, sub.period_end = now, _period(now, yearly)
     return sub
@@ -95,8 +94,7 @@ async def cancel(db: AsyncSession, user_id: str) -> Subscription | None:
 
 
 async def buy_pack(db: AsyncSession, user_id: str, credits: int, owner_id: str | None = None) -> float:
-    """Extra credits from the wallet; they go to the account that pays (the
-    team owner on Team). Kept as tokens underneath so a turn's exact usage
+    """Extra credits from the wallet, for the account that pays. Kept as tokens underneath so a turn's exact usage
     can be taken off. Returns the account's extra credits."""
     if credits not in settings.PLAN_CREDIT_PACKS:
         raise PlanError(f"packs are {', '.join(str(p) for p in settings.PLAN_CREDIT_PACKS)} credits")
@@ -124,12 +122,12 @@ async def renew_due(db: AsyncSession) -> dict:
             done["lapsed"] += 1
             continue
         plan = catalog.get(sub.plan)
-        price = to_micro(plan.charge_usd(sub.yearly, sub.seats))
+        price = to_micro(plan.charge_usd(sub.yearly))
         period_ref = _aware(sub.period_end).strftime("%Y%m%dT%H%M%S")
         try:
             await ledger.debit(db, sub.user_id, price, ledger.PLAN, VIVID,
                                f"plan-renew:{sub.user_id}:{period_ref}", ref=sub.plan,
-                               original_currency="USD", original_amount=str(plan.charge_usd(sub.yearly, sub.seats)),
+                               original_currency="USD", original_amount=str(plan.charge_usd(sub.yearly)),
                                description=f"{plan.name} renewal")
         except ledger.InsufficientFunds:
             if sub.status != "grace":

@@ -1,14 +1,14 @@
 """Plans: usage sums over the rolling window and the month, the turn gate
 refuses at the limit and lets extra credits through, overshoot is settled
 against extra credits, Free stops at two apps, subscriptions are paid from
-the wallet (with proration, grace and lapse), Team pools its members, and
-the economics report prices a million tokens from real rows."""
+the wallet (with proration, grace and lapse), Max is for one person (old
+"team" rows included), and the economics report prices a million tokens from real rows."""
 from datetime import datetime, timedelta, timezone
 
 import pytest
 
 from app.core.config import settings
-from app.db.models import (BuilderProject, BuilderUsageEvent, Subscription, TeamMember)
+from app.db.models import BuilderProject, BuilderUsageEvent, Subscription
 from app.services import economics
 from app.services.plans import catalog, gate, subscriptions, usage
 from app.services.wallet import fx, ledger
@@ -25,13 +25,13 @@ def small_plans(monkeypatch):
     monkeypatch.setattr(settings, "PLAN_FREE_MONTH_CREDITS", 50)         # 5,000
     monkeypatch.setattr(settings, "PLAN_PRO_WINDOW_CREDITS", 100)
     monkeypatch.setattr(settings, "PLAN_PRO_MONTH_CREDITS", 500)         # 50,000
-    monkeypatch.setattr(settings, "PLAN_TEAM_WINDOW_CREDITS", 30)
-    monkeypatch.setattr(settings, "PLAN_TEAM_MONTH_CREDITS", 300)
+    monkeypatch.setattr(settings, "PLAN_MAX_WINDOW_CREDITS", 30)
+    monkeypatch.setattr(settings, "PLAN_MAX_MONTH_CREDITS", 300)
     # Prices pinned so the arithmetic below does not follow launch pricing.
     monkeypatch.setattr(settings, "PLAN_PRO_PRICE_USD", 32.0)
     monkeypatch.setattr(settings, "PLAN_PRO_YEARLY_PRICE_USD", 26.0)
-    monkeypatch.setattr(settings, "PLAN_TEAM_PRICE_USD", 78.0)
-    monkeypatch.setattr(settings, "PLAN_TEAM_YEARLY_PRICE_USD", 62.0)
+    monkeypatch.setattr(settings, "PLAN_MAX_PRICE_USD", 78.0)
+    monkeypatch.setattr(settings, "PLAN_MAX_YEARLY_PRICE_USD", 62.0)
     monkeypatch.setattr(settings, "PLAN_IMAGE_TOKEN_EQUIVALENT", 100)
     fx.set_rates({"USD": 1.0, "NGN": 1500.0})
 
@@ -161,11 +161,11 @@ async def test_an_upgrade_credits_the_unused_period(maker):
         sub.period_start = NOW - timedelta(days=15)
         sub.period_end = NOW + timedelta(days=15)
         await db.commit()
-        await subscriptions.subscribe(db, "u1", catalog.TEAM, seats=2)
+        await subscriptions.subscribe(db, "u1", catalog.MAX)
         await db.commit()
-        # 200 - 32 + ~16 back - 156 for two Team seats
+        # 200 - 32 + ~16 back - 78 for Max
         balance = await ledger.balance(db, "u1")
-    assert 27_500_000 < balance < 28_500_000
+    assert 105_500_000 < balance < 106_500_000
 
 
 async def test_renewal_grace_and_lapse(maker):
@@ -194,21 +194,29 @@ async def test_renewal_grace_and_lapse(maker):
         assert (await usage.account_for(db, "u1")).plan.id == "free"
 
 
-async def test_team_members_draw_from_the_owners_pool(maker):
+async def test_max_is_one_persons_plan_and_old_team_rows_are_max(maker):
     await _fund(maker, 200)
     async with maker() as db:
-        await subscriptions.subscribe(db, "u1", catalog.TEAM, seats=2)
-        db.add(TeamMember(team_owner_id="u1", user_id="u2", email="b@vivid", status="active"))
+        await subscriptions.subscribe(db, "u1", catalog.MAX)
+        # A row written when the $1 plan was still called "team".
+        db.add(Subscription(user_id="u2", plan="team", seats=3,
+                            period_start=NOW, period_end=NOW + timedelta(days=30)))
         await db.commit()
     mine = await _project(maker, owner="u1")
     theirs = await _project(maker, owner="u2")
     await _use(maker, mine, tokens=2000)
     await _use(maker, theirs, tokens=3000)
     async with maker() as db:
-        account = await usage.account_for(db, "u2")
-        m = await usage.meter(db, account)
-    assert account.owner_id == "u1" and account.plan.id == "team"
-    assert m.window_used == 5000 and m.window_limit == 6000          # 3000 x 2 seats
+        me = await usage.account_for(db, "u1")
+        m = await usage.meter(db, me)
+        legacy = await usage.account_for(db, "u2")
+    assert me.plan.id == "max" and me.plan.name == "Max"
+    # Only my own usage counts, against one person's allowance.
+    assert m.window_used == 2000 and m.window_limit == 3000
+    assert legacy.plan.id == "max" and legacy.owner_id == "u2"
+    with pytest.raises(subscriptions.PlanError):
+        async with maker() as db:
+            await subscriptions.subscribe(db, "u1", "team")
 
 
 # --------------------------------------------------------------- economics

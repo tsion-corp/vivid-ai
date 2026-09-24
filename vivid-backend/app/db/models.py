@@ -585,8 +585,9 @@ class Subscription(Base):
 
     user_id: Mapped[str] = mapped_column(
         ForeignKey("users.id", ondelete="CASCADE"), primary_key=True)
-    #: pro | team
+    #: pro | max ("team" rows from before the rename are moved to max)
     plan: Mapped[str] = mapped_column(String(16))
+    #: Always 1 now; kept for rows written when the plan had seats.
     seats: Mapped[int] = mapped_column(Integer, default=1)
     yearly: Mapped[bool] = mapped_column(Boolean, default=False)
     #: active | grace | canceled (canceled keeps the plan until period_end)
@@ -599,22 +600,4 @@ class Subscription(Base):
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_now)
     updated_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), default=_now, onupdate=_now)
-
-
-class TeamMember(Base):
-    """A seat on someone's Team plan. The member's usage draws from the
-    owner's pooled allowance."""
-    __tablename__ = "team_members"
-    __table_args__ = (UniqueConstraint("team_owner_id", "email", name="uq_team_members_email"),)
-
-    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=_uuid)
-    team_owner_id: Mapped[str] = mapped_column(
-        ForeignKey("users.id", ondelete="CASCADE"), index=True)
-    #: Set when the invite is accepted.
-    user_id: Mapped[str | None] = mapped_column(
-        ForeignKey("users.id", ondelete="CASCADE"), index=True, default=None)
-    email: Mapped[str] = mapped_column(String(320))
-    #: invited | active
-    status: Mapped[str] = mapped_column(String(10), default="invited")
-    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_now)
 

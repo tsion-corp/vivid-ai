@@ -9,7 +9,9 @@ from dataclasses import dataclass
 
 from app.core.config import settings
 
-FREE, PRO, TEAM = "free", "pro", "team"
+FREE, PRO, MAX = "free", "pro", "max"
+#: Plans renamed since; a stored id from before still resolves.
+_LEGACY = {"team": MAX}
 
 
 def tokens_per_credit() -> int:
@@ -29,15 +31,14 @@ def to_tokens(credits: float) -> int:
 class Plan:
     id: str
     name: str
-    #: USD per month (per seat on Team); yearly is the per-month price when
-    #: paid for twelve months at once.
+    #: USD per month; yearly is the per-month price when paid for twelve
+    #: months at once.
     price_usd: float
     yearly_price_usd: float
     #: None = unlimited.
     max_apps: int | None
     window_credits: float
     month_credits: float
-    per_seat: bool = False
 
     @property
     def window_tokens(self) -> int:
@@ -47,16 +48,9 @@ class Plan:
     def month_tokens(self) -> int:
         return to_tokens(self.month_credits)
 
-    def window_for(self, seats: int) -> int:
-        """The window allowance in tokens, for this many seats."""
-        return self.window_tokens * (seats if self.per_seat else 1)
-
-    def month_for(self, seats: int) -> int:
-        return self.month_tokens * (seats if self.per_seat else 1)
-
-    def charge_usd(self, yearly: bool, seats: int) -> float:
+    def charge_usd(self, yearly: bool) -> float:
         per_month = self.yearly_price_usd if yearly else self.price_usd
-        return per_month * (12 if yearly else 1) * (seats if self.per_seat else 1)
+        return per_month * (12 if yearly else 1)
 
 
 def plans() -> dict[str, Plan]:
@@ -66,12 +60,13 @@ def plans() -> dict[str, Plan]:
                    s.PLAN_FREE_MONTH_CREDITS),
         PRO: Plan(PRO, "Pro", s.PLAN_PRO_PRICE_USD, s.PLAN_PRO_YEARLY_PRICE_USD, None,
                   s.PLAN_PRO_WINDOW_CREDITS, s.PLAN_PRO_MONTH_CREDITS),
-        TEAM: Plan(TEAM, "Team", s.PLAN_TEAM_PRICE_USD, s.PLAN_TEAM_YEARLY_PRICE_USD, None,
-                   s.PLAN_TEAM_WINDOW_CREDITS, s.PLAN_TEAM_MONTH_CREDITS, per_seat=True),
+        MAX: Plan(MAX, "Max", s.PLAN_MAX_PRICE_USD, s.PLAN_MAX_YEARLY_PRICE_USD, None,
+                  s.PLAN_MAX_WINDOW_CREDITS, s.PLAN_MAX_MONTH_CREDITS),
     }
 
 
 def get(plan_id: str) -> Plan:
+    plan_id = _LEGACY.get(plan_id, plan_id)
     return plans().get(plan_id) or plans()[FREE]
 
 
