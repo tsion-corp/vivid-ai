@@ -25,7 +25,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.api.deps import get_db, get_session_user
 from app.core.errors import APIError
 from app.db.models import (BuilderProject, User, VividPayBankAccount, VividPayCheckout,
-                           VividPayEntry, VividPayPayout)
+                           VividPayEntry, VividPayPayout, VividPayProject)
 from app.services.vividpay import VividPayError, checkouts, earnings, kyc, payouts
 from app.services.wallet import pouch
 
@@ -47,13 +47,22 @@ async def my_earnings(user: User = Depends(get_session_user), db: AsyncSession =
         .where(VividPayEntry.owner_id == user.id, VividPayEntry.kind.in_(
             (earnings.PAYMENT, earnings.FEE)))
         .group_by(VividPayEntry.project_id, BuilderProject.name))).all()
+    # Every app that takes Vivid Pay (or once did), with what it earned.
+    totals = {pid: (name, int(total)) for pid, name, total in per_app}
+    for pid, name in (await db.execute(
+            select(VividPayProject.project_id, BuilderProject.name)
+            .join(BuilderProject, BuilderProject.id == VividPayProject.project_id)
+            .where(VividPayProject.owner_id == user.id))).all():
+        totals.setdefault(pid, (name, 0))
+    apps = sorted(({"project_id": pid, "name": name, "net_kobo": total}
+                   for pid, (name, total) in totals.items()),
+                  key=lambda a: (-a["net_kobo"], (a["name"] or "").lower()))
     return {"balance_kobo": account.balance_kobo, "pending_kobo": account.pending_kobo,
             "kyc": {"status": account.kyc_status, "name": account.kyc_name},
             "earnings_account": ({"account_number": account.earnings_account_number,
                                   "bank_name": account.earnings_bank_name}
                                  if account.earnings_va_id else None),
-            "apps": [{"project_id": pid, "name": name, "net_kobo": int(total)}
-                     for pid, name, total in per_app],
+            "apps": apps,
             "available": pouch.configured()}
 
 

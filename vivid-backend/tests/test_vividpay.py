@@ -453,6 +453,20 @@ def test_history_folds_fees_filters_and_pages(api, maker, fake):
     assert len(api.get("/v1/earnings/checkouts?q=tunde").json()["items"]) == 4
     assert api.get("/v1/earnings/checkouts?mode=test").json()["items"] == []
 
+    # Every app with Vivid Pay is a filter choice, paid or not yet.
+    async def quiet_app():
+        async with maker() as db:
+            p = BuilderProject(owner_id="u1", name="Quiet Shop", mode="build")
+            db.add(p)
+            await db.flush()
+            db.add(VividPayProject(project_id=p.id, owner_id="u1", publishable_key="vpk_q",
+                                   secret_key_enc=vault.encrypt("vsk_q"), secret_key_hash=key_hash("vsk_q")))
+            await db.commit()
+    asyncio.run(quiet_app())
+    apps = api.get("/v1/earnings").json()["apps"]
+    assert [(a["name"], a["net_kobo"]) for a in apps] == [("Mama's Kitchen", 3 * (1_500_000 - 22_500)),
+                                                         ("Quiet Shop", 0)]
+
 
 def test_app_webhook_signature():
     body = b'{"event":"checkout.paid"}'
