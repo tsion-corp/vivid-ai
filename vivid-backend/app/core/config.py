@@ -360,6 +360,13 @@ class Settings(BaseSettings):
     E2B_MOBILE_TEMPLATE: str = "vivid-expo"
     BUILDER_MOBILE_DEV_PORT: int = 8081
     BUILDER_MOBILE_TEMPLATE_DIR: str = "../sandbox-templates/vivid-expo"
+    # Expo Go on phones. React Native's dev tooling speaks plain http to the
+    # dev server (packager /status, live reload) and E2B only answers https,
+    # so phones go through a relay on our own host that answers http:
+    # http://<sandbox id>.<this domain> -> https://8081-<sandbox id>.e2b.app
+    # (a Caddy block; see docs/builder.md). Empty: exps:// straight to E2B,
+    # which loads the manifest but fails React Native's packager check.
+    EXPO_DEVICE_RELAY_DOMAIN: str = ""
     # Where the local driver puts project directories.
     BUILDER_LOCAL_ROOT: str = "/tmp/vivid-builder"
 

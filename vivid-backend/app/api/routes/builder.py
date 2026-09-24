@@ -1482,10 +1482,15 @@ async def _start_sandbox(project_id: str, redis, target: targets.Target | None =
 
 def _device_url(sandbox) -> str | None:
     """What Expo Go opens on the user's phone (shown as a QR code): the same
-    Metro server as the web preview, over the exps:// scheme (https). Local
-    sandboxes are on this host only, so a phone cannot reach them."""
+    Metro server as the web preview. Through the http relay when one is
+    configured (React Native's dev tooling needs plain http), else exps://
+    straight to E2B. Local sandboxes are on this host only, so a phone cannot
+    reach them."""
     if not sandbox.target.is_mobile:
         return None
+    relay = settings.EXPO_DEVICE_RELAY_DOMAIN
+    if relay and sandbox.driver == "e2b":
+        return f"exp://{sandbox.id}.{relay}"
     url = sandbox.preview_url()
     if url.startswith("https://"):
         return "exps://" + url.removeprefix("https://")

@@ -177,3 +177,17 @@ def test_device_url_is_exps_for_a_public_sandbox():
     web = FakeSandbox()
     web.preview_url = lambda: "https://5173-abc.e2b.app"
     assert builder_routes._device_url(web) is None
+
+
+def test_device_url_goes_through_the_http_relay_when_configured(monkeypatch):
+    """React Native's packager check and live reload speak plain http, which
+    E2B refuses; phones go through the relay on our own host instead."""
+    from app.core.config import settings
+    monkeypatch.setattr(settings, "EXPO_DEVICE_RELAY_DOMAIN", "1-2-3-4.sslip.io")
+    sb = mobile_sandbox()
+    sb.driver, sb.id = "e2b", "iefv8pn8cautdl4zoxe3b"
+    assert builder_routes._device_url(sb) == "exp://iefv8pn8cautdl4zoxe3b.1-2-3-4.sslip.io"
+    # A local sandbox is not behind the relay.
+    local = mobile_sandbox()
+    local.preview_url = lambda: "http://127.0.0.1:8081"
+    assert builder_routes._device_url(local) is None

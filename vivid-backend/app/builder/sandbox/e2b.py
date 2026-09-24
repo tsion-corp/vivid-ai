@@ -154,7 +154,11 @@ class E2BSandbox(Sandbox):
         http://<host>:8081 URLs they cannot load."""
         if not self.target.is_mobile:
             return
-        host = self._sb.get_host(self.target.port)
+        relay = settings.EXPO_DEVICE_RELAY_DOMAIN
+        # Phones read this URL from the manifest; the browser preview uses
+        # relative paths, so it is unaffected either way.
+        public = (f"http://{self.id}.{relay}" if relay
+                  else f"https://{self._sb.get_host(self.target.port)}")
         try:
             # "[e]xpo" so the pattern never matches this shell's own command line.
             await self._sb.commands.run("pkill -f '[e]xpo start' || true; sleep 1", cwd=APP_ROOT,
@@ -162,7 +166,7 @@ class E2BSandbox(Sandbox):
             await self._sb.commands.run(
                 f"npx expo start --port {self.target.port} > {DEV_LOG} 2>&1",
                 background=True, cwd=APP_ROOT,
-                envs={"EXPO_PACKAGER_PROXY_URL": f"https://{host}", "EXPO_NO_TELEMETRY": "1",
+                envs={"EXPO_PACKAGER_PROXY_URL": public, "EXPO_NO_TELEMETRY": "1",
                       "NO_COLOR": "1", "FORCE_COLOR": "0"})
         except (SandboxException, httpx.HTTPError) as e:
             raise SandboxError(f"could not start Metro: {e}") from e

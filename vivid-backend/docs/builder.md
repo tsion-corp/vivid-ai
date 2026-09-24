@@ -407,6 +407,37 @@ Mobile projects use `sandbox-templates/vivid-expo` (Expo SDK 57, Metro on
 port 8081, serving the web preview and Expo Go). Build it with its
 `template.py`; for the local driver run its `setup.sh` once.
 
+Phones need a relay. React Native's dev tooling in Expo Go talks plain http
+to the dev server (the packager `/status` check, live reload), and E2B only
+answers https, so `EXPO_DEVICE_RELAY_DOMAIN` names a domain whose
+subdomains a proxy on our host forwards to the sandbox. With
+`EXPO_DEVICE_RELAY_DOMAIN=170-75-171-250.sslip.io` (no DNS to set up: sslip.io
+resolves the name to that IP) the QR code is `exp://<sandbox id>.<domain>`,
+Metro advertises `http://<sandbox id>.<domain>`, and the host's Caddy has:
+
+```
+http://*.170-75-171-250.sslip.io {
+	@sandbox header_regexp Host ^[a-z0-9]{12,40}\.170-75-171-250\.sslip\.io(:80)?$
+	handle @sandbox {
+		reverse_proxy 8081-{labels.3}.e2b.app:443 {
+			header_up Host 8081-{labels.3}.e2b.app
+			transport http {
+				tls
+				tls_server_name 8081-{labels.3}.e2b.app
+			}
+			flush_interval -1
+		}
+	}
+	handle {
+		respond "Not found" 404
+	}
+}
+```
+
+With your own domain instead, point a wildcard DNS record at the host, use
+it in the block (`{labels.N}` counts from the right, so adjust N) and in
+the setting. It must stay plain http (no Cloudflare proxying).
+
 ## Evaluating models
 
 ```
