@@ -148,13 +148,16 @@ def copy_block() -> str:
     return "## Copy skill\n" + text if text else ""
 
 
-def payments_block(provider: str | None) -> str:
-    """The payments skill, when the project takes payments."""
+def payments_block(provider: str | None, mobile: bool = False) -> str:
+    """The payments skill, when the project takes payments. A mobile app
+    only takes Vivid Pay (Paystack's checkout is a web script)."""
     if not provider or provider == "none":
         return ""
     if provider == "vividpay":
-        text = _read("vividpay/SKILL.md")
+        text = _read("vividpay/MOBILE.md" if mobile else "vividpay/SKILL.md")
         return "## Payments skill (Vivid Pay)\n" + text if text else ""
+    if mobile:
+        return ""
     text = _read("payments/SKILL.md")
     return "## Payments skill\n" + text if text else ""
 
@@ -239,7 +242,8 @@ def ui_block(spec_md: str | None, user_text: str = "",
     A mobile app gets the mobile skill in place of the web design and motion
     skills; web-only integrations never reach it."""
     if mobile:
-        blocks = (mobile_block(backend, recipe), copy_block(), fullstack_block(backend))
+        blocks = (mobile_block(backend, recipe), copy_block(), fullstack_block(backend),
+                  payments_block(payments, mobile=True))
         return "\n\n".join(b for b in blocks if b)
     blocks = (design_block(spec_md, user_text, recipe), copy_block(),
               motion_block(recipe, user_text),

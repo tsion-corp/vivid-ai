@@ -16,10 +16,11 @@ import logging
 from urllib.parse import urlparse
 
 from fastapi import APIRouter, Depends, Request, Response
-from sqlalchemy import select
+from sqlalchemy import or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.deps import get_db
+from app.builder import targets
 from app.core.config import settings
 from app.core.errors import APIError
 from app.db.models import BuilderProject, VividPayCheckout, VividPayProject
@@ -64,6 +65,19 @@ def mode_for(origin: str | None, project: BuilderProject) -> str | None:
     return None
 
 
+def key_mode(key: str | None, pay: VividPayProject, origin: str | None,
+             project: BuilderProject) -> str | None:
+    """The test key is always test. The live key goes by origin on the web;
+    a mobile app's native requests carry no origin, and its live key only
+    ever ships in an installable build, so they are live."""
+    if pay.test_key and key == pay.test_key:
+        return "test"
+    mode = mode_for(origin, project)
+    if mode is None and not origin and targets.of(project).is_mobile:
+        return "live"
+    return mode
+
+
 def _ip(request: Request) -> str:
     return (request.headers.get("cf-connecting-ip")
             or request.headers.get("x-forwarded-for", "").split(",")[0].strip()
@@ -85,8 +99,9 @@ async def _by_key(db: AsyncSession, key: str | None) -> tuple[VividPayProject, B
         raise VividPayError("Payments are switched off.", "not_configured", 503)
     if not key or not key.startswith("vpk_"):
         raise VividPayError("A publishable key (vpk_...) is required.", "unauthorized", 401)
-    pay = (await db.execute(select(VividPayProject).where(
-        VividPayProject.publishable_key == key))).scalar_one_or_none()
+    pay = (await db.execute(select(VividPayProject).where(or_(
+        VividPayProject.publishable_key == key,
+        VividPayProject.test_key == key)))).scalar_one_or_none()
     if pay is None or not pay.enabled:
         raise VividPayError("That key is not active.", "unauthorized", 401)
     project = await db.get(BuilderProject, pay.project_id)
@@ -107,7 +122,7 @@ async def create_checkout(request: Request, db: AsyncSession = Depends(get_db)):
     try:
         data = await _body(request)
         pay, project = await _by_key(db, data.get("key"))
-        mode = mode_for(request.headers.get("origin"), project)
+        mode = key_mode(data.get("key"), pay, request.headers.get("origin"), project)
         if mode is None:
             raise VividPayError("This key only works on the app's own site.", "forbidden", 403)
         redis = getattr(request.app.state, "redis", None)

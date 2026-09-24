@@ -106,6 +106,15 @@ def with_store_ids(app_json: str, project: BuilderProject, owner: str,
     return json.dumps(data, indent=2) + "\n"
 
 
+def with_build_env(eas_json: str, profile: str, env: dict[str, str]) -> str:
+    """eas.json with the app's public env on the build profile."""
+    data = json.loads(eas_json or "{}")
+    prof = data.setdefault("build", {}).setdefault(profile, {})
+    prof["env"] = {**(prof.get("env") or {}),
+                   **{k: v for k, v in env.items() if k.startswith("EXPO_PUBLIC_")}}
+    return json.dumps(data, indent=2) + "\n"
+
+
 def _json_out(stdout: str):
     """The JSON eas-cli prints with --json (other output goes to stderr, but
     a stray line before it is skipped)."""
@@ -134,6 +143,11 @@ async def start(build_id: str) -> None:
             build.eas_owner = owner
             await db.commit()
             eas_project_id = (project.eas_projects or {}).get(owner)
+            # The app's public env, as the installed app needs it (Vivid Pay's
+            # live key, not the sandbox's test key). Local import: the routes
+            # module imports this one.
+            from app.api.routes.builder import _env_for
+            build_env = await _env_for(project, db, for_build=True) or {}
 
         sandbox = await manager.create_fresh(f"build-{build_id}",
                                              targets.get(targets.MOBILE), wait=False)
@@ -142,6 +156,11 @@ async def start(build_id: str) -> None:
         app_json = await sandbox.read_file("app.json")
         await sandbox.write_file("app.json", with_store_ids(app_json, project, owner,
                                                             eas_project_id))
+        if build_env:
+            # .env is not in the snapshot or the upload; EXPO_PUBLIC_* values
+            # are inlined at bundle time from the build profile's env.
+            eas_json = await sandbox.read_file("eas.json")
+            await sandbox.write_file("eas.json", with_build_env(eas_json, build.profile, build_env))
         env = {"EXPO_TOKEN": token, "EAS_NO_VCS": "1", "EAS_BUILD_NO_EXPO_GO_WARNING": "true"}
         if not eas_project_id:
             out = await _run(sandbox, f"eas init --non-interactive --force --json --account {owner}",

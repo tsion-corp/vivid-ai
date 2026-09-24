@@ -93,6 +93,11 @@ async def init_db() -> None:
         # person. Existing subscribers keep it under the new name.
         await conn.execute(text(
             "UPDATE subscriptions SET plan = 'max', seats = 1 WHERE plan = 'team'"))
+        await conn.execute(text(
+            "ALTER TABLE vivid_pay_projects ADD COLUMN IF NOT EXISTS test_key VARCHAR(64)"))
+        await conn.execute(text(
+            "CREATE UNIQUE INDEX IF NOT EXISTS ix_vivid_pay_projects_test_key "
+            "ON vivid_pay_projects (test_key)"))
 
     async with async_session() as db:
         # Prompts are product config and deploy with the backend: upsert so a

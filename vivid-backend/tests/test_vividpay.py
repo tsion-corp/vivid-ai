@@ -472,3 +472,52 @@ def test_polling_the_status_pays_a_waiting_checkout(api, maker, fake, monkeypatc
         return [{"id": "tr_seen", "virtual_account_id": "va_1", "amount": 1_500_000}]
     monkeypatch.setattr(pouch, "inbound_transfers", inbound)
     assert api.get(f"/v1/pay/checkouts/{cid}?key=vpk_test").json()["status"] == "paid"
+
+
+# ------------------------------------------------------------------ mobile
+def test_mobile_apps_use_the_test_key_until_built(maker, fake, monkeypatch):
+    """The sandbox and Expo Go get the test key; an installable build gets
+    the live one, and native requests (no Origin) with it are live."""
+    from app.api.routes import builder as builder_routes
+    from app.api.routes.pay import key_mode
+    monkeypatch.setattr(settings, "PUBLIC_BASE_URL", "https://api.vivid.test")
+
+    async def check():
+        async with maker() as db:
+            p = BuilderProject(owner_id="u1", name="Shop", mode="build", target="mobile",
+                               payments_provider="vividpay")
+            db.add(p)
+            await db.flush()
+            pay = VividPayProject(project_id=p.id, owner_id="u1", publishable_key="vpk_live",
+                                  secret_key_enc=vault.encrypt("vsk_x"), secret_key_hash=key_hash("vsk_x"))
+            db.add(pay)
+            await db.commit()
+            env = await builder_routes._env_for(p, db)
+            assert env["EXPO_PUBLIC_VIVIDPAY_KEY"].startswith("vpk_test")
+            assert env["EXPO_PUBLIC_VIVIDPAY_KEY"] == pay.test_key
+            assert env["EXPO_PUBLIC_VIVIDPAY_API"] == "https://api.vivid.test/v1/pay"
+            built = await builder_routes._env_for(p, db, for_build=True)
+            assert built["EXPO_PUBLIC_VIVIDPAY_KEY"] == "vpk_live"
+
+            assert key_mode(pay.test_key, pay, None, p) == "test"
+            assert key_mode("vpk_live", pay, None, p) == "live"
+            assert key_mode("vpk_live", pay, "https://evil.example", p) is None
+            web = BuilderProject(owner_id="u1", name="Web", mode="build")
+            assert key_mode("vpk_live", pay, None, web) is None
+    asyncio.run(check())
+
+
+def test_a_build_carries_the_apps_public_env():
+    from app.builder.app_build import with_build_env
+    out = json.loads(with_build_env(
+        json.dumps({"build": {"preview": {"distribution": "internal", "env": {"A": "1"}}}}),
+        "preview", {"EXPO_PUBLIC_VIVIDPAY_KEY": "vpk_live", "SECRET": "no"}))
+    assert out["build"]["preview"]["env"] == {"A": "1", "EXPO_PUBLIC_VIVIDPAY_KEY": "vpk_live"}
+    assert out["build"]["preview"]["distribution"] == "internal"
+
+
+def test_the_mobile_skill_is_the_native_checkout():
+    from app.builder import skills
+    text = skills.payments_block("vividpay", mobile=True)
+    assert "EXPO_PUBLIC_VIVIDPAY_KEY" in text and "expo-clipboard" in text
+    assert skills.payments_block("paystack", mobile=True) == ""

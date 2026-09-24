@@ -31,7 +31,7 @@ def test_web_is_the_default_and_keeps_its_old_values():
 def test_mobile_target_is_expo():
     assert MOBILE.is_mobile and MOBILE.e2b_template == "vivid-expo" and MOBILE.port == 8081
     assert MOBILE.env("SUPABASE_URL") == "EXPO_PUBLIC_SUPABASE_URL"
-    assert MOBILE.integrations == {"supabase"}
+    assert MOBILE.integrations == {"supabase", "vividpay"}
 
 
 def test_env_names_follow_the_target():

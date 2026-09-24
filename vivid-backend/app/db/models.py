@@ -594,6 +594,10 @@ class VividPayProject(Base):
     #: vpk_...: in the app's bundle, names the project, allowed only from
     #: the app's own origins.
     publishable_key: Mapped[str] = mapped_column(String(64), unique=True, index=True)
+    #: vpk_test_...: always test mode (no real account, no money). Mobile apps
+    #: carry it while they run in the sandbox and Expo Go; the live key goes
+    #: into installable builds only. Web apps use the live key and origins.
+    test_key: Mapped[str | None] = mapped_column(String(64), unique=True, index=True, default=None)
     #: vsk_... encrypted (builder secrets' Fernet); for the app's server side.
     secret_key_enc: Mapped[str] = mapped_column(Text)
     #: sha256 of the secret key, to find the project a server call is for.

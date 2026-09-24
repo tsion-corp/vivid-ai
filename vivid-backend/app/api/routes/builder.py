@@ -514,9 +514,12 @@ async def _sync_env(sandbox, env_vars: dict[str, str] | None) -> None:
         await sandbox.write_file(".env", wanted)
 
 
-async def _env_for(project: BuilderProject, db: AsyncSession) -> dict[str, str] | None:
+async def _env_for(project: BuilderProject, db: AsyncSession,
+                   for_build: bool = False) -> dict[str, str] | None:
     """The app's .env: the backend's URL and publishable key, and the
-    payments public key. Only values safe in a browser."""
+    payments public key. Only values safe in a browser. `for_build`: the
+    env baked into an installable mobile build, which takes real payments
+    (the sandbox and Expo Go get Vivid Pay's test key)."""
     env: dict[str, str] = {}
     if project.backend_mode != "none":
         url = await secrets.get_secret(db, project.id, "SUPABASE_URL")
@@ -526,7 +529,11 @@ async def _env_for(project: BuilderProject, db: AsyncSession) -> dict[str, str] 
     if project.payments_provider == "vividpay":
         pay = await db.get(VividPayProject, project.id)
         if pay is not None and pay.enabled:
-            env["VITE_VIVIDPAY_KEY"] = pay.publishable_key
+            test = targets.of(project).is_mobile and not for_build
+            if test and not pay.test_key:
+                pay.test_key = new_key("vpk_test")
+                await db.commit()
+            env["VITE_VIVIDPAY_KEY"] = pay.test_key if test else pay.publishable_key
             env["VITE_VIVIDPAY_API"] = _vividpay_api()
     if project.payments_provider == "paystack":
         public = await secrets.get_secret(db, project.id, "PAYSTACK_PUBLIC_KEY")
@@ -700,7 +707,7 @@ class VividPayIn(BaseModel):
 
 
 def _vividpay_out(pay: VividPayProject, secret_key: str | None = None) -> dict:
-    out = {"enabled": pay.enabled, "publishable_key": pay.publishable_key,
+    out = {"enabled": pay.enabled, "publishable_key": pay.publishable_key, "test_key": pay.test_key,
            "webhook_url": pay.webhook_url, "api": _vividpay_api(),
            "fee_bps": settings.VIVIDPAY_FEE_BPS, "min_fee_kobo": settings.VIVIDPAY_MIN_FEE_KOBO,
            "fee_cap_kobo": settings.VIVIDPAY_FEE_CAP_KOBO}
@@ -728,7 +735,7 @@ async def enable_vivid_pay(project_id: str, body: VividPayIn, user: User = Depen
     account is opened, the app gets a publishable key in its .env, and the
     secret key (returned once) goes to the Supabase project when linked."""
     project = await _owned(project_id, user, db)
-    _require_integration(project, "payments")
+    _require_integration(project, "vividpay")
     if not settings.VIVIDPAY_ENABLED or not secrets.configured():
         raise APIError(503, "not_configured", "Payments are not set up on this server.")
     if body.webhook_url and not body.webhook_url.startswith("https://"):
@@ -742,11 +749,12 @@ async def enable_vivid_pay(project_id: str, body: VividPayIn, user: User = Depen
     if pay is None:
         secret_key = new_key("vsk")
         pay = VividPayProject(project_id=project_id, owner_id=user.id,
-                              publishable_key=new_key("vpk"),
+                              publishable_key=new_key("vpk"), test_key=new_key("vpk_test"),
                               secret_key_enc=secrets.encrypt(secret_key),
                               secret_key_hash=key_hash(secret_key))
         db.add(pay)
     pay.enabled = True
+    pay.test_key = pay.test_key or new_key("vpk_test")
     if body.webhook_url is not None:
         pay.webhook_url = body.webhook_url or None
     project.payments_provider = "vividpay"

@@ -91,7 +91,7 @@ _WEB = Target(
     env_prefix="VITE_",
     upload_dir="public/uploads",
     shots=(("desktop", 1280), ("mobile", 390)),
-    integrations=frozenset({"supabase", "payments", "maps", "chain", "auth"}),
+    integrations=frozenset({"supabase", "payments", "maps", "chain", "auth", "vividpay"}),
 )
 
 _MOBILE = Target(
@@ -113,7 +113,7 @@ _MOBILE = Target(
     env_prefix="EXPO_PUBLIC_",
     upload_dir="assets/uploads",
     shots=(("iphone", 390), ("android", 412)),
-    integrations=frozenset({"supabase"}),
+    integrations=frozenset({"supabase", "vividpay"}),
     memory_gib=4.0,
 )
 
