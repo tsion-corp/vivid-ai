@@ -73,6 +73,8 @@ from app.core.errors import APIError
 from app.db.models import (BuilderAppBuild, BuilderAsset, BuilderMessage, BuilderProject,
                            BuilderPublish, BuilderSnapshot, Connector, User)
 from app.services.connectors import supabase as supabase_connector
+from app.services.plans import gate as plan_gate
+from app.services.wallet import ledger
 from app.services.connectors import tokens as connector_tokens
 from app.db.session import async_session
 from app.schemas.builder import (AnalyticsOut, AppBuildIn, AppBuildOut, AssetOut, BuildAccountOut,
@@ -108,6 +110,11 @@ async def _latest_seq(project_id: str, db: AsyncSession) -> int:
 @router.post("/projects", response_model=ProjectOut, status_code=201)
 async def create_project(body: ProjectCreate, user: User = Depends(get_current_user),
                          db: AsyncSession = Depends(get_db)):
+    allowed, account, owned = await plan_gate.can_create_project(db, user.id)
+    if not allowed:
+        raise APIError(402, "plan_limit",
+                       f"The {account.plan.name} plan includes {account.plan.max_apps} apps and you "
+                       f"have {owned}. Upgrade to Pro for unlimited apps.")
     project = BuilderProject(owner_id=user.id, name=body.name.strip() or "Untitled app",
                              mode="build" if body.skip_plan else "plan",
                              target=body.target)
@@ -234,6 +241,15 @@ async def chat(project_id: str, body: ChatIn, request: Request,
                        "Too many builder messages this minute. Please wait a moment.")
     if not routing.endpoint_for(routing.BUILD).configured:
         raise APIError(503, "not_configured", "The app builder is not configured.")
+    plan_check = await plan_gate.can_start_turn(db, user.id, project_id)
+    if not plan_check.ok:
+        if plan_check.read_only:
+            raise APIError(402, "plan_limit",
+                           f"Your {plan_check.account.plan.name} plan runs "
+                           f"{plan_check.account.plan.max_apps} apps at a time, and this is not "
+                           "one of your most recent. Upgrade to keep building it.")
+        raise APIError(429, "limit_reached", _limit_message(plan_check),
+                       details=plan_check.body())
 
     rows = await db.execute(select(BuilderMessage)
                             .where(BuilderMessage.project_id == project_id)
@@ -340,11 +356,33 @@ async def chat(project_id: str, body: ChatIn, request: Request,
                 turns.finish(project_id)
                 if not feed.done:
                     await feed.push(FEED_DONE)
+            await _settle_plan(plan_check)
             await feed.close()
 
     feed.task = asyncio.create_task(run_turn())
     return StreamingResponse(_follow(feed), media_type=stream.MEDIA_TYPE,
                              headers=stream.HEADERS)
+
+
+def _limit_message(check) -> str:
+    m = check.meter
+    if m.month_used >= m.month_limit:
+        when = f"your allowance renews {m.month_resets_at:%d %b}"
+    else:
+        minutes = max(int((m.window_resets_at - datetime.now(timezone.utc)).total_seconds() // 60), 1)
+        when = f"more tokens free up in {minutes // 60}h {minutes % 60:02d}m"
+    return (f"You've used your {check.account.plan.name} plan's tokens for now: {when}. "
+            "Buy extra tokens from your wallet or upgrade to keep going.")
+
+
+async def _settle_plan(check) -> None:
+    """Tokens this turn used beyond the plan come off the extra tokens."""
+    try:
+        async with async_session() as db:
+            await plan_gate.settle_turn(db, check)
+            await db.commit()
+    except Exception as e:                            # never fail a finished turn
+        log.warning("could not settle plan usage: %s", e)
 
 
 async def _follow(feed, start: int = 0):
@@ -980,17 +1018,21 @@ async def build_options(user: User = Depends(get_current_user),
     connector = await app_build.user_connector(db, user.id)
     used = await billing.vivid_builds_this_month(db, user.id)
     cap = settings.EAS_VIVID_BUILDS_PER_MONTH
+    capped = cap > 0 and used >= cap
     vivid_ready = bool(settings.EXPO_TOKEN and settings.EXPO_OWNER)
+    balance = await ledger.balance(db, user.id)
+    await db.commit()
     vivid = BuildAccountOut(
-        id="vivid", available=vivid_ready and used < cap,
+        id="vivid", available=vivid_ready and not capped,
         price_android=billing.price_for("android", billing.VIVID),
         price_ios=billing.price_for("ios", billing.VIVID),
-        currency=settings.EAS_BUILD_CURRENCY, remaining=max(cap - used, 0),
-        reason=None if vivid_ready and used < cap else
+        currency="USD", remaining=max(cap - used, 0) if cap > 0 else None,
+        balance=balance,
+        reason=None if vivid_ready and not capped else
         ("not_configured" if not vivid_ready else "payment_required"))
     mine = BuildAccountOut(
         id="user", available=connector is not None,
-        currency=settings.EAS_BUILD_CURRENCY,
+        currency="USD",
         owner=((connector.config_json or {}).get("owner") if connector else None),
         reason=None if connector else "not_connected")
     return BuildOptionsOut(default="user" if connector else "vivid", accounts=[vivid, mine])
@@ -1027,13 +1069,17 @@ async def start_app_build(project_id: str, body: AppBuildIn,
         raise APIError(409, "busy", f"An {body.platform} build is already running for this app.")
     decision = await billing.can_start_build(db, user.id, body.platform, account)
     if not decision.ok:
-        raise APIError(402 if decision.code == "payment_required" else 503,
+        raise APIError(503 if decision.code == "not_configured" else 402,
                        decision.code, decision.message)
     build = BuilderAppBuild(project_id=project_id, snapshot_id=snapshot.id,
                             platform=body.platform, profile=body.profile, account=account)
     db.add(build)
     await db.flush()
-    billing.charge(db, build)
+    try:
+        await billing.charge(db, build, user.id)
+    except ledger.InsufficientFunds:
+        await db.rollback()
+        raise APIError(402, "insufficient_funds", "Your wallet no longer covers this build.")
     await db.commit()
     task = asyncio.create_task(app_build.start(build.id))
     _app_builds[build.id] = task

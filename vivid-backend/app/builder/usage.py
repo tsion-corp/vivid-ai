@@ -42,11 +42,15 @@ async def record_sandbox(project_id: str, sandbox_id: str, seconds: float) -> No
     the manager has no request. Best effort."""
     try:
         async with async_session() as db:
-            if await db.get(BuilderProject, project_id) is None:
+            project = await db.get(BuilderProject, project_id)
+            if project is None:
                 return                           # the project was deleted
+            from app.builder import targets
+            target = targets.of(project)
             db.add(BuilderUsageEvent(project_id=project_id, kind=SANDBOX,
                                      quantity=round(seconds, 1), unit="seconds",
-                                     meta={"sandbox_id": sandbox_id}))
+                                     cost_usd=round(seconds * target.sandbox_cost_per_second(), 8),
+                                     meta={"sandbox_id": sandbox_id, "target": target.name}))
             await db.commit()
     except Exception as e:
         log.warning("could not record sandbox usage for %s: %s", project_id, e)

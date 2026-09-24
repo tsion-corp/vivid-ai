@@ -48,6 +48,9 @@ async def init_db() -> None:
             "ALTER TABLE builder_projects ADD COLUMN IF NOT EXISTS app_id VARCHAR(160)"))
         await conn.execute(text(
             "ALTER TABLE builder_projects ADD COLUMN IF NOT EXISTS eas_projects JSONB"))
+        # Build prices are micro-USD now (debited from the wallet).
+        await conn.execute(text(
+            "ALTER TABLE builder_app_builds ALTER COLUMN price TYPE BIGINT"))
         await conn.execute(text(
             "ALTER TABLE builder_projects ADD COLUMN IF NOT EXISTS "
             "payments_provider VARCHAR(16) NOT NULL DEFAULT 'none'"))

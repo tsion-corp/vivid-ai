@@ -49,6 +49,13 @@ class Target:
     shots: tuple[tuple[str, int], ...]
     #: Project integrations this target supports.
     integrations: frozenset[str] = field(default_factory=frozenset)
+    #: The template's size (its template.py), for pricing sandbox time.
+    vcpus: int = 2
+    memory_gib: float = 2.0
+
+    def sandbox_cost_per_second(self) -> float:
+        return (self.vcpus * settings.E2B_COST_PER_VCPU_SECOND
+                + self.memory_gib * settings.E2B_COST_PER_GIB_SECOND)
 
     @property
     def e2b_template(self) -> str:
@@ -107,6 +114,7 @@ _MOBILE = Target(
     upload_dir="assets/uploads",
     shots=(("iphone", 390), ("android", 412)),
     integrations=frozenset({"supabase"}),
+    memory_gib=4.0,
 )
 
 _BY_NAME = {t.name: t for t in (_WEB, _MOBILE)}

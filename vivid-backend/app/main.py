@@ -12,6 +12,8 @@ from fastapi.responses import PlainTextResponse
 
 from app.api.routes import api_router
 from app.builder import app_build
+from app.services.plans import subscriptions as plan_subscriptions
+from app.services.wallet import deposits as wallet_deposits
 from app.builder.sandbox.manager import manager as sandbox_manager
 from app.core import errors
 from app.core.config import settings
@@ -43,9 +45,14 @@ async def lifespan(app: FastAPI):
     sweeper = asyncio.create_task(sandbox_manager.sweeper(app.state.redis))
     # Mobile app builds run for minutes on Expo's side; this follows them.
     app_builds = asyncio.create_task(app_build.poller(app.state.redis))
+    # Deposits a webhook never announced, and plans that are due to renew.
+    reconciler = asyncio.create_task(wallet_deposits.reconciler(app.state.redis))
+    renewer = asyncio.create_task(plan_subscriptions.renewer(app.state.redis))
     yield
     sweeper.cancel()
     app_builds.cancel()
+    reconciler.cancel()
+    renewer.cancel()
     if settings.BUILDER_KILL_SANDBOXES_ON_SHUTDOWN:
         await sandbox_manager.kill_all(app.state.redis)
     await gateway_http.aclose()

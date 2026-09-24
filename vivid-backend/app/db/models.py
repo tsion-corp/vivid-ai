@@ -418,10 +418,10 @@ class BuilderAppBuild(Base):
     artifact_url: Mapped[str | None] = mapped_column(String(1024), default=None)
     logs_url: Mapped[str | None] = mapped_column(String(1024), default=None)
     error: Mapped[str | None] = mapped_column(Text, default=None)
-    #: What the user pays for a build on Vivid's account, in the smallest
-    #: unit of `currency`; 0 on their own account.
-    price: Mapped[int] = mapped_column(Integer, default=0)
-    currency: Mapped[str] = mapped_column(String(3), default="NGN")
+    #: What the user pays for a build on Vivid's account, in micro-USD,
+    #: debited from their wallet; 0 on their own account.
+    price: Mapped[int] = mapped_column(BigInteger, default=0)
+    currency: Mapped[str] = mapped_column(String(3), default="USD")
     #: none | charged | refunded (a failed or cancelled build is not paid for)
     charge: Mapped[str] = mapped_column(String(10), default="none")
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_now)
@@ -495,3 +495,126 @@ class WaitlistEntry(Base):
         DateTime(timezone=True), default=_now, index=True)
     updated_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), default=_now, onupdate=_now)
+
+
+# ------------------------------------------------------------------ wallet
+# A Vivid user's money with Vivid: topped up by bank transfer (a Pouch
+# virtual account) or crypto (Dextopus deposit addresses), spent on plans,
+# extra tokens and paid builds. All amounts are integer micro-USD
+# (1 USD = 1,000,000): exact for USDC's 6 decimals, no float drift.
+
+class Wallet(Base):
+    """The balance. Only ever changed together with a WalletEntry, under a
+    row lock (app/services/wallet/ledger.py)."""
+    __tablename__ = "wallets"
+
+    user_id: Mapped[str] = mapped_column(
+        ForeignKey("users.id", ondelete="CASCADE"), primary_key=True)
+    balance_micro: Mapped[int] = mapped_column(BigInteger, default=0)
+    #: Tokens bought on top of the plan's allowance, spent only once the
+    #: plan's window or month is used up.
+    extra_tokens: Mapped[int] = mapped_column(BigInteger, default=0)
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), default=_now, onupdate=_now)
+
+
+class WalletEntry(Base):
+    """One movement of money, signed: deposits and refunds positive,
+    charges negative. (provider, provider_ref) is unique, so a webhook
+    delivered twice or a deposit found again by the reconciler is a no-op."""
+    __tablename__ = "wallet_entries"
+    __table_args__ = (UniqueConstraint("provider", "provider_ref",
+                                       name="uq_wallet_entries_provider_ref"),)
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=_uuid)
+    user_id: Mapped[str] = mapped_column(
+        ForeignKey("users.id", ondelete="CASCADE"), index=True)
+    #: deposit_bank | deposit_crypto | charge | refund | token_pack | plan | adjustment
+    kind: Mapped[str] = mapped_column(String(16))
+    amount_micro: Mapped[int] = mapped_column(BigInteger)
+    balance_after: Mapped[int] = mapped_column(BigInteger)
+    #: What arrived or was priced, before conversion: "150000" NGN kobo, a
+    #: USDC amount, a build's price.
+    original_amount: Mapped[str | None] = mapped_column(String(64), default=None)
+    original_currency: Mapped[str | None] = mapped_column(String(16), default=None)
+    #: Units of original_currency per USD used for the conversion.
+    fx_rate: Mapped[float | None] = mapped_column(Numeric(20, 8), default=None)
+    #: pouch | dextopus | vivid
+    provider: Mapped[str] = mapped_column(String(16))
+    provider_ref: Mapped[str] = mapped_column(String(128))
+    #: What it was for: a build id, a plan, a pack.
+    ref: Mapped[str | None] = mapped_column(String(64), default=None)
+    description: Mapped[str | None] = mapped_column(String(200), default=None)
+    meta: Mapped[dict | None] = mapped_column(JSONB, default=None)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), default=_now, index=True)
+
+
+class WalletFunding(Base):
+    """Where a user's money comes in: their Pouch virtual account, or one
+    Dextopus static deposit address per token and chain."""
+    __tablename__ = "wallet_funding"
+    __table_args__ = (UniqueConstraint("user_id", "provider", "option",
+                                       name="uq_wallet_funding_option"),)
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=_uuid)
+    user_id: Mapped[str] = mapped_column(
+        ForeignKey("users.id", ondelete="CASCADE"), index=True)
+    #: pouch | dextopus
+    provider: Mapped[str] = mapped_column(String(16))
+    #: "bank" for Pouch; a crypto option key ("usdc-base") for Dextopus.
+    option: Mapped[str] = mapped_column(String(32))
+    #: Pouch virtual account id or Dextopus static address id: what a
+    #: webhook names, so it is how a deposit finds its user.
+    external_id: Mapped[str] = mapped_column(String(128), index=True)
+    #: Pouch customer id.
+    customer_id: Mapped[str | None] = mapped_column(String(128), default=None)
+    #: The bank account number, or the crypto deposit address.
+    address: Mapped[str] = mapped_column(String(128))
+    account_name: Mapped[str | None] = mapped_column(String(160), default=None)
+    bank_name: Mapped[str | None] = mapped_column(String(80), default=None)
+    chain_id: Mapped[int | None] = mapped_column(BigInteger, default=None)
+    asset: Mapped[str | None] = mapped_column(String(128), default=None)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_now)
+
+
+# ------------------------------------------------------------------- plans
+class Subscription(Base):
+    """A user's paid plan, paid from the wallet. No row means Free."""
+    __tablename__ = "subscriptions"
+
+    user_id: Mapped[str] = mapped_column(
+        ForeignKey("users.id", ondelete="CASCADE"), primary_key=True)
+    #: pro | team
+    plan: Mapped[str] = mapped_column(String(16))
+    seats: Mapped[int] = mapped_column(Integer, default=1)
+    yearly: Mapped[bool] = mapped_column(Boolean, default=False)
+    #: active | grace | canceled (canceled keeps the plan until period_end)
+    status: Mapped[str] = mapped_column(String(10), default="active")
+    period_start: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_now)
+    period_end: Mapped[datetime] = mapped_column(DateTime(timezone=True), index=True)
+    auto_renew: Mapped[bool] = mapped_column(Boolean, default=True)
+    #: When a renewal could not be paid; Free after BILLING_GRACE_DAYS.
+    grace_until: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), default=None)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_now)
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), default=_now, onupdate=_now)
+
+
+class TeamMember(Base):
+    """A seat on someone's Team plan. The member's usage draws from the
+    owner's pooled allowance."""
+    __tablename__ = "team_members"
+    __table_args__ = (UniqueConstraint("team_owner_id", "email", name="uq_team_members_email"),)
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=_uuid)
+    team_owner_id: Mapped[str] = mapped_column(
+        ForeignKey("users.id", ondelete="CASCADE"), index=True)
+    #: Set when the invite is accepted.
+    user_id: Mapped[str | None] = mapped_column(
+        ForeignKey("users.id", ondelete="CASCADE"), index=True, default=None)
+    email: Mapped[str] = mapped_column(String(320))
+    #: invited | active
+    status: Mapped[str] = mapped_column(String(10), default="invited")
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_now)
+

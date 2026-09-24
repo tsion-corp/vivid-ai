@@ -15,6 +15,9 @@ from app.api.routes.media import router as media_router
 from app.api.routes.search import router as search_router
 from app.api.routes.tools import router as tools_router
 from app.api.routes.waitlist import router as waitlist_router
+from app.api.routes.admin import router as admin_router
+from app.api.routes.wallet import router as wallet_router
+from app.api.routes.webhooks import router as webhooks_router
 
 api_router = APIRouter()
 api_router.include_router(health_router)
@@ -32,3 +35,6 @@ api_router.include_router(media_router)
 api_router.include_router(tools_router)
 api_router.include_router(builder_router)
 api_router.include_router(waitlist_router)
+api_router.include_router(wallet_router)
+api_router.include_router(webhooks_router)
+api_router.include_router(admin_router)

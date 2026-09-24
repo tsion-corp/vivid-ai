@@ -197,6 +197,7 @@ class ImageMaker:
             asset = await assets.add(db, self.project_id, filename, mime, data)
             db.add(BuilderUsageEvent(project_id=self.project_id, kind="model", quantity=1,
                                      unit="images", model=settings.OPENROUTER_IMAGE_MODEL,
+                                     cost_usd=settings.IMAGE_COST_USD,
                                      meta={"stage": "image", "name": asset.name}))
             await db.commit()
             target = self.sandbox.target

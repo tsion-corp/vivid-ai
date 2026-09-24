@@ -10,6 +10,7 @@ import pytest
 
 from app.api.routes import builder as builder_routes
 from app.builder import app_build, billing, expo, targets
+from app.services.wallet import ledger
 from app.builder.sandbox.base import RunResult
 from app.core.config import settings
 from app.db.models import (BuilderAppBuild, BuilderProject, BuilderSnapshot, BuilderUsageEvent,
@@ -44,7 +45,7 @@ class FakeFreshManager:
 def eas(monkeypatch, maker):
     monkeypatch.setattr(settings, "EXPO_TOKEN", TOKEN)
     monkeypatch.setattr(settings, "EXPO_OWNER", "vivid-apps")
-    monkeypatch.setattr(settings, "EAS_VIVID_BUILDS_PER_MONTH", 2)
+    monkeypatch.setattr(settings, "EAS_VIVID_BUILDS_PER_MONTH", 0)
     monkeypatch.setattr(app_build, "async_session", maker)
     sb = build_sandbox()
     fm = FakeFreshManager(sb)
@@ -85,13 +86,27 @@ async def _project(maker, target="mobile", snapshot=True) -> tuple[str, str | No
         return p.id, sid
 
 
+async def _fund(maker, usd: float, user_id: str = "u1") -> None:
+    async with maker() as db:
+        await ledger.credit(db, user_id, int(usd * 1_000_000), ledger.DEPOSIT_BANK, "test",
+                            f"fund-{usd}-{id(db)}")
+        await db.commit()
+
+
+async def _balance(maker, user_id: str = "u1") -> int:
+    async with maker() as db:
+        return await ledger.balance(db, user_id)
+
+
 async def _build(maker, pid, sid, account="vivid", platform="android") -> str:
+    if account == "vivid":
+        await _fund(maker, 10)
     async with maker() as db:
         b = BuilderAppBuild(project_id=pid, snapshot_id=sid, platform=platform,
                             profile="preview", account=account)
         db.add(b)
         await db.flush()
-        billing.charge(db, b)
+        await billing.charge(db, b, "u1")
         await db.commit()
         return b.id
 
@@ -119,7 +134,7 @@ async def test_a_build_starts_in_a_throwaway_sandbox_with_the_token_only_in_eas(
         b = await db.get(BuilderAppBuild, bid)
         p = await db.get(BuilderProject, pid)
         assert b.eas_build_id == "eas-build-1" and b.status == app_build.QUEUED
-        assert b.charge == billing.CHARGED and b.price == settings.EAS_BUILD_PRICE_ANDROID
+        assert b.charge == billing.CHARGED and b.price == 2_000_000 and b.currency == "USD"
         assert p.eas_projects == {"vivid-apps": "eas-proj-1"} and p.app_id == app["ios"]["bundleIdentifier"]
 
     # The next build reuses the EAS project: no second init.
@@ -138,6 +153,9 @@ async def test_a_build_that_cannot_start_fails_and_is_refunded(eas, maker):
         b = await db.get(BuilderAppBuild, bid)
         assert b.status == app_build.FAILED and "bundle identifier taken" in b.error
         assert b.charge == billing.REFUNDED
+    # The $10 funded, the $2 charged, the $2 refunded.
+    assert await _balance(maker) == 10_000_000
+    async with maker() as db:
         events = (await db.execute(
             BuilderUsageEvent.__table__.select().where(BuilderUsageEvent.kind == "app_build"))).all()
         assert sorted(float(e.quantity) for e in events) == [-1.0, 1.0]
@@ -249,9 +267,15 @@ def test_build_routes(client, maker, eas, monkeypatch):
     r = client.post(f"/v1/builder/projects/{pid}/builds", json={"platform": "android", "account": "user"})
     assert r.status_code == 400 and r.json()["error"]["code"] == "not_connected"
 
+    # An empty wallet: the price and a way to pay.
+    r = client.post(f"/v1/builder/projects/{pid}/builds", json={"platform": "android"})
+    assert r.status_code == 402 and r.json()["error"]["code"] == "insufficient_funds"
+    asyncio.run(_fund(maker, 6))                      # exactly one android and one iOS
+
     opts = client.get("/v1/builder/app-builds/options").json()
-    assert opts["default"] == "vivid" and opts["accounts"][0]["remaining"] == 2
-    assert opts["accounts"][0]["price_android"] == settings.EAS_BUILD_PRICE_ANDROID
+    assert opts["default"] == "vivid" and opts["accounts"][0]["remaining"] is None
+    assert opts["accounts"][0]["price_android"] == 2_000_000
+    assert opts["accounts"][0]["balance"] == 6_000_000
 
     r = client.post(f"/v1/builder/projects/{pid}/builds", json={"platform": "android"})
     assert r.status_code == 202, r.text
@@ -268,7 +292,7 @@ def test_build_routes(client, maker, eas, monkeypatch):
     assert got["artifact_url"] == "https://x/app.apk"
     assert [b["id"] for b in client.get(f"/v1/builder/projects/{pid}/builds").json()] == [body["id"]]
 
-    # The monthly cap on Vivid's account: 2, one used.
+    # The wallet pays for the iOS build too, and then it is empty.
     ios = client.post(f"/v1/builder/projects/{pid}/builds", json={"platform": "ios"})
     assert ios.status_code == 202
     _wait_for(client, f"/v1/builder/projects/{pid}/builds/{ios.json()['id']}",
@@ -276,8 +300,9 @@ def test_build_routes(client, maker, eas, monkeypatch):
     eas["remote"].update(status=expo.FINISHED)
     _wait_for(client, f"/v1/builder/projects/{pid}/builds/{ios.json()['id']}",
               lambda b: b["status"] == "finished")
+    assert asyncio.run(_balance(maker)) == 0
     r = client.post(f"/v1/builder/projects/{pid}/builds", json={"platform": "android"})
-    assert r.status_code == 402 and r.json()["error"]["code"] == "payment_required"
+    assert r.status_code == 402 and r.json()["error"]["code"] == "insufficient_funds"
 
 
 # -------------------------------------------------------------- expo api

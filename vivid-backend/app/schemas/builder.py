@@ -178,10 +178,10 @@ class AppBuildOut(BaseModel):
     #: The build's page on expo.dev: logs, and an install QR for internal builds.
     logs_url: str | None = None
     error: str | None = None
-    #: What this build costs, in the smallest unit of `currency`; 0 on the
+    #: What this build costs, in micro-USD (1 USD = 1,000,000); 0 on the
     #: user's own account. `charge` is refunded when a build fails.
     price: int = 0
-    currency: str = "NGN"
+    currency: str = "USD"
     charge: str = "none"
     created_at: datetime
     finished_at: datetime | None = None
@@ -194,8 +194,10 @@ class BuildAccountOut(BaseModel):
     price_android: int = 0
     price_ios: int = 0
     currency: str = "NGN"
-    #: vivid: builds left this month; user: None.
+    #: vivid: builds left this month under the cap, None when uncapped.
     remaining: int | None = None
+    #: vivid: the user's wallet balance, in micro-USD (prices are too).
+    balance: int | None = None
     #: user: the Expo account builds go to.
     owner: str | None = None
     reason: str | None = None

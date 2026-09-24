@@ -210,7 +210,7 @@ async def _fail(build_id: str, message: str) -> None:
             return
         row.status, row.error = FAILED, message[:1000]
         row.finished_at = datetime.now(timezone.utc)
-        billing.refund(db, row)
+        await billing.refund(db, row)
         await db.commit()
 
 
@@ -232,7 +232,7 @@ async def refresh(db: AsyncSession, build: BuilderAppBuild, owner_id: str) -> No
         if status == FAILED:
             build.error = info.error or "The build failed on Expo. Open the logs for details."
         if status in (FAILED, CANCELED):
-            billing.refund(db, build)
+            await billing.refund(db, build)
 
 
 async def poll_once() -> int:
@@ -251,7 +251,7 @@ async def poll_once() -> int:
                 if build.status == STARTING and created < stale:
                     build.status, build.error = FAILED, "The build never started. Try again."
                     build.finished_at = datetime.now(timezone.utc)
-                    billing.refund(db, build)
+                    await billing.refund(db, build)
                 continue
             try:
                 await refresh(db, build, owner_id)
@@ -288,11 +288,11 @@ async def cancel(db: AsyncSession, build: BuilderAppBuild, owner_id: str) -> Non
         return
     if build.eas_build_id is None:
         build.status, build.finished_at = CANCELED, datetime.now(timezone.utc)
-        billing.refund(db, build)
+        await billing.refund(db, build)
         return
     token, _ = await credentials(db, build, owner_id)
     status = await expo.cancel(token, build.eas_build_id)
     build.status = _STATUS.get(status, CANCELING)
     if build.status in DONE:
         build.finished_at = datetime.now(timezone.utc)
-        billing.refund(db, build)
+        await billing.refund(db, build)

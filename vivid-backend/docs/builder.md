@@ -338,6 +338,46 @@ the user's own Expo account, connected as the `expo` connector
 (`POST /v1/connectors {provider: "expo", token}`), and costs nothing here.
 `auto` picks the user's account when it is connected.
 
+## Wallet and plans
+
+Users pay Vivid from a wallet: a USD balance (integer micro-USD) topped up
+by bank transfer into their own Nigerian virtual account (Pouch) or by
+crypto to their own deposit addresses (Dextopus, settled as USDC on Base).
+Plans, extra tokens and builds on Vivid's Expo account are paid from it.
+
+```
+GET    /v1/wallet?currency=NGN          balance in USD and one display currency
+GET    /v1/wallet/entries               history
+POST   /v1/wallet/bank-account          the user's virtual account (made once)
+GET    /v1/wallet/crypto/options        tokens and chains
+POST   /v1/wallet/crypto/address        {option} -> the user's address (made once)
+POST   /v1/wallet/token-packs           {tokens} buy extra builder tokens
+GET    /v1/plans                        plans, prices, packs
+GET    /v1/me/plan                      plan, 5-hour and monthly meters, extra tokens
+POST   /v1/me/plan                      {plan, yearly, seats} subscribe or change
+DELETE /v1/me/plan                      cancel at the end of the period
+GET    /v1/team, POST /v1/team/invites, POST /v1/team/accept, DELETE /v1/team/members/{id}
+POST   /v1/webhooks/pouch, /v1/webhooks/dextopus   provider webhooks
+GET    /v1/admin/economics?days=30      cost per 1M tokens and plan margins (ADMIN_TOKEN)
+```
+
+Money comes in only as the provider's API reports it: a webhook triggers a
+fetch of the transfer or deposit, and a reconciler polls both providers
+every `WALLET_RECONCILE_SECONDS`, so a lost webhook loses nothing. Each
+deposit is credited once (unique provider reference). Bank deposits in NGN
+convert at the day's rate less `WALLET_FX_SPREAD_BPS`.
+
+Plans (all `PLAN_*` settings): Free has 2 apps, 2M tokens per rolling
+5-hour window and 12M a month; Pro and Team are larger, Team pooled per
+seat. A turn is checked when it starts (429 `limit_reached` with the reset
+times in `error.details`) and always finishes; tokens beyond the allowance
+come off extra tokens. Creating a third app on Free is 402 `plan_limit`.
+Subscriptions renew from the wallet; an unpaid renewal keeps the plan for
+`BILLING_GRACE_DAYS`, then it lapses to Free.
+
+`python -m app.scripts.token_economics` reports what a million tokens costs
+from the usage ledger (model, sandbox, images) and each plan's margin.
+
 ## Versions
 
 Every turn that changes a file ends with a snapshot: a git commit in the

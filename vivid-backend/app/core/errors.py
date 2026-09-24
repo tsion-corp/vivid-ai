@@ -57,27 +57,31 @@ class APIError(Exception):
     """
 
     def __init__(self, status: int, code: str, message: str,
-                 headers: dict | None = None) -> None:
+                 headers: dict | None = None, details: dict | None = None) -> None:
         super().__init__(message)
         self.status = status
         self.code = code
         self.message = message
         self.headers = headers or {}
+        #: Machine-readable context for the client (limits, reset times).
+        self.details = details
 
 
 def request_id(request: Request) -> str:
     return getattr(request.state, "request_id", "") or ""
 
 
-def _payload(code: str, message: str, rid: str) -> dict:
-    return {"error": {"code": code, "message": message, "request_id": rid},
-            "detail": message}  # deprecated mirror; see module docstring
+def _payload(code: str, message: str, rid: str, details: dict | None = None) -> dict:
+    error = {"code": code, "message": message, "request_id": rid}
+    if details:
+        error["details"] = details
+    return {"error": error, "detail": message}  # deprecated mirror; see module docstring
 
 
 def _response(status: int, code: str, message: str, rid: str,
-              headers: dict | None = None) -> JSONResponse:
+              headers: dict | None = None, details: dict | None = None) -> JSONResponse:
     merged = {REQUEST_ID_HEADER: rid, **(headers or {})}
-    return JSONResponse(status_code=status, content=_payload(code, message, rid),
+    return JSONResponse(status_code=status, content=_payload(code, message, rid, details),
                         headers=merged)
 
 
@@ -100,7 +104,7 @@ def install(app: FastAPI) -> None:
     @app.exception_handler(APIError)
     async def _api_error(request: Request, exc: APIError) -> JSONResponse:
         return _response(exc.status, exc.code, exc.message,
-                         request_id(request), exc.headers)
+                         request_id(request), exc.headers, exc.details)
 
     @app.exception_handler(StarletteHTTPException)
     async def _http_error(request: Request,

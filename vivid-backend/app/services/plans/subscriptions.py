@@ -1,0 +1,166 @@
+"""Subscribing, renewing and cancelling, all paid from the wallet.
+
+- Subscribing charges the whole period (a month, or twelve at the yearly
+  rate) up front. Changing plan mid-period credits the unused part of the
+  current one first, so an upgrade costs only the difference.
+- Cancelling keeps the plan to the end of the period, then it lapses to Free.
+- Renewal runs from a daily poller: the wallet pays the next period; when it
+  cannot, the plan stays in grace for BILLING_GRACE_DAYS, then lapses.
+- Extra tokens are bought in packs, added to the account's wallet.
+"""
+import asyncio
+import logging
+import uuid
+from datetime import datetime, timedelta, timezone
+
+from sqlalchemy import select
+from sqlalchemy.ext.asyncio import AsyncSession
+
+from app.core.config import settings
+from app.db.models import Subscription
+from app.db.session import async_session
+from app.services.plans import catalog
+from app.services.wallet import ledger, to_micro
+
+log = logging.getLogger("vivid.plans")
+
+VIVID = "vivid"
+
+
+class PlanError(Exception):
+    """A request that cannot be done; str() is safe to show."""
+
+
+def _aware(dt: datetime) -> datetime:
+    return dt if dt.tzinfo else dt.replace(tzinfo=timezone.utc)
+
+
+def _period(start: datetime, yearly: bool) -> datetime:
+    return start + (timedelta(days=365) if yearly else timedelta(days=30))
+
+
+def _unused_credit_micro(sub: Subscription, now: datetime) -> int:
+    """The unused part of the current paid period, in micro-USD."""
+    if sub.status != "active":
+        return 0
+    start, end = _aware(sub.period_start), _aware(sub.period_end)
+    total = (end - start).total_seconds()
+    left = (end - now).total_seconds()
+    if total <= 0 or left <= 0:
+        return 0
+    paid = catalog.get(sub.plan).charge_usd(sub.yearly, sub.seats)
+    return int(to_micro(paid) * left / total)
+
+
+async def subscribe(db: AsyncSession, user_id: str, plan_id: str, yearly: bool = False,
+                    seats: int = 1) -> Subscription:
+    """Start or change a paid plan now. Raises ledger.InsufficientFunds when
+    the wallet cannot pay the difference. The caller commits."""
+    if plan_id not in (catalog.PRO, catalog.TEAM):
+        raise PlanError("pick Pro or Team; Free is what you get by cancelling")
+    plan = catalog.get(plan_id)
+    seats = max(1, seats) if plan.per_seat else 1
+    now = datetime.now(timezone.utc)
+    sub = await db.get(Subscription, user_id)
+    credit = _unused_credit_micro(sub, now) if sub is not None else 0
+    price = to_micro(plan.charge_usd(yearly, seats))
+    # A plan change is a deliberate action, never a retried delivery: each
+    # gets its own reference (two changes in one second must both be paid).
+    change_ref = uuid.uuid4().hex
+    if credit:
+        await ledger.credit(db, user_id, credit, ledger.REFUND, VIVID,
+                            f"plan-unused:{user_id}:{change_ref}", ref=sub.plan,
+                            description=f"Unused {catalog.get(sub.plan).name} time")
+    await ledger.debit(db, user_id, price, ledger.PLAN, VIVID, f"plan:{user_id}:{change_ref}",
+                       ref=plan_id, original_amount=str(plan.charge_usd(yearly, seats)),
+                       original_currency="USD",
+                       description=f"{plan.name}{f' x{seats}' if plan.per_seat else ''}, "
+                                   f"{'1 year' if yearly else '1 month'}")
+    if sub is None:
+        sub = Subscription(user_id=user_id, plan=plan_id)
+        db.add(sub)
+    sub.plan, sub.seats, sub.yearly = plan_id, seats, yearly
+    sub.status, sub.auto_renew, sub.grace_until = "active", True, None
+    sub.period_start, sub.period_end = now, _period(now, yearly)
+    return sub
+
+
+async def cancel(db: AsyncSession, user_id: str) -> Subscription | None:
+    """Keep the plan to the end of the period, then lapse to Free."""
+    sub = await db.get(Subscription, user_id)
+    if sub is None:
+        return None
+    sub.status, sub.auto_renew = "canceled", False
+    return sub
+
+
+async def buy_pack(db: AsyncSession, user_id: str, tokens: int, owner_id: str | None = None) -> int:
+    """Extra tokens from the wallet; they go to the account that pays (the
+    team owner on Team). Returns the account's new extra-token balance."""
+    if tokens not in settings.PLAN_TOKEN_PACKS:
+        raise PlanError(f"packs are {', '.join(f'{p // 1_000_000}M' for p in settings.PLAN_TOKEN_PACKS)}")
+    price = catalog.pack_price_usd(tokens)
+    await ledger.debit(db, user_id, to_micro(price), ledger.TOKEN_PACK, VIVID,
+                       f"pack:{user_id}:{uuid.uuid4().hex}", ref=str(tokens), original_amount=str(price),
+                       original_currency="USD",
+                       description=f"{tokens // 1_000_000}M extra tokens")
+    wallet = await ledger.wallet_for(db, owner_id or user_id, lock=True)
+    wallet.extra_tokens += tokens
+    return wallet.extra_tokens
+
+
+async def renew_due(db: AsyncSession) -> dict:
+    """One pass over subscriptions whose period has ended. The caller commits."""
+    now = datetime.now(timezone.utc)
+    done = {"renewed": 0, "grace": 0, "lapsed": 0}
+    rows = (await db.execute(select(Subscription).where(Subscription.period_end <= now))).scalars()
+    for sub in list(rows):
+        if sub.status == "canceled" or not sub.auto_renew:
+            await db.delete(sub)
+            done["lapsed"] += 1
+            continue
+        if sub.status == "grace" and sub.grace_until and _aware(sub.grace_until) < now:
+            await db.delete(sub)
+            done["lapsed"] += 1
+            continue
+        plan = catalog.get(sub.plan)
+        price = to_micro(plan.charge_usd(sub.yearly, sub.seats))
+        period_ref = _aware(sub.period_end).strftime("%Y%m%dT%H%M%S")
+        try:
+            await ledger.debit(db, sub.user_id, price, ledger.PLAN, VIVID,
+                               f"plan-renew:{sub.user_id}:{period_ref}", ref=sub.plan,
+                               original_currency="USD", original_amount=str(plan.charge_usd(sub.yearly, sub.seats)),
+                               description=f"{plan.name} renewal")
+        except ledger.InsufficientFunds:
+            if sub.status != "grace":
+                sub.status = "grace"
+                sub.grace_until = now + timedelta(days=settings.BILLING_GRACE_DAYS)
+                done["grace"] += 1
+            continue
+        start = _aware(sub.period_end)
+        sub.period_start, sub.period_end = start, _period(start, sub.yearly)
+        sub.status, sub.grace_until = "active", None
+        done["renewed"] += 1
+    return done
+
+
+_LOCK = "plans:renew"
+
+
+async def renewer(redis, interval: float = 3600) -> None:
+    """Hourly (renewals are due at any hour); one process per pass."""
+    while True:
+        await asyncio.sleep(interval)
+        try:
+            if not await redis.set(_LOCK, "1", nx=True, ex=int(interval) - 60):
+                continue
+        except Exception:
+            pass
+        try:
+            async with async_session() as db:
+                result = await renew_due(db)
+                await db.commit()
+            if any(result.values()):
+                log.info("plan renewals: %s", result)
+        except Exception as e:
+            log.warning("plan renewal pass failed: %s", e)

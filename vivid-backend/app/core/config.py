@@ -483,18 +483,80 @@ class Settings(BaseSettings):
     EXPO_TOKEN: str = ""
     EXPO_OWNER: str = ""
     EXPO_API_TIMEOUT: int = 20
-    # What a build on Vivid's account costs the user, in the smallest unit
-    # of EAS_BUILD_CURRENCY.
-    EAS_BUILD_CURRENCY: str = "NGN"
-    EAS_BUILD_PRICE_ANDROID: int = 500_000
-    EAS_BUILD_PRICE_IOS: int = 800_000
-    # Builds on Vivid's account per user per calendar month; 0 = none. The
-    # seam where plan limits and real payment plug in (billing.py).
-    EAS_VIVID_BUILDS_PER_MONTH: int = 5
+    # What a build on Vivid's account costs the user, in USD, debited from
+    # their wallet (about 2x EAS's $1 Android / $2 iOS medium worker).
+    EAS_BUILD_PRICE_ANDROID_USD: float = 2.0
+    EAS_BUILD_PRICE_IOS_USD: float = 4.0
+    # Builds on Vivid's account per user per calendar month, an abuse cap
+    # on top of the wallet; 0 = no cap.
+    EAS_VIVID_BUILDS_PER_MONTH: int = 0
     # How long starting a build (restore, install, upload) may take, and how
     # often unfinished builds are polled.
     EAS_START_TIMEOUT: int = 600
     EAS_POLL_SECONDS: int = 30
+
+    # ------------------------------------------------------------- wallet
+    # A user's balance with Vivid, in USD, topped up by bank transfer or
+    # crypto and spent on plans, extra tokens and paid builds.
+    # Pouch (Liquifia fiat API): one Nigerian virtual account per user.
+    POUCH_API_KEY: str = ""
+    POUCH_BASE_URL: str = "https://fiat-api.pouchfinance.xyz"
+    POUCH_WEBHOOK_SECRET: str = ""
+    # Pouch reports transfer amounts in kobo (as its other amounts are).
+    # Flip to false if a live transfer shows naira; nothing else changes.
+    POUCH_AMOUNTS_IN_KOBO: bool = True
+    # Dextopus: static crypto deposit addresses per user, every deposit
+    # settled as USDC on Base to Vivid's treasury address.
+    DEXTOPUS_API_KEY: str = ""
+    DEXTOPUS_BASE_URL: str = "https://swap-api.dextopus.com"
+    DEXTOPUS_WEBHOOK_SECRET: str = ""
+    DEXTOPUS_SETTLEMENT_ADDRESS: str = ""
+    PAYMENTS_API_TIMEOUT: int = 20
+    # Bank deposits in NGN are converted to USD at the day's rate minus
+    # this spread (basis points), which covers FX risk.
+    WALLET_FX_SPREAD_BPS: int = 150
+    # Currencies the balance can be shown in (converted at live rates).
+    WALLET_DISPLAY_CURRENCIES: list[str] = ["USD", "NGN", "GHS", "KES", "ZAR", "EUR", "GBP"]
+    # How often deposits are fetched from both providers, in case a webhook
+    # never arrived. Webhooks only make crediting faster.
+    WALLET_RECONCILE_SECONDS: int = 300
+    # Smallest crypto deposit worth crediting, in USD (below it the bridging
+    # fees eat most of it; Dextopus still settles it).
+    WALLET_CRYPTO_MIN_USD: float = 2.0
+
+    # -------------------------------------------------------------- plans
+    # Free / Pro / Team for the app builder. Tokens are every builder token
+    # (plan, build, edit, critique) as recorded in builder_usage_events.
+    # Sized at about $0.20 of cost per 1M tokens for ~70% gross margin;
+    # re-tune from `python -m app.scripts.token_economics`.
+    PLAN_WINDOW_HOURS: int = 5
+    PLAN_FREE_APPS: int = 2
+    PLAN_FREE_WINDOW_TOKENS: int = 2_000_000
+    PLAN_FREE_MONTH_TOKENS: int = 12_000_000
+    PLAN_PRO_PRICE_USD: float = 32.0
+    PLAN_PRO_YEARLY_PRICE_USD: float = 26.0
+    PLAN_PRO_WINDOW_TOKENS: int = 8_000_000
+    PLAN_PRO_MONTH_TOKENS: int = 50_000_000
+    PLAN_TEAM_PRICE_USD: float = 78.0
+    PLAN_TEAM_YEARLY_PRICE_USD: float = 62.0
+    PLAN_TEAM_WINDOW_TOKENS: int = 12_000_000
+    PLAN_TEAM_MONTH_TOKENS: int = 120_000_000
+    # Extra tokens bought from the wallet once the plan is used up.
+    PLAN_EXTRA_TOKEN_PRICE_USD: float = 0.60
+    PLAN_TOKEN_PACKS: list[int] = [5_000_000, 25_000_000, 100_000_000]
+    # A generated image counts as this many tokens against the allowance.
+    PLAN_IMAGE_TOKEN_EQUIVALENT: int = 20_000
+    # A renewal the wallet cannot pay keeps the plan this many days.
+    BILLING_GRACE_DAYS: int = 3
+
+    # What our providers charge us, for the economics report and to price
+    # sandbox seconds in the usage ledger. E2B: per vCPU-second and per
+    # GiB-second (confirm on the E2B dashboard).
+    E2B_COST_PER_VCPU_SECOND: float = 0.000014
+    E2B_COST_PER_GIB_SECOND: float = 0.0000045
+    IMAGE_COST_USD: float = 0.003
+    EAS_COST_ANDROID_USD: float = 1.0
+    EAS_COST_IOS_USD: float = 2.0
 
     # Limits
     RATE_LIMIT_PER_MINUTE: int = 20
