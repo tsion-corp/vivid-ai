@@ -33,7 +33,7 @@ async def _handle(payload: dict, handler, name: str) -> dict:
         async with async_session() as db:
             entry = await handler(db, payload)
             await db.commit()
-        return {"received": True, "credited": entry is not None}
+        return {"received": True, "credited": entry is not None and entry is not False}
     except Exception as e:                          # the reconciler retries
         log.warning("%s webhook not processed: %s", name, e)
         return {"received": True, "credited": False}

@@ -578,6 +578,157 @@ class WalletFunding(Base):
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_now)
 
 
+# --------------------------------------------------------------- vivid pay
+# Payments for the apps users build (app/services/vividpay). An app's
+# customer pays by bank transfer into an account made for their order; the
+# money, less Vivid's fee, becomes the app owner's earnings, in naira kobo,
+# separate from the USD credits wallet above.
+
+class VividPayProject(Base):
+    """An app that takes payments: its keys and where it hears about them."""
+    __tablename__ = "vivid_pay_projects"
+
+    project_id: Mapped[str] = mapped_column(
+        ForeignKey("builder_projects.id", ondelete="CASCADE"), primary_key=True)
+    owner_id: Mapped[str] = mapped_column(ForeignKey("users.id", ondelete="CASCADE"), index=True)
+    #: vpk_...: in the app's bundle, names the project, allowed only from
+    #: the app's own origins.
+    publishable_key: Mapped[str] = mapped_column(String(64), unique=True, index=True)
+    #: vsk_... encrypted (builder secrets' Fernet); for the app's server side.
+    secret_key_enc: Mapped[str] = mapped_column(Text)
+    #: sha256 of the secret key, to find the project a server call is for.
+    secret_key_hash: Mapped[str] = mapped_column(String(64), unique=True, index=True)
+    #: Optional: an edge function told about paid checkouts, signed with the secret key.
+    webhook_url: Mapped[str | None] = mapped_column(String(512), default=None)
+    enabled: Mapped[bool] = mapped_column(Boolean, default=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_now)
+
+
+class VividPayAccount(Base):
+    """An app owner's earnings: the balance (our ledger is the truth) and
+    the Pouch account their money is gathered in and paid out from."""
+    __tablename__ = "vivid_pay_accounts"
+
+    user_id: Mapped[str] = mapped_column(
+        ForeignKey("users.id", ondelete="CASCADE"), primary_key=True)
+    balance_kobo: Mapped[int] = mapped_column(BigInteger, default=0)
+    #: Money on its way to a bank: withdrawals not yet confirmed.
+    pending_kobo: Mapped[int] = mapped_column(BigInteger, default=0)
+    customer_id: Mapped[str | None] = mapped_column(String(128), default=None)
+    earnings_va_id: Mapped[str | None] = mapped_column(String(128), default=None, index=True)
+    earnings_account_number: Mapped[str | None] = mapped_column(String(32), default=None)
+    earnings_bank_name: Mapped[str | None] = mapped_column(String(80), default=None)
+    #: none | verified | failed
+    kyc_status: Mapped[str] = mapped_column(String(10), default="none")
+    kyc_name: Mapped[str | None] = mapped_column(String(160), default=None)
+    kyc_bvn_enc: Mapped[str | None] = mapped_column(Text, default=None)
+    kyc_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), default=None)
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), default=_now, onupdate=_now)
+
+
+class VividPayCheckout(Base):
+    """One order's payment: the account number its customer pays into."""
+    __tablename__ = "vivid_pay_checkouts"
+    __table_args__ = (UniqueConstraint("project_id", "reference",
+                                       name="uq_vivid_pay_checkout_reference"),)
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=_uuid)
+    project_id: Mapped[str] = mapped_column(
+        ForeignKey("builder_projects.id", ondelete="CASCADE"), index=True)
+    owner_id: Mapped[str] = mapped_column(ForeignKey("users.id", ondelete="CASCADE"), index=True)
+    #: The app's own order id.
+    reference: Mapped[str] = mapped_column(String(128))
+    amount_kobo: Mapped[int] = mapped_column(BigInteger)
+    #: live | test (made from the builder preview: no real account, no money)
+    mode: Mapped[str] = mapped_column(String(8), default="live")
+    #: pending | paid | partial | expired
+    status: Mapped[str] = mapped_column(String(10), default="pending", index=True)
+    va_id: Mapped[str | None] = mapped_column(String(128), default=None, index=True)
+    account_number: Mapped[str | None] = mapped_column(String(32), default=None)
+    account_name: Mapped[str | None] = mapped_column(String(160), default=None)
+    bank_name: Mapped[str | None] = mapped_column(String(80), default=None)
+    customer: Mapped[dict | None] = mapped_column(JSONB, default=None)
+    meta: Mapped[dict | None] = mapped_column(JSONB, default=None)
+    #: What the payer sent, what Vivid kept, and what the owner was credited
+    #: (sent, less Pouch's charge on arrival and Vivid's fee).
+    paid_kobo: Mapped[int] = mapped_column(BigInteger, default=0)
+    fee_kobo: Mapped[int] = mapped_column(BigInteger, default=0)
+    credited_kobo: Mapped[int] = mapped_column(BigInteger, default=0)
+    #: Money that arrived after the checkout expired (still the owner's).
+    late: Mapped[bool] = mapped_column(Boolean, default=False)
+    paid_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), default=None)
+    expires_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
+    #: none | done | failed: moving the money to the owner's earnings account.
+    sweep_status: Mapped[str] = mapped_column(String(8), default="none")
+    swept_kobo: Mapped[int] = mapped_column(BigInteger, default=0)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_now, index=True)
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), default=_now, onupdate=_now)
+
+
+class VividPayEntry(Base):
+    """One movement of an owner's earnings, signed, in kobo. (provider,
+    provider_ref) is unique, so a transfer seen twice is paid once."""
+    __tablename__ = "vivid_pay_entries"
+    __table_args__ = (UniqueConstraint("provider", "provider_ref",
+                                       name="uq_vivid_pay_entries_provider_ref"),)
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=_uuid)
+    owner_id: Mapped[str] = mapped_column(ForeignKey("users.id", ondelete="CASCADE"), index=True)
+    #: payment | fee | withdrawal | withdrawal_fee | reversal | adjustment
+    kind: Mapped[str] = mapped_column(String(16))
+    amount_kobo: Mapped[int] = mapped_column(BigInteger)
+    balance_after: Mapped[int] = mapped_column(BigInteger)
+    provider: Mapped[str] = mapped_column(String(16))
+    provider_ref: Mapped[str] = mapped_column(String(128))
+    project_id: Mapped[str | None] = mapped_column(String(36), default=None, index=True)
+    checkout_id: Mapped[str | None] = mapped_column(String(36), default=None)
+    payout_id: Mapped[str | None] = mapped_column(String(36), default=None)
+    description: Mapped[str | None] = mapped_column(String(200), default=None)
+    meta: Mapped[dict | None] = mapped_column(JSONB, default=None)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), default=_now, index=True)
+
+
+class VividPayBankAccount(Base):
+    """A bank account an owner withdraws to, validated with the bank."""
+    __tablename__ = "vivid_pay_bank_accounts"
+    __table_args__ = (UniqueConstraint("user_id", "account_number", "bank_uuid",
+                                       name="uq_vivid_pay_bank_account"),)
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=_uuid)
+    user_id: Mapped[str] = mapped_column(ForeignKey("users.id", ondelete="CASCADE"), index=True)
+    account_number: Mapped[str] = mapped_column(String(20))
+    bank_uuid: Mapped[str] = mapped_column(String(64))
+    bank_name: Mapped[str] = mapped_column(String(80))
+    account_name: Mapped[str] = mapped_column(String(160))
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_now)
+
+
+class VividPayPayout(Base):
+    """A withdrawal to a bank. Its amount and fees leave the balance when
+    it is made, and come back if the bank transfer fails."""
+    __tablename__ = "vivid_pay_payouts"
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=_uuid)
+    owner_id: Mapped[str] = mapped_column(ForeignKey("users.id", ondelete="CASCADE"), index=True)
+    amount_kobo: Mapped[int] = mapped_column(BigInteger)
+    fee_kobo: Mapped[int] = mapped_column(BigInteger, default=0)
+    stamp_duty_kobo: Mapped[int] = mapped_column(BigInteger, default=0)
+    bank_account_id: Mapped[str] = mapped_column(String(36))
+    account_number: Mapped[str] = mapped_column(String(20))
+    bank_name: Mapped[str] = mapped_column(String(80))
+    recipient_name: Mapped[str] = mapped_column(String(160))
+    #: pending | success | failed
+    status: Mapped[str] = mapped_column(String(10), default="pending", index=True)
+    pouch_payout_id: Mapped[str | None] = mapped_column(String(128), default=None, index=True)
+    error: Mapped[str | None] = mapped_column(Text, default=None)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_now, index=True)
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), default=_now, onupdate=_now)
+
+
 # ------------------------------------------------------------------- plans
 class Subscription(Base):
     """A user's paid plan, paid from the wallet. No row means Free."""

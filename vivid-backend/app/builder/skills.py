@@ -152,7 +152,10 @@ def payments_block(provider: str | None) -> str:
     """The payments skill, when the project takes payments."""
     if not provider or provider == "none":
         return ""
-    text = _read(f"payments/SKILL.md")
+    if provider == "vividpay":
+        text = _read("vividpay/SKILL.md")
+        return "## Payments skill (Vivid Pay)\n" + text if text else ""
+    text = _read("payments/SKILL.md")
     return "## Payments skill\n" + text if text else ""
 
 

@@ -9,9 +9,11 @@ from app.api.routes.auth import router as auth_router
 from app.api.routes.chats import router as chats_router
 from app.api.routes.completions import router as completions_router
 from app.api.routes.connectors import router as connectors_router
+from app.api.routes.earnings import router as earnings_router
 from app.api.routes.health import router as health_router
 from app.api.routes.keys import router as keys_router
 from app.api.routes.media import router as media_router
+from app.api.routes.pay import router as pay_router
 from app.api.routes.search import router as search_router
 from app.api.routes.tools import router as tools_router
 from app.api.routes.waitlist import router as waitlist_router
@@ -37,4 +39,6 @@ api_router.include_router(builder_router)
 api_router.include_router(waitlist_router)
 api_router.include_router(wallet_router)
 api_router.include_router(webhooks_router)
+api_router.include_router(pay_router)
+api_router.include_router(earnings_router)
 api_router.include_router(admin_router)

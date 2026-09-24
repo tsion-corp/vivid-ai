@@ -495,3 +495,45 @@ python -m app.scripts.builder_eval --build anthropic/claude-sonnet-5 --edit anth
 Five build prompts and five edit prompts on the local driver; reports steps,
 typecheck failures, tokens and cost per prompt, and totals. It calls the real
 models and costs money.
+
+
+## Vivid Pay (payments for the apps users build)
+
+`POST /v1/builder/projects/{id}/vivid-pay {webhook_url?}` turns it on:
+- the owner's earnings account is opened on Pouch;
+- the app gets `VITE_VIVIDPAY_KEY` (publishable) and `VITE_VIVIDPAY_API` in its .env;
+- the secret key is returned once, and set as `VIVIDPAY_SECRET_KEY` on a linked Supabase
+  project.
+
+`DELETE` stops new checkouts and keeps the earnings.
+
+The app calls the public API (`app/api/routes/pay.py`). Requests are text/plain JSON, so
+browsers send them without a preflight. The publishable key is honoured only from the
+app's published site (live) or the builder preview (test: no Pouch, no money).
+
+```
+POST /v1/pay/checkouts                 {key, amount_kobo, reference, customer?, metadata?}
+GET  /v1/pay/checkouts/{id}?key=       poll until paid | partial | expired
+POST /v1/pay/checkouts/{id}/simulate   {key}; test checkouts only
+GET  /v1/pay/checkouts?reference=      Authorization: Bearer vsk_... (server side)
+```
+
+**Money flow:**
+1. Each live checkout gets its own Pouch virtual account, limited to the order's amount.
+2. When Pouch reports a transfer into it, the checkout is marked paid (or partial). The
+   transfer is re-read from the API and recorded once.
+3. The owner's earnings (`vivid_pay_*`, naira kobo, separate from the credits wallet) get
+   the amount after Pouch's charge, less Vivid's fee: `VIVIDPAY_FEE_BPS`, between
+   `VIVIDPAY_MIN_FEE_KOBO` and `VIVIDPAY_FEE_CAP_KOBO`.
+4. That amount is swept on Pouch to the owner's earnings account.
+5. The app's `webhook_url` gets `checkout.paid` or `checkout.partial`, signed as
+   `x-vivid-pay-signature`: hex HMAC-SHA256 of the body with the secret key.
+
+**Owner side** (`/v1/earnings`): balance, payments, a BVN check
+(`POST /v1/earnings/kyc`), bank accounts that must be in the verified name, and
+withdrawals.
+- A withdrawal takes its amount and Pouch's fee (plus ₦50 stamp duty from ₦10,000) off the
+  earnings at once. If Pouch refuses or reports the payout failed, all of it comes back.
+- When Pouch never answered, the withdrawal stays pending until the reconciler finds it by
+  reference, or reverses it after ten minutes.
+- The wallet reconciler also retries failed sweeps and polls pending withdrawals.

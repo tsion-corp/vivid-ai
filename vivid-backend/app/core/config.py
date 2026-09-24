@@ -526,6 +526,33 @@ class Settings(BaseSettings):
     # fees eat most of it; Dextopus still settles it).
     WALLET_CRYPTO_MIN_USD: float = 2.0
 
+    # ------------------------------------------------------------ vivid pay
+    # Payments for the apps users build: a customer pays by bank transfer
+    # into an account number made for their order (a Pouch virtual
+    # account); the money, less Vivid's fee, lands in the app owner's
+    # earnings (naira, separate from the credits wallet) and is withdrawn
+    # to a Nigerian bank after a one-time BVN check.
+    VIVIDPAY_ENABLED: bool = True
+    # Vivid's fee per payment: basis points, never below the minimum (which
+    # covers moving the money to the owner's earnings account) nor above
+    # the cap. Kobo.
+    VIVIDPAY_FEE_BPS: int = 150
+    VIVIDPAY_MIN_FEE_KOBO: int = 10_000
+    VIVIDPAY_FEE_CAP_KOBO: int = 200_000
+    VIVIDPAY_CHECKOUT_MINUTES: int = 30
+    VIVIDPAY_MIN_CHECKOUT_KOBO: int = 10_000
+    VIVIDPAY_MAX_CHECKOUT_KOBO: int = 500_000_000
+    # Checkouts a project may open per minute, and per payer address.
+    VIVIDPAY_CHECKOUTS_PER_MINUTE: int = 30
+    VIVIDPAY_CHECKOUTS_PER_IP_MINUTE: int = 6
+    VIVIDPAY_MIN_WITHDRAWAL_KOBO: int = 100_000
+    VIVIDPAY_DAILY_WITHDRAWAL_KOBO: int = 500_000_000
+    # What a payout costs when Pouch's quote is unavailable (fee only; the
+    # ₦50 stamp duty on ₦10,000 and above is added on top).
+    VIVIDPAY_PAYOUT_FEE_KOBO: int = 5_000
+    # Where the apps call from, for the account on a checkout's receipts.
+    VIVIDPAY_API_BASE: str = ""
+
     # -------------------------------------------------------------- plans
     # Free / Pro / Max for the app builder, counted in credits. A credit is
     # PLAN_TOKENS_PER_CREDIT builder tokens (plan, build, edit, critique, as

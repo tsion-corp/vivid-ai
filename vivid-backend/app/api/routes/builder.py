@@ -56,6 +56,7 @@ from datetime import datetime, timezone
 
 from fastapi import APIRouter, Depends, File, Form, Request, UploadFile
 from fastapi.responses import Response, StreamingResponse
+from pydantic import BaseModel, Field
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -71,7 +72,7 @@ from app.builder.sandbox.manager import manager
 from app.core.config import settings
 from app.core.errors import APIError
 from app.db.models import (BuilderAppBuild, BuilderAsset, BuilderMessage, BuilderProject,
-                           BuilderPublish, BuilderSnapshot, Connector, User)
+                           BuilderPublish, BuilderSnapshot, Connector, User, VividPayProject)
 from app.services.connectors import supabase as supabase_connector
 from app.services.plans import gate as plan_gate
 from app.services.wallet import ledger
@@ -83,6 +84,8 @@ from app.schemas.builder import (AnalyticsOut, AppBuildIn, AppBuildOut, AssetOut
                                  ProjectOut, ProjectUpdate, PublishOut, SnapshotOut, SupabaseLinkIn,
                                  TextEditOut, UsageOut)
 from app.services import rate_limit
+from app.services.vividpay import VividPayError, key_hash, new_key
+from app.services.vividpay import payouts as vp_payouts
 from app.services.models_gateway import provider
 
 router = APIRouter(prefix="/builder", tags=["builder"])
@@ -520,6 +523,11 @@ async def _env_for(project: BuilderProject, db: AsyncSession) -> dict[str, str] 
         anon = await secrets.get_secret(db, project.id, "SUPABASE_ANON_KEY")
         if url and anon:
             env.update({"VITE_SUPABASE_URL": url, "VITE_SUPABASE_ANON_KEY": anon})
+    if project.payments_provider == "vividpay":
+        pay = await db.get(VividPayProject, project.id)
+        if pay is not None and pay.enabled:
+            env["VITE_VIVIDPAY_KEY"] = pay.publishable_key
+            env["VITE_VIVIDPAY_API"] = _vividpay_api()
     if project.payments_provider == "paystack":
         public = await secrets.get_secret(db, project.id, "PAYSTACK_PUBLIC_KEY")
         if public:
@@ -678,6 +686,96 @@ async def disable_payments(project_id: str, user: User = Depends(get_current_use
     await secrets.delete_secret(db, project_id, "PAYSTACK_PUBLIC_KEY")
     await db.commit()
     return project
+
+
+# -------------------------------------------------------------- vivid pay
+def _vividpay_api() -> str:
+    return (settings.VIVIDPAY_API_BASE or settings.PUBLIC_BASE_URL).rstrip("/") + "/v1/pay"
+
+
+class VividPayIn(BaseModel):
+    #: The app's server side (a Supabase edge function) told about paid
+    #: checkouts, signed with the secret key. Optional.
+    webhook_url: str | None = Field(default=None, max_length=512)
+
+
+def _vividpay_out(pay: VividPayProject, secret_key: str | None = None) -> dict:
+    out = {"enabled": pay.enabled, "publishable_key": pay.publishable_key,
+           "webhook_url": pay.webhook_url, "api": _vividpay_api(),
+           "fee_bps": settings.VIVIDPAY_FEE_BPS, "min_fee_kobo": settings.VIVIDPAY_MIN_FEE_KOBO,
+           "fee_cap_kobo": settings.VIVIDPAY_FEE_CAP_KOBO}
+    if secret_key:
+        out["secret_key"] = secret_key                 # shown once, when it is made
+    return out
+
+
+@router.get("/projects/{project_id}/vivid-pay")
+async def get_vivid_pay(project_id: str, user: User = Depends(get_current_user),
+                        db: AsyncSession = Depends(get_db)):
+    await _owned(project_id, user, db)
+    pay = await db.get(VividPayProject, project_id)
+    if pay is None:
+        return {"enabled": False, "fee_bps": settings.VIVIDPAY_FEE_BPS,
+                "min_fee_kobo": settings.VIVIDPAY_MIN_FEE_KOBO,
+                "fee_cap_kobo": settings.VIVIDPAY_FEE_CAP_KOBO}
+    return _vividpay_out(pay)
+
+
+@router.post("/projects/{project_id}/vivid-pay")
+async def enable_vivid_pay(project_id: str, body: VividPayIn, user: User = Depends(get_current_user),
+                           db: AsyncSession = Depends(get_db)):
+    """Take payments by bank transfer with Vivid Pay: the owner's earnings
+    account is opened, the app gets a publishable key in its .env, and the
+    secret key (returned once) goes to the Supabase project when linked."""
+    project = await _owned(project_id, user, db)
+    _require_integration(project, "payments")
+    if not settings.VIVIDPAY_ENABLED or not secrets.configured():
+        raise APIError(503, "not_configured", "Payments are not set up on this server.")
+    if body.webhook_url and not body.webhook_url.startswith("https://"):
+        raise APIError(400, "bad_request", "The webhook URL must be https.")
+    try:
+        await vp_payouts.ensure_earnings_account(db, user)
+    except VividPayError as e:
+        raise APIError(e.status, e.code, str(e))
+    pay = await db.get(VividPayProject, project_id)
+    secret_key = None
+    if pay is None:
+        secret_key = new_key("vsk")
+        pay = VividPayProject(project_id=project_id, owner_id=user.id,
+                              publishable_key=new_key("vpk"),
+                              secret_key_enc=secrets.encrypt(secret_key),
+                              secret_key_hash=key_hash(secret_key))
+        db.add(pay)
+    pay.enabled = True
+    if body.webhook_url is not None:
+        pay.webhook_url = body.webhook_url or None
+    project.payments_provider = "vividpay"
+    await db.commit()
+    backend = await _backend_for(project, user, db)
+    if backend is not None and backend.can_functions:
+        try:
+            await backend.api.set_secrets(backend.ref, {
+                "VIVIDPAY_SECRET_KEY": secret_key or secrets.decrypt(pay.secret_key_enc)})
+        except supabase.SupabaseError as e:
+            log.warning("could not set VIVIDPAY_SECRET_KEY on %s: %s", backend.ref, e.public)
+    sandbox = manager.peek(project_id)
+    if sandbox is not None:
+        await _sync_env(sandbox, await _env_for(project, db))
+    return _vividpay_out(pay, secret_key)
+
+
+@router.delete("/projects/{project_id}/vivid-pay", status_code=204)
+async def disable_vivid_pay(project_id: str, user: User = Depends(get_current_user),
+                            db: AsyncSession = Depends(get_db)):
+    """Stop taking new payments. Keys and earnings are kept; checkouts
+    already open can still be paid, and that money is still the owner's."""
+    project = await _owned(project_id, user, db)
+    pay = await db.get(VividPayProject, project_id)
+    if pay is not None:
+        pay.enabled = False
+    if project.payments_provider == "vividpay":
+        project.payments_provider = "none"
+    await db.commit()
 
 
 # ----------------------------------------------------------------- chain

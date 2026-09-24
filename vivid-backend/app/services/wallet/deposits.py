@@ -107,16 +107,23 @@ async def credit_dextopus_deposit(db: AsyncSession, deposit: dict) -> WalletEntr
 async def reconcile(db: AsyncSession) -> int:
     """Credit whatever either provider reports that the ledger lacks.
     Returns how many were credited. The caller commits."""
+    from app.services.vividpay import events as pay_events
     credited = 0
     if pouch.configured():
         try:
+            seen: list[dict] = []
             for page in range(3):
                 rows = await pouch.inbound_transfers(skip=page * 100, take=100)
+                seen += rows
                 for row in rows:
                     if await credit_pouch_transfer(db, row):
                         credited += 1
                 if len(rows) < 100:
                     break
+            await db.commit()
+            # Vivid Pay: order payments the webhooks missed, pending
+            # withdrawals and failed sweeps.
+            credited += await pay_events.reconcile(db, seen)
         except (pouch.PouchError, fx.RatesUnavailable) as e:
             log.warning("pouch reconcile failed: %s", e)
     if dextopus.configured():
@@ -144,8 +151,16 @@ def verify_pouch_signature(raw_body: bytes, signature: str | None, secret: str) 
     return False
 
 
-async def on_pouch_event(db: AsyncSession, payload: dict) -> WalletEntry | None:
-    if payload.get("event") != "virtual_account.credited":
+async def on_pouch_event(db: AsyncSession, payload: dict):
+    """A transfer into a wallet top-up account credits the wallet; into a
+    Vivid Pay checkout's account, pays that order; a payout event settles
+    a withdrawal. Anything else (e.g. money arriving in an owner's earnings
+    account from a sweep) is ignored."""
+    from app.services.vividpay import events as pay_events
+    event = payload.get("event") or ""
+    if event.startswith("payout."):
+        return await pay_events.on_payout_event(db, payload)
+    if event != "virtual_account.credited":
         return None
     transfer_id = (payload.get("data") or {}).get("id")
     if not transfer_id:
@@ -154,7 +169,10 @@ async def on_pouch_event(db: AsyncSession, payload: dict) -> WalletEntry | None:
     if transfer is None:
         log.warning("pouch webhook names transfer %s the API does not list", transfer_id)
         return None
-    return await credit_pouch_transfer(db, transfer)
+    entry = await credit_pouch_transfer(db, transfer)
+    if entry is not None:
+        return entry
+    return await pay_events.on_transfer(db, transfer)
 
 
 async def on_dextopus_event(db: AsyncSession, payload: dict) -> WalletEntry | None:
