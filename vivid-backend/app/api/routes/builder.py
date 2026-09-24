@@ -962,6 +962,20 @@ async def _save_hand_edit(db: AsyncSession, sandbox, project: BuilderProject,
     return row or await snapshots.latest(db, project.id)
 
 
+async def _write_image(db: AsyncSession, project_id: str, sandbox, path: str, data: bytes) -> None:
+    """The picture at `path` becomes `data`. Generated pictures and uploads
+    (public/uploads) are also stored outside the sandbox and copied back in
+    when one starts, so the stored copy changes too or the old one returns."""
+    asset = await assets.by_sandbox_path(db, project_id, path)
+    if asset is not None:
+        try:
+            await assets.replace_bytes(db, asset, data)
+        except blob.BlobError as e:
+            log.error("replacing stored asset %s failed: %s", asset.name, e)
+            raise APIError(503, "storage_unavailable", "The image could not be stored. Try again.")
+    await sandbox.write_bytes(path, data)
+
+
 async def _read_upload(file: UploadFile) -> bytes:
     data = await file.read(visual.MAX_IMAGE_BYTES + 1)
     if not data:
@@ -974,9 +988,9 @@ async def replace_file(project_id: str, path: str, request: Request,
                        file: UploadFile = File(...),
                        user: User = Depends(get_current_user),
                        db: AsyncSession = Depends(get_db)):
-    """Swap the picture at `path` for another. It keeps its path, re-encoded
-    into the file's own format when the upload is a different one, so every
-    import of it keeps working; the preview hot-reloads."""
+    """Swap the picture at `path` for another, generated pictures and uploads
+    included. It keeps its path, re-encoded into the file's own format when
+    the upload is a different one, so every use of it keeps working."""
     project = await _hand_edit_target(project_id, user, db)
     try:
         clean = safe_path(path)
@@ -984,9 +998,6 @@ async def replace_file(project_id: str, path: str, request: Request,
         raise APIError(400, "bad_path", str(e))
     if not visual.is_image_path(clean):
         raise APIError(400, "not_an_image", "Only images can be replaced here. Ask Vivid to change other files.")
-    if clean.startswith(visual.UPLOAD_DIR + "/"):
-        raise APIError(400, "uploaded_file",
-                       "This is one of your uploads. Upload a new file instead, or replace it from the preview.")
     data = await _read_upload(file)
     async with _editing.setdefault(project_id, asyncio.Lock()):
         sandbox = await _sandbox(project_id, request)
@@ -999,7 +1010,7 @@ async def replace_file(project_id: str, path: str, request: Request,
         if fitted is None:
             ext = pathlib.PurePosixPath(clean).suffix
             raise APIError(400, "bad_image", f"Upload a {ext} image to replace this file.")
-        await sandbox.write_bytes(clean, fitted)
+        await _write_image(db, project_id, sandbox, clean, fitted)
         row = await _save_hand_edit(db, sandbox, project, f"Replaced {clean}")
     return ImageReplaceOut(path=clean, snapshot=row)
 
@@ -1011,9 +1022,9 @@ async def replace_image(project_id: str, request: Request,
                         user: User = Depends(get_current_user),
                         db: AsyncSession = Depends(get_db)):
     """Swap a picture picked in the preview, named by the URL the page loaded
-    it from. One of the app's files is replaced in place; a picture that is
-    not (a stock photo URL, an upload) gets a new file under public/images
-    and the source is repointed at it."""
+    it from. One of the app's files (generated pictures and uploads
+    included) is replaced in place; a picture that is not (a stock photo
+    URL) gets a new file under public/images and the source is repointed."""
     project = await _hand_edit_target(project_id, user, db)
     data = await _read_upload(file)
     async with _editing.setdefault(project_id, asyncio.Lock()):
@@ -1025,7 +1036,7 @@ async def replace_image(project_id: str, request: Request,
         except visual.VisualError as e:
             raise APIError(400, "bad_image", str(e))
         if fitted is not None:
-            await sandbox.write_bytes(target.path, fitted)
+            await _write_image(db, project_id, sandbox, target.path, fitted)
             row = await _save_hand_edit(db, sandbox, project, f"Replaced {target.path}")
             return ImageReplaceOut(path=target.path, snapshot=row)
 

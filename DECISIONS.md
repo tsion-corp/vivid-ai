@@ -730,10 +730,11 @@ pins that.
   - `PUT /files/{path}` replaces an image in place; an upload in another
     format is re-encoded (Pillow) into the file's own, so imports still work.
   - `POST /images/replace {src, file}` takes the URL the preview loaded a
-    picture from: an app file is replaced in place; a stock photo URL or an
-    upload (re-copied from the store on every sandbox start, so overwriting
-    it would not stick) gets a new file under public/images and the source
-    is repointed.
+    picture from: an app file is replaced in place; a stock photo URL gets
+    a new file under public/images and the source is repointed.
+  - Generated pictures live in public/uploads like uploads, and are the
+    main thing people replace. They are copied back from the store when a
+    sandbox starts, so replacing one updates the stored copy too.
   - `POST /edits {edits: [{old, new, all?}]}` finds copy as the page shows
     it, however the source spells it (line wraps, entities), and escapes the
     new text for where it lands (JSX text, a quoted string, JSON). One match

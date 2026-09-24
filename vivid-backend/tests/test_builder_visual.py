@@ -68,7 +68,7 @@ def test_src_resolves_to_the_file_vite_served():
     t = visual.resolve_src(f"{preview}/images/team.png", preview, files)
     assert t.path == "public/images/team.png" and t.refs == ["/images/team.png"]
     t = visual.resolve_src(f"{preview}/uploads/logo.png", preview, files)
-    assert t.path is None and t.refs == ["/uploads/logo.png"]
+    assert t.path == "public/uploads/logo.png"
     t = visual.resolve_src("https://images.unsplash.com/photo-1?w=800", preview, files)
     assert t.path is None and t.refs == ["https://images.unsplash.com/photo-1?w=800"]
 
@@ -134,3 +134,28 @@ def test_publish_strips_the_editor():
     html = visual.with_editor("<html><body>app</body></html>").encode()
     assert visual.EDITOR_START.encode() not in visual.strip_editor(html)
     assert publish.visual is visual
+
+
+def test_generated_picture_is_replaced_in_the_store_too(client, fake_manager, fake_blob):
+    """Generated pictures and uploads are copied back from the store when a
+    sandbox starts; replacing one must change the stored copy, or the old
+    picture returns."""
+    pid, sb = _built(client, fake_manager)
+    r = client.post(f"/v1/builder/projects/{pid}/assets",
+                    files={"file": ("hero-shot.jpg", image("JPEG"), "image/jpeg")})
+    assert r.status_code == 201, r.json()
+    stored_key = next(k for k in fake_blob if k.endswith("hero-shot.jpg"))
+    new = image("PNG", color=(10, 200, 10))
+    r = client.put(f"/v1/builder/projects/{pid}/files/public/uploads/hero-shot.jpg",
+                   files={"file": ("green.png", new, "image/png")})
+    assert r.status_code == 200, r.json()
+    for data in (fake_blob[stored_key], sb.blobs["public/uploads/hero-shot.jpg"]):
+        img = Image.open(io.BytesIO(data))
+        assert img.format == "JPEG" and img.getpixel((4, 4))[1] > 150
+
+    # From the preview, by its URL, the same.
+    r = client.post(f"/v1/builder/projects/{pid}/images/replace",
+                    data={"src": "http://fake:5173/uploads/hero-shot.jpg"},
+                    files={"file": ("red.png", image("PNG"), "image/png")})
+    assert r.status_code == 200 and r.json()["path"] == "public/uploads/hero-shot.jpg", r.json()
+    assert Image.open(io.BytesIO(fake_blob[stored_key])).getpixel((4, 4))[0] > 150

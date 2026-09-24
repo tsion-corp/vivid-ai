@@ -95,6 +95,24 @@ async def add(db: AsyncSession, project_id: str, filename: str, mime: str,
     return asset
 
 
+async def by_sandbox_path(db: AsyncSession, project_id: str, path: str) -> BuilderAsset | None:
+    """The asset stored at public/uploads/<name>, if that is one."""
+    if not path.startswith(UPLOAD_DIR + "/"):
+        return None
+    return (await db.execute(select(BuilderAsset).where(
+        BuilderAsset.project_id == project_id,
+        BuilderAsset.name == path[len(UPLOAD_DIR) + 1:]))).scalar_one_or_none()
+
+
+async def replace_bytes(db: AsyncSession, asset: BuilderAsset, data: bytes) -> None:
+    """New contents under the same name, in the store too: a sandbox that
+    starts later copies uploads back from there, and must get these."""
+    await blob.put(asset.r2_key, data, asset.mime)
+    asset.size_bytes = len(data)
+    asset.meta = _meta(data, asset.mime)
+    await db.flush()
+
+
 async def list_for(db: AsyncSession, project_id: str) -> list[BuilderAsset]:
     rows = await db.execute(select(BuilderAsset).where(BuilderAsset.project_id == project_id)
                             .order_by(BuilderAsset.created_at))

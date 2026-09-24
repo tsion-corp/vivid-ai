@@ -400,12 +400,14 @@ PUT  /builder/projects/{id}/files/{path}     multipart `file`   -> {path, relink
      keeps the path: a PNG for hero.jpg is re-encoded to JPEG, so every import
      still works. 400 not_an_image for a non-image path, 400 bad_image for an
      upload that is not a picture, over 10 MB, or cannot become the file's
-     format (a PNG for an .svg). 400 uploaded_file for public/uploads/*.
+     format (a PNG for an .svg). Generated pictures and uploads
+     (public/uploads/*) are replaced like any other image.
 POST /builder/projects/{id}/images/replace   multipart `src`, `file` -> {path, relinked, snapshot}
      Replace a picture picked in the preview, named by the URL it loaded from
-     (img.currentSrc, or a CSS background url). An app file is replaced in
-     place; a stock photo URL or an upload gets a new file under
-     public/images/ and `relinked` lists the source files repointed at it.
+     (img.currentSrc, or a CSS background url). An app file, generated
+     pictures and uploads included, is replaced in place; a stock photo URL
+     gets a new file under public/images/ and `relinked` lists the source
+     files repointed at it.
      404 not_found when the source never names it (ask the model instead).
 POST /builder/projects/{id}/edits  {edits: [{old, new, all?}]}  -> {results, snapshot}
      Change copy as the page shows it. `old` is the element's text; it is

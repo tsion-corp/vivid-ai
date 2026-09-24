@@ -22,7 +22,6 @@ from urllib.parse import unquote, urlparse
 
 from PIL import Image, ImageOps, UnidentifiedImageError
 
-from app.builder.assets import UPLOAD_DIR
 from app.builder.sandbox.base import Sandbox
 
 MAX_IMAGE_BYTES = 10 * 1024 * 1024
@@ -117,8 +116,9 @@ def resolve_src(src: str, preview_url: str, files: list[str]) -> ImageTarget:
     """Which file a URL seen in the preview is.
 
     Vite serves src/ files at their own path (/src/assets/hero.jpg) and
-    public/ files at the root (/hero.jpg). Anything else, a stock photo on a
-    CDN, is not a file, but the source names it, so it can be relinked.
+    public/ files at the root (/hero.jpg), generated pictures and uploads
+    included (/uploads/hero.jpg). Anything else, a stock photo on a CDN, is
+    not a file, but the source names it, so it can be relinked.
     """
     src = (src or "").strip()
     if not src or src.startswith(("data:", "blob:")):
@@ -136,10 +136,6 @@ def resolve_src(src: str, preview_url: str, files: list[str]) -> ImageTarget:
     candidates = [rel, f"public/{rel}"]
     path = next((c for c in candidates if c in known), None)
     if path is None:
-        return ImageTarget(path=None, refs=[route])
-    if path.startswith(UPLOAD_DIR + "/"):
-        # An upload is re-copied from the store whenever a sandbox starts, so
-        # overwriting it would not stick: point the source at a new file.
         return ImageTarget(path=None, refs=[route])
     refs = [route] if path.startswith("public/") else []
     return ImageTarget(path=path, refs=refs)
