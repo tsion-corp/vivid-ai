@@ -115,6 +115,10 @@ class Sandbox(ABC):
     @abstractmethod
     async def is_running(self) -> bool: ...
 
+    async def start_dev_server(self) -> None:
+        """Called once on a new sandbox, before the wait for the dev server.
+        Drivers whose template starts it correctly on boot do nothing."""
+
     async def touch(self) -> None:
         """Extend the sandbox's own lifetime, where the driver has one."""
 

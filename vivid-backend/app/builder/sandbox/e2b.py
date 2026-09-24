@@ -17,7 +17,7 @@ from e2b import AsyncSandbox, CommandExitException, TimeoutException
 from e2b.exceptions import NotFoundException, SandboxException
 
 from app.builder import targets as targets_mod
-from app.builder.sandbox.base import RunResult, Sandbox, SandboxError, safe_path
+from app.builder.sandbox.base import DEV_LOG, RunResult, Sandbox, SandboxError, safe_path
 from app.core.config import settings
 
 log = logging.getLogger("vivid.builder.e2b")
@@ -145,6 +145,27 @@ class E2BSandbox(Sandbox):
     # ------------------------------------------------------------ lifetime
     def preview_url(self) -> str:
         return f"https://{self._sb.get_host(self.target.port)}"
+
+    async def start_dev_server(self) -> None:
+        """Mobile: restart Metro so the manifest Expo Go reads points at this
+        sandbox's public https host. E2B snapshots the start command's process
+        when the template is built, so the Metro a sandbox wakes up with was
+        started before the sandbox (and its host) existed, and hands phones
+        http://<host>:8081 URLs they cannot load."""
+        if not self.target.is_mobile:
+            return
+        host = self._sb.get_host(self.target.port)
+        try:
+            # "[e]xpo" so the pattern never matches this shell's own command line.
+            await self._sb.commands.run("pkill -f '[e]xpo start' || true; sleep 1", cwd=APP_ROOT,
+                                        timeout=30)
+            await self._sb.commands.run(
+                f"npx expo start --port {self.target.port} > {DEV_LOG} 2>&1",
+                background=True, cwd=APP_ROOT,
+                envs={"EXPO_PACKAGER_PROXY_URL": f"https://{host}", "EXPO_NO_TELEMETRY": "1",
+                      "NO_COLOR": "1", "FORCE_COLOR": "0"})
+        except (SandboxException, httpx.HTTPError) as e:
+            raise SandboxError(f"could not start Metro: {e}") from e
 
     async def touch(self) -> None:
         try:

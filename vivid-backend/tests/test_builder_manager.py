@@ -127,3 +127,21 @@ async def test_sweep_kills_idle_only(manager, driver, monkeypatch):
     now[0] = 1300.0
     await manager.kill_all(redis)
     assert b.killed and manager.peek("p2") is None
+
+
+async def test_a_new_sandbox_starts_its_dev_server_after_restore(manager, driver):
+    """Mobile sandboxes restart Metro with their public URL (E2B snapshots the
+    template's Metro before the sandbox exists); it runs after the restore,
+    so a changed package.json is installed first, and before the wait."""
+    redis, order = FakeRedis(), []
+
+    async def restore(sandbox):
+        order.append("restore")
+        started = sandbox.start_dev_server
+
+        async def start():
+            order.append("start")
+            await started()
+        sandbox.start_dev_server = start
+    await manager.get_or_create("p1", redis, restore=restore)
+    assert order == ["restore", "start"]

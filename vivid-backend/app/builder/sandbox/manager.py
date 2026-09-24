@@ -63,6 +63,7 @@ class SandboxManager:
             try:
                 if restore is not None:
                     await restore(sandbox)
+                await sandbox.start_dev_server()
                 await self._wait_for_dev_server(sandbox)
             except Exception:
                 await sandbox.kill()
