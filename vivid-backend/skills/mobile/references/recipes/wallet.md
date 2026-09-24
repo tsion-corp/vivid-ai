@@ -34,3 +34,5 @@ saved, date).
 Minimums for a first build: 3 accounts, 12 categories with icons, 60 seeded transactions
 over two months so charts are real, working add and delete, budgets with thresholds,
 2 savings goals, amounts formatted in naira with tabular numbers.
+
+Signature: The balance counts up to its value on a hero card with a two-colour glow behind it; the virtual card is a TiltCard that flips (FlipCard) to show its details; transactions cascade in.

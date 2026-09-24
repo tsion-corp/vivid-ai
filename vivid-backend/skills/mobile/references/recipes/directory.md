@@ -27,3 +27,5 @@ price level, amenities, about), reviews (listing, author, rating, text, date), s
 Minimums for a first build: 8 categories, 30 listings across 6 Lagos or Abuja areas with
 real-looking addresses and coordinates and generated photos, distance sorting from the
 user's location, working filters, reviews with averages, saved listings.
+
+Signature: A depth carousel of featured places on Home, listing photos with a collapsing header on the detail screen, and a floating glass map/list toggle.

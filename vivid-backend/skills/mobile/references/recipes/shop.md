@@ -38,3 +38,5 @@ favourites, delivery areas with fees.
 Minimums for a first build: 6 categories, 16 to 24 products with generated photos in one
 consistent style, working cart with quantities and options, checkout to the success
 screen, orders list, favourites, owner area with orders and stock toggles.
+
+Signature: The product photo on the detail screen is a TiltCard (tilts toward the finger with a glare), the floating glass tab bar with a sliding pill, and the add-to-cart badge bump with a haptic.

@@ -108,24 +108,144 @@ export function Layer({ speed = 0.5, children, className }: { speed?: number; ch
 }
 ```
 
-## Tilt.tsx (product mockup follows the pointer)
+## TiltCard.tsx (3D tilt toward the pointer, with glare and depth layers)
 ```tsx
-import { motion, useMotionValue, useSpring, useTransform } from "motion/react";
+import { motion, useMotionTemplate, useMotionValue, useReducedMotion, useSpring, useTransform } from "motion/react";
 import type { ReactNode } from "react";
-export function Tilt({ children, max = 6 }: { children: ReactNode; max?: number }) {
-  const x = useMotionValue(0), y = useMotionValue(0);
-  const rx = useSpring(useTransform(y, [-0.5, 0.5], [max, -max]), { stiffness: 200, damping: 20 });
-  const ry = useSpring(useTransform(x, [-0.5, 0.5], [-max, max]), { stiffness: 200, damping: 20 });
+
+export function TiltCard({ children, max = 8, className }: { children: ReactNode; max?: number; className?: string }) {
+  const reduce = useReducedMotion();
+  const x = useMotionValue(0.5), y = useMotionValue(0.5);
+  const cfg = { stiffness: 180, damping: 18 };
+  const rx = useSpring(useTransform(y, [0, 1], [max, -max]), cfg);
+  const ry = useSpring(useTransform(x, [0, 1], [-max, max]), cfg);
+  const gx = useTransform(x, (v) => `${v * 100}%`), gy = useTransform(y, (v) => `${v * 100}%`);
+  const glare = useMotionTemplate`radial-gradient(420px circle at ${gx} ${gy}, rgb(255 255 255 / 0.22), transparent 55%)`;
+  if (reduce) return <div className={className}>{children}</div>;
   return (
-    <motion.div style={{ rotateX: rx, rotateY: ry, transformPerspective: 1200 }}
-      onPointerMove={(e) => { const r = e.currentTarget.getBoundingClientRect();
-        x.set((e.clientX - r.left) / r.width - 0.5); y.set((e.clientY - r.top) / r.height - 0.5); }}
-      onPointerLeave={() => { x.set(0); y.set(0); }} className="hidden md:block will-change-transform">
-      {children}
-    </motion.div>
+    <div style={{ perspective: 1000 }} className="group">
+      <motion.div className={"relative [transform-style:preserve-3d] will-change-transform " + (className ?? "")}
+        style={{ rotateX: rx, rotateY: ry }}
+        onPointerMove={(e) => { if (e.pointerType !== "mouse") return; const r = e.currentTarget.getBoundingClientRect();
+          x.set((e.clientX - r.left) / r.width); y.set((e.clientY - r.top) / r.height); }}
+        onPointerLeave={() => { x.set(0.5); y.set(0.5); }}>
+        {children}
+        <motion.div aria-hidden style={{ background: glare }}
+          className="pointer-events-none absolute inset-0 rounded-[inherit] opacity-0 transition-opacity duration-300 group-hover:opacity-100" />
+      </motion.div>
+    </div>
+  );
+}
+// Depth inside the card: <div style={{ transform: "translateZ(40px)" }}> on the title or
+// product image makes it float above the card's face. Give the card its rounded corner
+// and overflow-hidden on an inner wrapper, not on the tilting element.
+```
+
+## Micro-interactions (src/components/motion/Micro.tsx)
+```tsx
+import { AnimatePresence, animate, motion, useInView, useMotionValue, useTransform } from "motion/react";
+import { Check, Copy } from "lucide-react";
+import { useEffect, useRef, useState } from "react";
+
+/** A number that counts to its value when it enters, and to each new value after. */
+export function AnimatedNumber({ value, format = (n: number) => n.toLocaleString("en-NG") }: {
+  value: number; format?: (n: number) => string }) {
+  const ref = useRef<HTMLSpanElement>(null);
+  const inView = useInView(ref, { once: true });
+  const mv = useMotionValue(0);
+  const text = useTransform(mv, (v) => format(Math.round(v)));
+  useEffect(() => { if (inView) { const c = animate(mv, value, { duration: 1.2, ease: [0.22, 1, 0.36, 1] }); return c.stop; } }, [inView, value]);
+  return <motion.span ref={ref} className="tabular-nums">{text}</motion.span>;
+}
+
+/** Copy with an icon that pops into a check. */
+export function CopyButton({ text, label = "Copy" }: { text: string; label?: string }) {
+  const [done, setDone] = useState(false);
+  return (
+    <button type="button" className="inline-flex h-9 items-center gap-1.5 rounded-full border px-3 text-sm font-medium"
+      onClick={async () => { await navigator.clipboard.writeText(text); setDone(true); setTimeout(() => setDone(false), 1500); }}>
+      <AnimatePresence mode="wait" initial={false}>
+        <motion.span key={done ? "y" : "n"} initial={{ scale: 0.5, opacity: 0 }} animate={{ scale: 1, opacity: 1 }}
+          exit={{ scale: 0.5, opacity: 0 }} transition={{ type: "spring", stiffness: 500, damping: 25 }}>
+          {done ? <Check className="h-4 w-4 text-green-600" /> : <Copy className="h-4 w-4" />}
+        </motion.span>
+      </AnimatePresence>
+      {done ? "Copied" : label}
+    </button>
+  );
+}
+
+/** A button that shows its work: label, then spinner, then a check. */
+export function ActionButton({ onAction, children, className }: {
+  onAction: () => Promise<unknown>; children: React.ReactNode; className?: string }) {
+  const [state, setState] = useState<"idle" | "busy" | "done">("idle");
+  return (
+    <motion.button layout type="button" disabled={state === "busy"} whileTap={{ scale: 0.97 }}
+      className={"inline-flex h-11 items-center justify-center gap-2 rounded-full bg-primary px-5 font-medium text-primary-foreground " + (className ?? "")}
+      onClick={async () => { setState("busy"); try { await onAction(); setState("done"); setTimeout(() => setState("idle"), 1600); } catch { setState("idle"); } }}>
+      <AnimatePresence mode="popLayout" initial={false}>
+        <motion.span key={state} initial={{ y: 10, opacity: 0 }} animate={{ y: 0, opacity: 1 }} exit={{ y: -10, opacity: 0 }}
+          transition={{ duration: 0.18 }} className="inline-flex items-center gap-2">
+          {state === "busy" ? <span className="h-4 w-4 animate-spin rounded-full border-2 border-current border-t-transparent" />
+            : state === "done" ? <><Check className="h-4 w-4" /> Done</> : children}
+        </motion.span>
+      </AnimatePresence>
+    </motion.button>
+  );
+}
+
+/** A check that draws itself: form sent, order placed, paid. */
+export function SuccessCheck({ size = 72 }: { size?: number }) {
+  return (
+    <motion.svg width={size} height={size} viewBox="0 0 52 52" initial="hidden" animate="show" className="text-green-600">
+      <motion.circle cx="26" cy="26" r="24" fill="none" stroke="currentColor" strokeWidth="3"
+        variants={{ hidden: { pathLength: 0 }, show: { pathLength: 1, transition: { duration: 0.5 } } }} />
+      <motion.path d="M15 27l7 7 15-15" fill="none" stroke="currentColor" strokeWidth="3.5" strokeLinecap="round" strokeLinejoin="round"
+        variants={{ hidden: { pathLength: 0 }, show: { pathLength: 1, transition: { delay: 0.4, duration: 0.35 } } }} />
+    </motion.svg>
+  );
+}
+
+/** Shake a field once when it fails: <motion.div animate={shake ? SHAKE : {}} key={attempt}> */
+export const SHAKE = { x: [0, -6, 6, -4, 4, 0], transition: { duration: 0.35 } };
+
+/** Toggle with a spring thumb. */
+export function Toggle({ on, onChange, label }: { on: boolean; onChange: (v: boolean) => void; label: string }) {
+  return (
+    <button type="button" role="switch" aria-checked={on} aria-label={label} onClick={() => onChange(!on)}
+      className={"flex h-7 w-12 items-center rounded-full p-1 transition-colors " + (on ? "justify-end bg-primary" : "justify-start bg-muted")}>
+      <motion.span layout transition={{ type: "spring", stiffness: 600, damping: 32 }} className="h-5 w-5 rounded-full bg-white shadow" />
+    </button>
   );
 }
 ```
+Tabs and segmented controls use the NavPill pattern (`layoutId`) for their active
+background. Lists wrap rows in `<AnimatePresence initial={false}>` with
+`<motion.li layout initial={{ opacity: 0, y: -8 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0, height: 0 }}>`.
+
+## MeshGradient.tsx (the calm animated backdrop)
+```tsx
+import { motion, useReducedMotion } from "motion/react";
+const BLOBS = [
+  { c: "bg-primary/40", pos: "-left-24 -top-24", size: "h-[28rem] w-[28rem]", d: 26 },
+  { c: "bg-accent/40", pos: "right-[-6rem] top-10", size: "h-[24rem] w-[24rem]", d: 32 },
+  { c: "bg-primary/25", pos: "left-1/3 bottom-[-8rem]", size: "h-[22rem] w-[22rem]", d: 38 },
+];
+export function MeshGradient() {
+  const reduce = useReducedMotion();
+  return (
+    <div aria-hidden className="pointer-events-none absolute inset-0 -z-10 overflow-hidden">
+      {BLOBS.map((b, i) => (
+        <motion.div key={i} className={`absolute rounded-full blur-3xl ${b.c} ${b.pos} ${b.size}`}
+          animate={reduce ? undefined : { x: [0, 60, -30, 0], y: [0, -40, 30, 0], scale: [1, 1.1, 0.95, 1] }}
+          transition={{ duration: b.d, repeat: Infinity, ease: "easeInOut" }} />
+      ))}
+    </div>
+  );
+}
+```
+Put `<Grain />` over it. Text sits on it directly only when the contrast holds; otherwise
+on a `bg-background/70 backdrop-blur` panel.
 
 ## Magnetic.tsx (hero buttons only, desktop)
 ```tsx
@@ -146,6 +266,8 @@ export function Magnetic({ children, range = 12 }: { children: ReactNode; range?
 ```
 
 ## useCountUp.ts and PinnedFeatures.tsx (GSAP + ScrollTrigger)
+In components, prefer `useGSAP(() => { … }, { scope: ref })` from `@gsap/react`: it
+reverts everything on unmount. The effects below show the same cleanup by hand.
 ```ts
 import { useEffect, useRef } from "react";
 import gsap from "gsap";

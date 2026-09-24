@@ -27,3 +27,5 @@ sections, lessons (title, type, duration, content or video, free), quizzes, ques
 Minimums for a first build: 8 courses with generated covers across 4 categories, 3 fully
 built courses with 3 sections and 4 to 6 lessons each, 3 quizzes with 8 questions,
 working progress, streaks and quiz results.
+
+Signature: A lesson progress ring that fills, flash cards that flip with a spring (FlipCard) and swipe away, and a success check at the end of a lesson.

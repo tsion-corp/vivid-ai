@@ -128,7 +128,9 @@ List the problems you can see, most important first, at most five: content under
 bar or the home indicator, text clipped or overflowing, tap targets smaller than 44pt, a tab \
 bar without clear icons and labels, wrong hierarchy (what should read first does not), uneven \
 spacing, images without a fixed aspect ratio, low contrast, an empty-looking screen with no \
-empty state, anything that still says placeholder. Then fix them with edit_file. If the app \
+empty state, a flat generic look (every card the same flat box, no clear hero element, no \
+depth between content and the floating tab bar or header), anything that still says \
+placeholder. Then fix them with edit_file. If the app \
 is genuinely good on both screens, say so in one line and do not change anything.
 
 Reply to the user afterwards in one or two sentences about what you adjusted."""

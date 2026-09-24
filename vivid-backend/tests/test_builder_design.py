@@ -544,6 +544,28 @@ def test_motion_skill_for_hero_pages_and_animation_requests(monkeypatch):
     assert skills.motion_block("platform") == ""
 
 
+def test_three_js_only_for_brands_that_suit_it_or_when_asked():
+    assert "HeroScene" in skills.motion_block("token-launch")
+    assert "HeroScene" not in skills.motion_block("saas") and "TiltCard" in skills.motion_block("saas")
+    asked = skills.motion_block("dashboard", "make the hero 3D with three.js")
+    assert "## Motion skill" in asked and "HeroScene" in asked
+
+
+def test_every_web_page_gets_micro_interactions_and_depth():
+    design = skills.design_block("# Spec", "", "dashboard")
+    assert "## Feel: micro-interactions on every page" in design
+    assert "## Make it distinctive, not generated" in design
+
+
+def test_the_mobile_skill_has_depth_motion_and_a_signature():
+    ui = skills.ui_block("# Spec", "", recipe="wallet", mobile=True)
+    for piece in ("# Depth, glass and 3D on phones", "TiltCard", "PressableScale", "AnimatedTabBar",
+                  "GestureHandlerRootView", "Signature:"):
+        assert piece in ui, piece
+    assert ui.index("PressableScale.tsx") < ui.index("# Depth, glass and 3D")
+    assert "HeroScene" not in ui   # no three.js on phones
+
+
 async def test_logo_also_becomes_the_favicon(monkeypatch):
     import io
     from PIL import Image

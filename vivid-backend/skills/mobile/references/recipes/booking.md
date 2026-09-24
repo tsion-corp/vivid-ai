@@ -30,3 +30,5 @@ note), business hours, blocked dates.
 Minimums for a first build: 10 to 14 services in 3 to 4 categories, 4 staff with generated
 portraits (Black Nigerian professionals), real slot computation with no double bookings,
 the full flow to the success screen, reminders scheduled, owner schedule working.
+
+Signature: Time slot chips that transition into the selected state with a selection haptic, and the confirmed booking shown as a ticket card that tilts and flips to a QR or reference.

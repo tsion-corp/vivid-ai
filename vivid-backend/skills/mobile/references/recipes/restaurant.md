@@ -34,3 +34,5 @@ Data: sections, items (name, description, price, tags, options, photo, available
 Minimums for a first build: 5 sections with 20 to 30 items, at least 10 item photos in one
 style, options sheet working, cart bar, checkout to tracking, Orders with Order again,
 owner board moving orders through their states.
+
+Signature: A floating glass tab bar; dish cards that press with a spring; the order tracker's steps filling one by one with springs and a success haptic when it is ready.

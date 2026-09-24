@@ -27,3 +27,5 @@ Minimums for a first build: price table for at least 10 Lagos areas, 12 seeded d
 across every status, the full customer flow to tracking, rider flow through every step
 with haptics, dispatcher assigning, status changes through one lifecycle SQL function,
 realtime updates on tracking and the board.
+
+Signature: A live tracker card whose progress line and step dots fill with springs as the status changes; the ETA counts down in tabular numbers; a success check on delivery.

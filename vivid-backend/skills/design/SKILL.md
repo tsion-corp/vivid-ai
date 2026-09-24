@@ -44,6 +44,38 @@ on a 390px screen, without zooming.
   captions and metadata, and never below 14px.
 - Dark mode works because you used tokens, not literal colours. Never hardcode #fff.
 
+## Make it distinctive, not generated
+Before writing code, decide in one line each: the palette's four to six named colours and
+their jobs, the font pairing, the one hero element of the home page, and the one bold
+thing (a 3D tilting product card, an oversized number, an editorial serif headline, a
+mesh-gradient hero, a floating product mockup). Then check the plan against the brief:
+if it would suit any business, change it until it only suits this one.
+- Spend boldness in one place per page; everything else is calm and consistent.
+- Hierarchy from contrast: size jumps of 3x between the hero and body, weight extremes
+  (a 700 headline over 400 body), muted text for metadata only.
+- Depth: cards sit on the background with a hairline border and a soft, wide shadow
+  (`shadow-[0_1px_2px_rgb(0_0_0/0.04),0_8px_24px_rgb(0_0_0/0.06)]`); floating things
+  (sticky header, popovers, a mockup) get more; on dark themes use a lighter surface and
+  a `border-white/10` hairline instead of shadow. Never flat boxes on a flat page.
+- Shape contrast: pill buttons and badges (`rounded-full`), 16 to 24px cards, 8 to 12px
+  inputs. Uniform small corners everywhere read as a template.
+- Atmosphere behind the hero: a tinted gradient or soft blurred blobs in the palette,
+  with grain; never a purple-to-blue gradient on white, never a gradient behind body text.
+
+## Feel: micro-interactions on every page
+Even a dashboard needs these (the motion skill adds more for pages that sell):
+- Every button and card responds: a colour or border shift on hover (200 ms), a press
+  scale of 0.98 (`active:scale-[0.98] transition-transform`), a visible focus ring.
+- Async actions show their work: the button shows a spinner, then "Saved ✓", then
+  returns; a toast confirms. Copy buttons turn into a check with "Copied".
+- Tabs, segmented controls and toggles slide their active indicator (motion's
+  `layoutId`) rather than jumping.
+- Numbers that matter (totals, balances, stats) count up once when they appear.
+- Lists add and remove rows with a short slide and fade (`AnimatePresence` + `layout`);
+  skeletons shaped like the content while loading, never a lone spinner.
+- Durations 150 to 300 ms here, ease-out; nothing on a working screen loops or waits.
+  Respect `prefers-reduced-motion` (`<MotionConfig reducedMotion="user">` in App.tsx).
+
 ## Imagery
 - Every image has a fixed aspect ratio (aspect-[4/3], aspect-square, aspect-video), fills
   it with object-cover, and has a rounded-lg or rounded-xl corner matching the cards.

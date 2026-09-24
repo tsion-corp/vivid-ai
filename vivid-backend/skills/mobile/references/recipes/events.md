@@ -30,3 +30,5 @@ used_at), saved.
 Minimums for a first build: 12 upcoming events with generated covers across 4 categories,
 2 to 3 ticket types each, checkout to working QR tickets, a scanner screen for the owner
 that validates and marks tickets used.
+
+Signature: A depth carousel of featured events (cards turn away from the centre), and the ticket as a TiltCard that flips to its QR code.

@@ -26,3 +26,5 @@ rest, how-to), sessions (workout, date, duration, completed), measurements.
 Minimums for a first build: 6 seeded habits with two weeks of history so charts and streaks
 look alive, 8 workouts with 5 to 8 exercises each and generated photos, working active
 workout with timers, charts on Progress, reminders scheduled.
+
+Signature: A progress ring that fills with a spring for today's goal, a success check with a haptic when a workout or habit is completed, and a streak count that bumps.

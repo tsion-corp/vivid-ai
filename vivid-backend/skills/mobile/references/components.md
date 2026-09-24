@@ -32,14 +32,37 @@ export function Screen({ scroll = true, edges = ["top"], children, contentContai
 A stack screen with a native header uses `edges={[]}` (the header covers the top); a tab's
 root screen uses `["top"]`. List screens use `scroll={false}` and put their FlatList inside.
 
+## PressableScale (every card and button presses with a spring)
+```tsx
+// components/ui/PressableScale.tsx
+import * as Haptics from "expo-haptics";
+import { Platform, Pressable, type PressableProps } from "react-native";
+import Animated, { useAnimatedStyle, useSharedValue, withSpring } from "react-native-reanimated";
+
+export function PressableScale({ children, haptic = true, scaleTo = 0.97, style, onPressIn, onPressOut, ...rest }:
+  PressableProps & { haptic?: boolean; scaleTo?: number; style?: any }) {
+  const s = useSharedValue(1);
+  const anim = useAnimatedStyle(() => ({ transform: [{ scale: s.value }] }));
+  return (
+    <Pressable {...rest}
+      onPressIn={(e) => { s.value = withSpring(scaleTo, { damping: 15, stiffness: 300 });
+        if (haptic && Platform.OS !== "web") Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light); onPressIn?.(e); }}
+      onPressOut={(e) => { s.value = withSpring(1, { damping: 15, stiffness: 300 }); onPressOut?.(e); }}>
+      <Animated.View style={[anim, style]}>{children as React.ReactNode}</Animated.View>
+    </Pressable>
+  );
+}
+```
+
 ## Button
 ```tsx
 // components/ui/Button.tsx
-import * as Haptics from "expo-haptics";
-import { ActivityIndicator, Platform, Pressable, Text, type PressableProps } from "react-native";
+import { ActivityIndicator, Text, View, useColorScheme } from "react-native";
+import { PressableScale } from "./PressableScale";
+import { shadow } from "@/lib/elevation";
 
 type Variant = "primary" | "secondary" | "ghost" | "destructive";
-const base = "h-12 flex-row items-center justify-center gap-2 rounded-xl px-5 active:opacity-80";
+const base = "h-14 flex-row items-center justify-center gap-2 rounded-full px-6";
 const variants: Record<Variant, string> = {
   primary: "bg-primary",
   secondary: "border border-border bg-card dark:border-border-dark dark:bg-card-dark",
@@ -52,31 +75,38 @@ const labels: Record<Variant, string> = {
   ghost: "text-primary",
   destructive: "text-white",
 };
+const PRIMARY = "#e8590c"; // the palette's primary
 
-export function Button({ title, variant = "primary", loading, haptic = true, className, onPress, disabled, ...rest }:
-  PressableProps & { title: string; variant?: Variant; loading?: boolean; haptic?: boolean; className?: string }) {
+export function Button({ title, variant = "primary", loading, icon, className, disabled, ...rest }:
+  React.ComponentProps<typeof PressableScale> & { title: string; variant?: Variant; loading?: boolean;
+    icon?: React.ReactNode; className?: string }) {
+  const dark = useColorScheme() === "dark";
   return (
-    <Pressable
-      accessibilityRole="button"
-      disabled={disabled || loading}
-      onPress={(e) => {
-        if (haptic && Platform.OS !== "web") Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
-        onPress?.(e);
-      }}
-      className={`${base} ${variants[variant]} ${disabled ? "opacity-50" : ""} ${className ?? ""}`}
-      {...rest}>
-      {loading ? <ActivityIndicator color={variant === "primary" ? "#fff" : undefined} /> :
-        <Text className={`text-base font-semibold ${labels[variant]}`}>{title}</Text>}
-    </Pressable>
+    <PressableScale accessibilityRole="button" disabled={disabled || loading} haptic={variant !== "ghost"}
+      style={variant === "primary" && !dark && !disabled ? shadow.glow(PRIMARY) : undefined} {...rest}>
+      <View className={`${base} ${variants[variant]} ${disabled ? "opacity-50" : ""} ${className ?? ""}`}>
+        {loading ? <ActivityIndicator color={variant === "primary" ? "#fff" : undefined} /> : <>
+          {icon}
+          <Text className={`text-base font-semibold ${labels[variant]}`}>{title}</Text>
+        </>}
+      </View>
+    </PressableScale>
   );
 }
 ```
+Buttons are pills (`rounded-full`), h-14 for the main action, h-11 for secondary ones in
+rows. The primary button is the one element with a coloured glow (lib/elevation.ts from
+the depth reference).
 
 ## Card, ListRow, SectionHeader
 ```tsx
-export function Card({ className, ...rest }: ViewProps & { className?: string }) {
-  return <View className={`rounded-2xl border border-border bg-card p-4 dark:border-border-dark dark:bg-card-dark ${className ?? ""}`} {...rest} />;
+// Raised: hairline border + soft shadow in light mode, lighter surface in dark mode.
+export function Card({ className, style, ...rest }: ViewProps & { className?: string }) {
+  const dark = useColorScheme() === "dark";
+  return <View style={[dark ? undefined : shadow.raised, style]}
+    className={`rounded-3xl border border-black/5 bg-card p-5 dark:border-white/10 dark:bg-card-dark ${className ?? ""}`} {...rest} />;
 }
+// A tappable card is <PressableScale onPress={…}><Card>…</Card></PressableScale>.
 
 export function ListRow({ title, subtitle, left, right, onPress }: {
   title: string; subtitle?: string; left?: React.ReactNode; right?: React.ReactNode; onPress?: () => void }) {

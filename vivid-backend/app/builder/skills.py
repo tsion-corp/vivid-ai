@@ -119,12 +119,12 @@ def design_block(spec_md: str | None, user_text: str = "", recipe: str | None = 
 
 #: Always part of the mobile skill, in this order: the method, then the kit
 #: every screen is built from, then how screens connect, then the rest.
-_MOBILE_REFS = ("components", "navigation", "native-apis", "motion", "fonts")
+_MOBILE_REFS = ("components", "depth", "navigation", "native-apis", "motion", "fonts")
 
 
 def mobile_block(backend: bool = False, recipe: str | None = None) -> str:
     """The mobile skill for an Expo app: native design method, the component
-    kit, navigation, the device APIs Expo Go has, motion and fonts, the
+    kit, depth and 3D, navigation, the device APIs Expo Go has, motion and fonts, the
     screen recipe the plan chose, and the data layer: on the phone, or
     Supabase when a backend is linked. Takes the design and motion skills'
     place; the palettes still apply."""
@@ -198,12 +198,17 @@ _MOTION_RECIPES = {"landing", "platform", "portfolio", "shop", "restaurant", "ev
                    "crowdfunding", "membership", "personal", "wedding", "newsletter", "nft-drop",
                    "token-launch", "dao", "exchange", "ticketing", "magazine", "directory"}
 _MOTION_WORDS = ("animat", "motion", "parallax", "gsap", "framer", "shader", "scroll effect",
-                 "transition", "hover effect", "sparkle", "glitter", "grain")
+                 "transition", "hover effect", "sparkle", "glitter", "grain", "micro-interaction",
+                 "microinteraction", "3d", "three.js", "threejs", "webgl", "tilt")
+#: Brands a real 3D hero suits; any project gets it when the request asks for 3D.
+_THREE_RECIPES = {"nft-drop", "token-launch", "agency", "portfolio", "exchange", "dao"}
+_THREE_WORDS = ("3d", "three.js", "threejs", "webgl", "r3f", "react three", "spline", "product viewer")
 
 
 def motion_block(recipe: str | None, user_text: str = "") -> str:
     """The motion skill for pages that sell (the recipes with a hero) or for
-    any request that asks for animation."""
+    any request that asks for animation; with the three.js reference for
+    brands a 3D hero suits, or when the request asks for 3D."""
     if not settings.BUILDER_MOTION_SKILL:
         return ""
     low = (user_text or "").lower()
@@ -212,8 +217,10 @@ def motion_block(recipe: str | None, user_text: str = "") -> str:
     text = _read("motion/SKILL.md")
     if not text:
         return ""
-    patterns = _read("motion/references/patterns.md")
-    return "## Motion skill\n" + text + ("\n\n" + patterns if patterns else "")
+    parts = [text, _read("motion/references/patterns.md")]
+    if recipe in _THREE_RECIPES or any(w in low for w in _THREE_WORDS):
+        parts.append(_read("motion/references/three.md"))
+    return "## Motion skill\n" + "\n\n".join(p for p in parts if p)
 
 
 def web3_block(on: bool) -> str:

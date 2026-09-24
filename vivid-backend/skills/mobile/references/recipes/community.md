@@ -26,3 +26,5 @@ comments, likes, events (title, cover, starts, place, description), rsvps, group
 Minimums for a first build: 20 seeded posts from 10 members with generated portraits
 (Black Nigerian people), comments on half of them, 6 upcoming events with covers,
 working like, comment, post with photos and RSVP; moderation for admins.
+
+Signature: Posts cascade in; the like is a heart pop with a haptic; a floating glass compose button; swipe cards when the spec is about discovering people or things.

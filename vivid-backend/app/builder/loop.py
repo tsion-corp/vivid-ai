@@ -154,7 +154,10 @@ descriptions and an image (generate_image for anything without an upload); every
 code requires exists under assets/ (list_files it; generate or repoint any that do not, a \
 missing require crashes the app); every screen has loading and empty states, keeps its content \
 inside the safe area, and scrolls when it is taller than a phone; forms work end to end and move \
-out of the keyboard's way; touch targets are at least 44pt; app.json has the real app name; the \
+out of the keyboard's way; touch targets are at least 44pt; buttons and cards press with a \
+spring and a haptic (PressableScale), list rows and first content enter with the motion \
+reference's entrances, cards are raised (soft shadow or lighter surface) under a floating \
+layer, and the recipe's signature moment is built and works; app.json has the real app name; the \
 copy passes the copy skill's checks; nothing uses DOM elements, window or document. list_files \
 and read what you need, then build everything that is missing or thin now, in this turn. Do not \
 shorten anything. When it is complete, reply to the user in one or two sentences about what the \

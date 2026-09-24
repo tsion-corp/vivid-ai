@@ -59,14 +59,36 @@ for quick tasks, and lists for almost everything. Build with those.
   brand needs character; then pick a pairing from the fonts reference and load it with
   `@expo-google-fonts/*` and `useFonts` in app/_layout.tsx. The display face goes on
   large titles and prices only.
-- Scale: large title text-3xl font-bold (the first screen of a tab), screen title
-  text-xl font-semibold, section title text-lg font-semibold, body text-base, secondary
-  text-sm, caption text-xs. Nothing else.
+- Scale (iOS points): large title 34 bold (`text-[34px] font-bold tracking-tight`, the
+  first screen of a tab), screen title 17 semibold, section title 20 semibold, body 17
+  (`text-[17px]`), secondary 15, caption 13, tab label 11. The hero number or name of a
+  screen can go to 40 to 56 bold. Nothing else.
 - Line length is fine on phones; line height is not: body `leading-6`, titles `leading-tight`.
 - Respect Dynamic Type and Android font scale: never `allowFontScaling={false}`; let rows
   grow in height; use `numberOfLines` with an ellipsis for titles in cards and rows.
 - Numbers that change (prices, counts, timers) use `tabular-nums` (`fontVariant: ["tabular-nums"]`)
   so they do not jiggle.
+
+## Look: hierarchy, depth and one bold thing
+A generated app looks generated because everything is the same size, the same weight,
+the same flat white card with the same 8px corner. Avoid that on purpose:
+- **One hero element per screen**: the balance, the product photo, today's booking, the
+  big title. Make it much bigger or bolder than anything else (a 3x size jump is normal:
+  a 40pt balance over 13pt labels). Everything else stays quiet.
+- **Hierarchy from size, weight and opacity, not more colours**: secondary text is the
+  foreground at 60% (`text-foreground/60`), tertiary at 40%. About five colours in total.
+- **Layers** (the depth reference): opaque raised cards with a soft shadow on a base
+  background; a floating glass layer for the tab bar, headers over content and pinned
+  bars. Never flat cards floating on nothing, never glass on every card.
+- **Shape contrast**: pill buttons and chips, 24px hero cards, 12px inputs.
+- **Atmosphere**: a tinted gradient or a soft two-colour glow behind the Home header or a
+  hero card; the rest of the app on a calm background.
+- **Spend boldness in one place per app**: a 3D tilting card, a floating tab bar with a
+  sliding pill, a balance that counts up, swipeable cards. The recipe names it; build it
+  properly rather than adding five small effects.
+- **Motion is part of the look**: every press springs, lists cascade in, state changes
+  transition, and haptics mark what matters (the motion reference). A static app feels
+  broken on a phone.
 
 ## Colour and theme
 - Pick one palette from the palettes table by audience and put it in tailwind.config.js
@@ -79,8 +101,9 @@ for quick tasks, and lists for almost everything. Build with those.
   highlight per screen. Status colours only for status: green for success/paid, amber
   for pending, red for errors and destructive actions, each as a tinted pill
   (`bg-green-500/15 text-green-700 dark:text-green-400`).
-- Dark mode is a first-class design: backgrounds near-black not pure black (#0b0b0f),
-  cards one step lighter (#16161c), borders subtle (#26262e), text off-white (#ececf1).
+- Dark mode is a first-class design, not inverted colours: raised greys (background
+  #0b0b0f, cards #1c1c1e, pressed or nested #2c2c2e), hairlines at white/10, text
+  off-white (#ececf1), and the accent a little brighter and less saturated than in light.
 - The status bar follows the screen: `<StatusBar style="auto" />`, or `"light"` over a dark
   hero image.
 
@@ -131,8 +154,8 @@ SectionHeader. Consistency is what makes an app feel designed.
 ## Touch and gestures
 - Every tappable thing is at least 44x44pt; small icons get `hitSlop={10}`. Rows are
   tappable across their full width.
-- Pressed feedback on everything that can be pressed: `active:opacity-70` on rows and
-  cards, a subtle scale (0.97) on buttons and product cards.
+- Pressed feedback on everything that can be pressed: `active:opacity-70` on rows,
+  `PressableScale` (a 0.97 spring and a light haptic) on buttons and cards.
 - Swipe actions on rows where people manage many items (delete a cart line, archive, mark
   done) with react-native-gesture-handler's Swipeable, always with a visible alternative
   (an edit mode or a menu), because swipes are not discoverable.
@@ -212,7 +235,9 @@ The user tries the app in Expo Go on their own phone; a crash there is a broken 
 
 ## Before you finish a screen
 Check, in this order: it renders on a 390pt phone without anything clipped, overlapping
-or under the notch or home indicator; dark mode has no white boxes or black text on black;
+or under the notch or home indicator; the screen has one clear hero element and depth
+(raised cards, a floating layer) rather than flat boxes; presses spring, lists enter,
+and the recipe's signature moment is built; dark mode has no white boxes or black text on black;
 the main action is visible without scrolling; every list has loading, empty and error
 states; every image has an aspect ratio and its file exists; every tappable thing gives
 feedback; text still fits with a larger font; nothing says placeholder, TODO or lorem ipsum;

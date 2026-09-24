@@ -35,6 +35,8 @@ import "../global.css";
 import { Stack } from "expo-router";
 import * as SplashScreen from "expo-splash-screen";
 import { StatusBar } from "expo-status-bar";
+import { useEffect } from "react";
+import { GestureHandlerRootView } from "react-native-gesture-handler";
 import { SafeAreaProvider } from "react-native-safe-area-context";
 import { StoreProvider, useStore } from "@/lib/store";
 
@@ -60,10 +62,12 @@ function RootStack() {
 
 export default function RootLayout() {
   return (
-    <SafeAreaProvider>
-      <StoreProvider><RootStack /></StoreProvider>
-      <StatusBar style="auto" />
-    </SafeAreaProvider>
+    <GestureHandlerRootView style={{ flex: 1 }}>
+      <SafeAreaProvider>
+        <StoreProvider><RootStack /></StoreProvider>
+        <StatusBar style="auto" />
+      </SafeAreaProvider>
+    </GestureHandlerRootView>
   );
 }
 ```
@@ -103,6 +107,9 @@ export default function TabLayout() {
 ```
 A badge on a tab (`tabBarBadge: cartCount || undefined`) for counts that need attention.
 Icons must exist in Ionicons in both forms (`home`/`home-outline`); check the name.
+Customer apps (shops, food, fitness, community, wallets, events) replace this default bar
+with the floating glass `AnimatedTabBar` from the motion reference (same routes, same
+titles, `tabBarBadge` still works); owner tools keep the standard bar.
 
 ## Stack screens and params
 - `app/product/[id].tsx`: read the id with `const { id } = useLocalSearchParams<{ id: string }>()`.
