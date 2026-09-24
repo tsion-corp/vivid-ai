@@ -272,10 +272,16 @@ async def test_a_withdrawal_takes_the_money_and_success_clears_pending(maker, fa
         # ₦20,000 + ₦50 fee + ₦50 stamp duty (₦10,000 and above).
         assert account.balance_kobo == 5_000_000 - 2_010_000 and account.pending_kobo == 2_000_000
         assert p.status == "pending" and p.pouch_payout_id == "po_1"
-        fake.payouts["po_1"]["status"] = "success"
+        # As Pouch really answers: latest_status, and the fee it charged
+        # (₦20, less than the ₦50 taken up front, which comes back).
+        fake.payouts["po_1"].pop("status")
+        fake.payouts["po_1"].update(latest_status="success", fee="2000")
         await events.on_payout_event(db, {"event": "payout.success", "data": {"id": "po_1"}})
+        await db.commit()
         account = await earnings.account_for(db, "u1")
         assert p.status == "success" and account.pending_kobo == 0
+        assert p.fee_kobo == 2_000
+        assert account.balance_kobo == 5_000_000 - 2_000_000 - 2_000 - 5_000   # stamp duty stays
 
 
 async def test_a_refused_or_failed_withdrawal_comes_back_once(maker, fake):
@@ -438,3 +444,31 @@ def test_enabling_vivid_pay_on_a_project(maker, fake, monkeypatch):
             assert env["VITE_VIVIDPAY_API"] == "https://api.vivid.test/v1/pay"
     asyncio.run(check())
     assert fake.calls[0][1] == "vpo_" + "u1"
+
+
+async def test_a_waiting_checkout_finds_its_payment_without_the_webhook(maker, fake, monkeypatch):
+    """Pouch's webhook has arrived over a minute after the money; while the
+    customer waits, the transfer list is read directly."""
+    pid, _, _ = await _setup(maker)
+    await _checkout(maker, pid)
+    listed = [{"id": "tr_fast", "virtual_account_id": "va_1", "amount": 1_500_000},
+              {"id": "tr_other", "virtual_account_id": "va_someone_else", "amount": 5}]
+
+    async def inbound(skip=0, take=100):
+        return listed
+    monkeypatch.setattr(pouch, "inbound_transfers", inbound)
+    async with maker() as db:
+        assert await events.poll_pending(db) == 1
+        assert await events.poll_pending(db) == 0                 # already paid, nothing waiting
+        c = (await db.execute(VividPayCheckout.__table__.select())).first()
+        assert c.status == "paid"
+
+
+def test_polling_the_status_pays_a_waiting_checkout(api, maker, fake, monkeypatch):
+    asyncio.run(_setup(maker))
+    cid = _create(api, PUBLISHED).json()["id"]
+
+    async def inbound(skip=0, take=100):
+        return [{"id": "tr_seen", "virtual_account_id": "va_1", "amount": 1_500_000}]
+    monkeypatch.setattr(pouch, "inbound_transfers", inbound)
+    assert api.get(f"/v1/pay/checkouts/{cid}?key=vpk_test").json()["status"] == "paid"

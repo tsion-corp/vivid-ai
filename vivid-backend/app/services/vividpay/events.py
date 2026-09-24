@@ -8,6 +8,7 @@ accounts, pending withdrawals, and sweeps that failed.
 """
 import asyncio
 import logging
+from datetime import datetime, timedelta, timezone
 
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -88,6 +89,30 @@ async def reconcile(db: AsyncSession, transfers: list[dict] | None = None) -> in
         await checkouts.sweep(db, c)
     await db.commit()
     return done
+
+
+async def poll_pending(db: AsyncSession) -> int:
+    """Look for payments into checkouts that are still waiting, straight
+    from Pouch's transfer list. Pouch's webhook has been seen arriving well
+    over a minute after the money did; a customer watching the checkout
+    should not wait for it. Returns how many checkouts it paid. Commits."""
+    since = datetime.now(timezone.utc) - timedelta(hours=2)
+    waiting = set((await db.execute(select(VividPayCheckout.va_id).where(
+        VividPayCheckout.mode == "live", VividPayCheckout.va_id.is_not(None),
+        VividPayCheckout.status.in_(("pending", "partial")),
+        VividPayCheckout.created_at >= since))).scalars())
+    if not waiting:
+        return 0
+    try:
+        rows = await pouch.inbound_transfers(skip=0, take=100)
+    except pouch.PouchError as e:
+        log.info("pending poll failed: %s", e)
+        return 0
+    paid = 0
+    for t in rows:
+        if t.get("virtual_account_id") in waiting and await on_transfer(db, t):
+            paid += 1
+    return paid
 
 
 def configured() -> bool:

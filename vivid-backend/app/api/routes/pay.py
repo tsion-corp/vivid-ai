@@ -24,7 +24,7 @@ from app.core.config import settings
 from app.core.errors import APIError
 from app.db.models import BuilderProject, VividPayCheckout, VividPayProject
 from app.services import rate_limit
-from app.services.vividpay import VividPayError, checkouts, key_hash
+from app.services.vividpay import VividPayError, checkouts, events, key_hash
 
 router = APIRouter(prefix="/pay", tags=["vivid-pay"])
 log = logging.getLogger("vivid.pay")
@@ -139,12 +139,31 @@ async def _checkout_for_key(db: AsyncSession, checkout_id: str, key: str | None)
     return c
 
 
+#: How often, at most, waiting checkouts look at Pouch directly (all of
+#: them together), seconds.
+POLL_EVERY = 4
+
+
 @router.get("/checkouts/{checkout_id}")
-async def get_checkout(checkout_id: str, key: str | None = None, db: AsyncSession = Depends(get_db)):
+async def get_checkout(checkout_id: str, request: Request, key: str | None = None,
+                       db: AsyncSession = Depends(get_db)):
     try:
         c = await _checkout_for_key(db, checkout_id, key)
     except VividPayError as e:
         return _fail(e)
+    if c.mode == "live" and c.status in ("pending", "partial") and events.configured():
+        # The app polls while its customer waits; that is when to look.
+        redis = getattr(request.app.state, "redis", None)
+        try:
+            go = redis is None or await redis.set("pay:poll", "1", nx=True, ex=POLL_EVERY)
+        except Exception:
+            go = False
+        if go:
+            try:
+                await events.poll_pending(db)
+            except Exception as e:                     # the webhook still comes
+                log.warning("pending poll failed: %s", e)
+            await db.refresh(c)
     return _json(checkouts.view(c))
 
 

@@ -549,7 +549,7 @@ class Settings(BaseSettings):
     VIVIDPAY_DAILY_WITHDRAWAL_KOBO: int = 500_000_000
     # What a payout costs when Pouch's quote is unavailable (fee only; the
     # ₦50 stamp duty on ₦10,000 and above is added on top).
-    VIVIDPAY_PAYOUT_FEE_KOBO: int = 5_000
+    VIVIDPAY_PAYOUT_FEE_KOBO: int = 2_000
     # Where the apps call from, for the account on a checkout's receipts.
     VIVIDPAY_API_BASE: str = ""
 

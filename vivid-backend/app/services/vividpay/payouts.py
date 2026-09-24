@@ -163,8 +163,9 @@ async def withdraw(db: AsyncSession, user_id: str, amount_kobo: int,
         await _reverse(db, payout, str(e))
         return payout
     payout.pouch_payout_id = sent.get("id")
-    if (sent.get("status") or "").lower() in ("success", "successful", "completed"):
-        await settle(db, payout, "success")
+    if _status_of(sent) == "success":
+        await settle(db, payout, "success",
+                     actual_fee_kobo=pouch.kobo_of(sent["fee"]) if sent.get("fee") is not None else None)
     return payout
 
 
@@ -185,20 +186,29 @@ async def _reverse(db: AsyncSession, payout: VividPayPayout, error: str) -> None
     account.pending_kobo = max(account.pending_kobo - payout.amount_kobo, 0)
 
 
-async def settle(db: AsyncSession, payout: VividPayPayout, status: str, error: str = "") -> None:
-    """Pouch's final word on a withdrawal. The caller commits."""
+async def settle(db: AsyncSession, payout: VividPayPayout, status: str, error: str = "",
+                 actual_fee_kobo: int | None = None) -> None:
+    """Pouch's final word on a withdrawal. When Pouch charged less than the
+    fee taken up front (its quote route is not always there), the rest is
+    given back. The caller commits."""
     if payout.status != "pending":
         return
     if status == "success":
         payout.status = "success"
         account = await earnings.account_for(db, payout.owner_id, lock=True)
         account.pending_kobo = max(account.pending_kobo - payout.amount_kobo, 0)
+        if actual_fee_kobo is not None and 0 <= actual_fee_kobo < payout.fee_kobo:
+            await earnings.post(db, payout.owner_id, payout.fee_kobo - actual_fee_kobo,
+                                earnings.ADJUSTMENT, VIVID, f"fee-refund:{payout.id}",
+                                payout_id=payout.id, description="Transfer fee was lower")
+            payout.fee_kobo = actual_fee_kobo
     elif status == "failed":
         await _reverse(db, payout, error or "the bank transfer failed")
 
 
 def _status_of(data: dict) -> str | None:
-    s = (data.get("status") or "").lower()
+    # Pouch's payout objects carry `latest_status`; the docs' examples say `status`.
+    s = (data.get("status") or data.get("latest_status") or "").lower()
     if s in ("success", "successful", "completed"):
         return "success"
     if s in ("failed", "reversed", "rejected", "cancelled", "canceled"):
@@ -229,4 +239,6 @@ async def refresh(db: AsyncSession, payout: VividPayPayout) -> None:
         return
     status = _status_of(data)
     if status:
-        await settle(db, payout, status, data.get("failure_reason") or data.get("error") or "")
+        fee = pouch.kobo_of(data["fee"]) if data.get("fee") is not None else None
+        await settle(db, payout, status, data.get("failure_reason") or data.get("error") or "",
+                     actual_fee_kobo=fee)

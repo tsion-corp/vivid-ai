@@ -26,8 +26,10 @@ class FakeRedis:
         if self.fail:
             raise ConnectionError("redis is down")
 
-    async def set(self, key, value, ex=None):
+    async def set(self, key, value, ex=None, nx=False):
         self._check()
+        if nx and key in self.strings:
+            return None                      # as Redis does: not set
         self.strings[key] = value
         return True
 
