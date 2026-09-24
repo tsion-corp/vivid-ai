@@ -111,7 +111,9 @@ async def find_transfer(transfer_id: str, pages: int = 5) -> dict | None:
 
 
 async def integrator() -> dict:
-    return (await _call("GET", "/integrator")).get("data") or {}
+    """Vivid's Pouch profile. The docs list /integrator too, but only its
+    alias /me answers."""
+    return (await _call("GET", "/me")).get("data") or {}
 
 
 async def set_webhook(url: str) -> dict:
