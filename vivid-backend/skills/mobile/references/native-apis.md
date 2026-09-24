@@ -10,7 +10,7 @@ react-native-safe-area-context, react-native-svg and AsyncStorage.
 | Pick a photo | expo-image-picker | library and camera in one API |
 | Scan or custom camera | expo-camera | `CameraView`, barcode scanning built in |
 | Location | expo-location | foreground only |
-| Reminders | expo-notifications | local notifications; remote push needs a real build |
+| Reminders | expo-notifications | ONLY through lib/notify.ts below: importing it crashes Expo Go on Android |
 | Haptics | expo-haptics | in the template |
 | Share | react-native `Share`, expo-sharing | text and links with Share; files with expo-sharing |
 | Open a website | expo-web-browser | in-app browser; Linking for tel:, mailto:, wa.me, maps |
@@ -62,26 +62,54 @@ const [place] = await Location.reverseGeocodeAsync(here.coords); // place.city, 
 Always offer a manual choice (a list of areas) next to "Use my location".
 
 ## Local notifications (reminders)
-```tsx
-import * as Notifications from "expo-notifications";
+**Never `import ... from "expo-notifications"` anywhere.** Since SDK 53, merely loading
+that package inside Expo Go on Android throws ("push notifications were removed from
+Expo Go") and the screen that imported it never renders. Expo Go is how the user tries
+the app, so the package is loaded lazily, only where it can work, from one file:
 
-Notifications.setNotificationHandler({
-  handleNotification: async () => ({ shouldShowBanner: true, shouldShowList: true,
-    shouldPlaySound: false, shouldSetBadge: false }),
-});
+```ts
+// lib/notify.ts: the only place the app touches expo-notifications.
+import Constants, { ExecutionEnvironment } from "expo-constants";
+import { Platform } from "react-native";
 
-export async function remind(title: string, body: string, date: Date) {
-  const { granted } = await Notifications.requestPermissionsAsync();
+type Notifications = typeof import("expo-notifications");
+
+/** Expo Go on Android cannot load the module at all; the web preview has no notifications. */
+export const notificationsAvailable =
+  Platform.OS !== "web" &&
+  !(Platform.OS === "android" && Constants.executionEnvironment === ExecutionEnvironment.StoreClient);
+
+let cached: Notifications | null = null;
+function load(): Notifications | null {
+  if (!notificationsAvailable) return null;
+  if (!cached) {
+    // require, not import: the module is only evaluated here, when it is safe.
+    cached = require("expo-notifications") as Notifications;
+    cached.setNotificationHandler({
+      handleNotification: async () => ({ shouldShowBanner: true, shouldShowList: true,
+        shouldPlaySound: false, shouldSetBadge: false }),
+    });
+  }
+  return cached;
+}
+
+export async function remind(title: string, body: string, date: Date): Promise<boolean> {
+  const N = load();
+  if (!N) return false;
+  const { granted } = await N.requestPermissionsAsync();
   if (!granted) return false;
-  await Notifications.scheduleNotificationAsync({
+  await N.scheduleNotificationAsync({
     content: { title, body },
-    trigger: { type: Notifications.SchedulableTriggerInputTypes.DATE, date },
+    trigger: { type: N.SchedulableTriggerInputTypes.DATE, date },
   });
   return true;
 }
 ```
-Daily habits use `{ type: ...DAILY, hour, minute }`. Remote push (from a server) needs a
-real build; say so if the spec asks for it and use local reminders in this version.
+Screens import `remind` and `notificationsAvailable` from `@/lib/notify`, never the package.
+When `notificationsAvailable` is false, the reminder control still shows, with one line:
+"Reminders work in the installed app." Daily habits use `{ type: N.SchedulableTriggerInputTypes.DAILY,
+hour, minute }`. Remote push (from a server) needs a real build; say so if the spec asks for it
+and use local reminders in this version.
 
 ## Haptics vocabulary
 - `Haptics.selectionAsync()`: changing a tab-like choice, chips, steppers, toggles.

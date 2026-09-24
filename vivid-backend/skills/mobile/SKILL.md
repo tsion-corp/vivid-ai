@@ -202,6 +202,14 @@ SectionHeader. Consistency is what makes an app feel designed.
   local places (Lekki, Wuse 2, Ikeja), phone formats like 0803 123 4567, delivery by
   area and fee.
 
+## Things that crash in Expo Go
+The user tries the app in Expo Go on their own phone; a crash there is a broken app.
+- Never import expo-notifications directly: loading it throws on Android in Expo Go.
+  Reminders go through lib/notify.ts (the native-apis reference), which loads it lazily
+  and only where it works.
+- No packages with their own native code outside the Expo SDK (the builder refuses them).
+- Guard device-only calls with `Platform.OS !== "web"` so the browser preview renders too.
+
 ## Before you finish a screen
 Check, in this order: it renders on a 390pt phone without anything clipped, overlapping
 or under the notch or home indicator; dark mode has no white boxes or black text on black;

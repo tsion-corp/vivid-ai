@@ -345,8 +345,43 @@ async def execute(name: str, args: dict, sandbox: Sandbox,
         outcome = Outcome(f"error: no such file: {e}")
     except SandboxError as e:
         outcome = Outcome(f"error: the sandbox failed: {e}")
+    if name in ("write_file", "edit_file") and sandbox.target.is_mobile and outcome.touched:
+        warning = await _expo_go_import_warning(sandbox, outcome.touched)
+        if warning:
+            outcome.text = f"{outcome.text}\n{warning}"
     outcome.text = truncate(outcome.text) or "(no output)"
     return outcome
+
+
+#: Packages that crash Expo Go as soon as a file imports them at the top:
+#: the module throws while it loads, and the screen importing it never renders.
+_EXPO_GO_IMPORT_TRAPS = {
+    "expo-notifications": (
+        "expo-notifications throws when it loads in Expo Go on Android (push was removed "
+        "from Expo Go in SDK 53), so this screen will crash on the user's phone. Remove the "
+        "import and use `remind` / `notificationsAvailable` from lib/notify.ts, which loads "
+        "the package lazily with require() only where it works (the native-apis reference "
+        "has the file)."),
+}
+_TOP_IMPORT = re.compile(r"^\s*import\s+(?!type\b)[^;]*?from\s+['\"]([^'\"]+)['\"]"
+                         r"|^\s*import\s+['\"]([^'\"]+)['\"]", re.M)
+
+
+async def _expo_go_import_warning(sandbox: Sandbox, path: str) -> str | None:
+    """A warning when a just-written file imports a package that crashes Expo
+    Go at load time. Never fails the write."""
+    if not path.endswith((".ts", ".tsx", ".js", ".jsx")):
+        return None
+    try:
+        content = await sandbox.read_file(path)
+    except (FileNotFoundError, SandboxError):
+        return None
+    for m in _TOP_IMPORT.finditer(content):
+        module = m.group(1) or m.group(2)
+        reason = _EXPO_GO_IMPORT_TRAPS.get(module)
+        if reason:
+            return f"WARNING in {path}: {reason}"
+    return None
 
 
 async def _generate_image(args: dict, images: ImageMaker) -> Outcome:

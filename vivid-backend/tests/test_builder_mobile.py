@@ -191,3 +191,20 @@ def test_device_url_goes_through_the_http_relay_when_configured(monkeypatch):
     local = mobile_sandbox()
     local.preview_url = lambda: "http://127.0.0.1:8081"
     assert builder_routes._device_url(local) is None
+
+
+async def test_writing_a_top_level_expo_notifications_import_warns():
+    """expo-notifications throws while loading in Expo Go on Android; the
+    model hears about it on the write, not from a crashed phone."""
+    sb = mobile_sandbox()
+    bad = 'import * as Notifications from "expo-notifications";\nexport const x = 1;\n'
+    out = await tools.execute("write_file", {"path": "lib/notify.ts", "content": bad}, sb)
+    assert "WARNING in lib/notify.ts" in out.text and "lib/notify.ts" in out.text
+    good = ('import type * as N from "expo-notifications";\n'
+            'export const load = () => require("expo-notifications");\n')
+    out = await tools.execute("write_file", {"path": "lib/notify.ts", "content": good}, sb)
+    assert "WARNING" not in out.text
+    # Websites are not Expo Go.
+    web = FakeSandbox({"src/App.tsx": "x"})
+    out = await tools.execute("write_file", {"path": "src/n.ts", "content": bad}, web)
+    assert "WARNING" not in out.text

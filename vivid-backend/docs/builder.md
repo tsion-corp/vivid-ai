@@ -418,6 +418,12 @@ Metro advertises `http://<sandbox id>.<domain>`, and the host's Caddy has:
 ```
 http://*.170-75-171-250.sslip.io {
 	@sandbox header_regexp Host ^[a-z0-9]{12,40}\.170-75-171-250\.sslip\.io(:80)?$
+	# Expo's JS-debugger endpoint fetches /json/list through this proxy, gets
+	# the app's HTML (Metro answers it for localhost only), throws and takes
+	# Metro down. Phones never need it.
+	handle /_expo/debugger* {
+		respond "Not found" 404
+	}
 	handle @sandbox {
 		reverse_proxy 8081-{labels.3}.e2b.app:443 {
 			header_up Host 8081-{labels.3}.e2b.app

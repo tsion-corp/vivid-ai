@@ -14,7 +14,7 @@ Book flow (a stack of small screens with "Step 1 of 4" in the header): choose a 
 (a horizontal strip of the next 14 days with weekday and date, unavailable days dimmed)
 and a time (chips of free slots computed from hours, duration and existing bookings),
 then details (name, phone, note) and confirm with the summary and price. Success screen
-with Add to calendar (expo-calendar) and a reminder (expo-notifications, an hour before).
+with Add to calendar (expo-calendar) and a reminder an hour before (`remind` from lib/notify.ts, never expo-notifications directly).
 
 Appointments: Upcoming and Past as a segmented control; each card with status pill;
 detail with Reschedule (back into the flow with the service kept) and Cancel with a

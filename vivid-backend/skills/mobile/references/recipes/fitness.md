@@ -16,8 +16,8 @@ Progress: weekly and monthly charts drawn with react-native-svg (bars for workou
 week, a line for weight), streak calendar (a month grid with done days filled), personal
 records, and a history list.
 
-Habits: create with a name, icon, colour, days of the week and a reminder time (local
-notification); edit and archive with swipe actions.
+Habits: create with a name, icon, colour, days of the week and a reminder time (a local
+notification through lib/notify.ts); edit and archive with swipe actions.
 
 Data: habits (name, icon, colour, schedule, reminder), entries (habit, date, done),
 workouts (name, level, duration, exercises), exercises (name, sets, reps or seconds,

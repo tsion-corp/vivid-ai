@@ -160,11 +160,18 @@ class E2BSandbox(Sandbox):
         public = (f"http://{self.id}.{relay}" if relay
                   else f"https://{self._sb.get_host(self.target.port)}")
         try:
-            # "[e]xpo" so the pattern never matches this shell's own command line.
+            # "[e]xpo" so the pattern never matches this shell's own command
+            # line; it does match the supervisor loop below, which goes too.
             await self._sb.commands.run("pkill -f '[e]xpo start' || true; sleep 1", cwd=APP_ROOT,
                                         timeout=30)
+            # Supervised: an error inside Expo's CLI (its debugger middleware
+            # has thrown on a proxied setup) exits the whole process, and a
+            # dead Metro is a blank preview and "Failed to download remote
+            # update" on the phone. The loop brings it back in two seconds.
             await self._sb.commands.run(
-                f"npx expo start --port {self.target.port} > {DEV_LOG} 2>&1",
+                f": > {DEV_LOG}; while true; do npx expo start --port {self.target.port} "
+                f">> {DEV_LOG} 2>&1; echo '[vivid] Metro exited; restarting' >> {DEV_LOG}; "
+                f"sleep 2; done",
                 background=True, cwd=APP_ROOT,
                 envs={"EXPO_PACKAGER_PROXY_URL": public, "EXPO_NO_TELEMETRY": "1",
                       "NO_COLOR": "1", "FORCE_COLOR": "0"})
