@@ -2,19 +2,24 @@
 to a Nigerian bank after a one-time BVN check.
 
     GET  /v1/earnings                      balance, pending, KYC, per-app totals
-    GET  /v1/earnings/entries              the ledger, newest first
-    GET  /v1/earnings/checkouts?project=   checkouts (orders) and their status
+    GET  /v1/earnings/entries              history, newest first: payments and withdrawals
+                                           with their fees folded in (?kind=&project=&since=&until=)
+    GET  /v1/earnings/checkouts            orders (?status=&project=&q=&mode=)
     POST /v1/earnings/kyc                  {bvn, first_name, last_name, dob?}
     GET  /v1/earnings/banks                banks to withdraw to
     GET  /v1/earnings/bank-accounts        saved accounts
     POST /v1/earnings/bank-accounts        {account_number, bank_uuid}; must be in the verified name
     POST /v1/earnings/withdrawals/quote    {amount_kobo} -> fee and stamp duty
     POST /v1/earnings/withdrawals          {amount_kobo, bank_account_id}
-    GET  /v1/earnings/withdrawals
+    GET  /v1/earnings/withdrawals          (?status=)
+
+The three lists page with ?offset=&limit= and answer {items, has_more}.
 """
+from datetime import date, datetime, time, timedelta, timezone
+
 from fastapi import APIRouter, Depends
 from pydantic import BaseModel, Field
-from sqlalchemy import func, select
+from sqlalchemy import String, and_, cast, func, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.deps import get_db, get_session_user
@@ -52,25 +57,124 @@ async def my_earnings(user: User = Depends(get_session_user), db: AsyncSession =
             "available": pouch.configured()}
 
 
+MAX_PAGE = 500
+
+
+def _page(limit: int, offset: int) -> tuple[int, int]:
+    return min(max(limit, 1), MAX_PAGE), max(offset, 0)
+
+
+def _paged(rows: list, limit: int) -> tuple[list, bool]:
+    return rows[:limit], len(rows) > limit
+
+
+def _day(value: str | None, end: bool = False) -> datetime | None:
+    """A YYYY-MM-DD bound, the start of that day, or the start of the next."""
+    if not value:
+        return None
+    try:
+        d = date.fromisoformat(value)
+    except ValueError:
+        raise APIError(422, "invalid_date", "Dates are YYYY-MM-DD.")
+    return datetime.combine(d + timedelta(days=1) if end else d, time.min, tzinfo=timezone.utc)
+
+
+#: History shows what moved the balance, one row per payment or withdrawal:
+#: Vivid's fee is folded into its payment (the row is what the owner got)
+#: and the transfer fee, and any refund of it, into its withdrawal (the row
+#: is what left the balance). Rows still add up to the balance.
+_FOLDED = (earnings.FEE, earnings.WITHDRAWAL_FEE)
+_HISTORY_KINDS = {"payments": (earnings.PAYMENT,),
+                  "withdrawals": (earnings.WITHDRAWAL, earnings.REVERSAL)}
+
+
 @router.get("/entries")
-async def my_entries(limit: int = 50, user: User = Depends(get_session_user),
-                     db: AsyncSession = Depends(get_db)):
-    rows = await earnings.entries(db, user.id, min(max(limit, 1), 200))
-    return [{"id": e.id, "kind": e.kind, "amount_kobo": e.amount_kobo,
-             "balance_after": e.balance_after, "description": e.description,
-             "project_id": e.project_id, "created_at": e.created_at} for e in rows]
+async def my_entries(kind: str | None = None, project: str | None = None,
+                     since: str | None = None, until: str | None = None,
+                     limit: int = 20, offset: int = 0,
+                     user: User = Depends(get_session_user), db: AsyncSession = Depends(get_db)):
+    limit, offset = _page(limit, offset)
+    q = select(VividPayEntry).where(
+        VividPayEntry.owner_id == user.id, VividPayEntry.kind.not_in(_FOLDED),
+        ~and_(VividPayEntry.kind == earnings.ADJUSTMENT,
+              VividPayEntry.provider_ref.like("fee-refund:%")))
+    if kind in _HISTORY_KINDS:
+        q = q.where(VividPayEntry.kind.in_(_HISTORY_KINDS[kind]))
+    if project:
+        q = q.where(VividPayEntry.project_id == project)
+    if (lo := _day(since)) is not None:
+        q = q.where(VividPayEntry.created_at >= lo)
+    if (hi := _day(until, end=True)) is not None:
+        q = q.where(VividPayEntry.created_at < hi)
+    rows, more = _paged(list((await db.execute(
+        q.order_by(VividPayEntry.created_at.desc(), VividPayEntry.id.desc())
+        .offset(offset).limit(limit + 1))).scalars()), limit)
+
+    # What folds into each row.
+    fee_refs = [f"fee:{e.provider_ref}" for e in rows if e.kind == earnings.PAYMENT]
+    payout_ids = [e.payout_id for e in rows if e.kind == earnings.WITHDRAWAL and e.payout_id]
+    extra: dict[str, int] = {}
+    if fee_refs or payout_ids:
+        for f in (await db.execute(select(VividPayEntry).where(
+                VividPayEntry.owner_id == user.id,
+                or_(and_(VividPayEntry.kind == earnings.FEE, VividPayEntry.provider_ref.in_(fee_refs)),
+                    and_(VividPayEntry.payout_id.in_(payout_ids or [""]),
+                         or_(VividPayEntry.kind == earnings.WITHDRAWAL_FEE,
+                             VividPayEntry.provider_ref.like("fee-refund:%"))))))).scalars():
+            k = f.provider_ref.removeprefix("fee:") if f.kind == earnings.FEE else f"payout:{f.payout_id}"
+            extra[k] = extra.get(k, 0) + f.amount_kobo
+    checkout_ids = {e.checkout_id for e in rows if e.checkout_id}
+    orders = {c.id: c for c in (await db.execute(select(VividPayCheckout).where(
+        VividPayCheckout.id.in_(checkout_ids)))).scalars()} if checkout_ids else {}
+    project_ids = {e.project_id for e in rows if e.project_id}
+    apps = dict((await db.execute(select(BuilderProject.id, BuilderProject.name).where(
+        BuilderProject.id.in_(project_ids)))).all()) if project_ids else {}
+
+    items = []
+    for e in rows:
+        amount, title = e.amount_kobo, e.description
+        if e.kind == earnings.PAYMENT:
+            amount += extra.get(e.provider_ref, 0)
+            c = orders.get(e.checkout_id or "")
+            title = (c.reference if c else None) or title
+        elif e.kind == earnings.WITHDRAWAL:
+            amount += extra.get(f"payout:{e.payout_id}", 0)
+        c = orders.get(e.checkout_id or "")
+        items.append({"id": e.id, "kind": e.kind, "amount_kobo": amount, "title": title,
+                      "customer": (c.customer or {}).get("name") if c else None,
+                      "project_id": e.project_id, "app": apps.get(e.project_id or ""),
+                      "created_at": e.created_at})
+    return {"items": items, "has_more": more}
 
 
 @router.get("/checkouts")
-async def my_checkouts(project: str | None = None, limit: int = 50,
+async def my_checkouts(project: str | None = None, status: str | None = None, q: str | None = None,
+                       mode: str = "live", limit: int = 20, offset: int = 0,
                        user: User = Depends(get_session_user), db: AsyncSession = Depends(get_db)):
-    q = select(VividPayCheckout).where(VividPayCheckout.owner_id == user.id)
+    limit, offset = _page(limit, offset)
+    now = datetime.now(timezone.utc)
+    query = select(VividPayCheckout).where(VividPayCheckout.owner_id == user.id)
+    if mode in ("live", "test"):
+        query = query.where(VividPayCheckout.mode == mode)
     if project:
-        q = q.where(VividPayCheckout.project_id == project)
-    rows = (await db.execute(q.order_by(VividPayCheckout.created_at.desc())
-                             .limit(min(max(limit, 1), 200)))).scalars()
-    return [{**checkouts.view(c), "project_id": c.project_id, "fee_kobo": c.fee_kobo,
-             "customer": c.customer, "created_at": c.created_at} for c in rows]
+        query = query.where(VividPayCheckout.project_id == project)
+    if status == "expired":
+        query = query.where(VividPayCheckout.status == "pending", VividPayCheckout.expires_at < now)
+    elif status == "pending":
+        query = query.where(VividPayCheckout.status == "pending", VividPayCheckout.expires_at >= now)
+    elif status in ("paid", "partial"):
+        query = query.where(VividPayCheckout.status == status)
+    if q and q.strip():
+        like = f"%{q.strip()[:80]}%"
+        query = query.where(or_(VividPayCheckout.reference.ilike(like),
+                                cast(VividPayCheckout.customer, String).ilike(like)))
+    rows, more = _paged(list((await db.execute(
+        query.order_by(VividPayCheckout.created_at.desc(), VividPayCheckout.id.desc())
+        .offset(offset).limit(limit + 1))).scalars()), limit)
+    return {"items": [{**checkouts.view(c), "project_id": c.project_id,
+                       "credited_kobo": c.credited_kobo, "customer": c.customer,
+                       "created_at": c.created_at} for c in rows],
+            "has_more": more}
 
 
 class KycIn(BaseModel):
@@ -166,7 +270,13 @@ async def withdraw(body: WithdrawIn, user: User = Depends(get_session_user),
 
 
 @router.get("/withdrawals")
-async def my_withdrawals(user: User = Depends(get_session_user), db: AsyncSession = Depends(get_db)):
-    rows = (await db.execute(select(VividPayPayout).where(VividPayPayout.owner_id == user.id)
-                             .order_by(VividPayPayout.created_at.desc()).limit(100))).scalars()
-    return [_payout_out(p) for p in rows]
+async def my_withdrawals(status: str | None = None, limit: int = 20, offset: int = 0,
+                         user: User = Depends(get_session_user), db: AsyncSession = Depends(get_db)):
+    limit, offset = _page(limit, offset)
+    q = select(VividPayPayout).where(VividPayPayout.owner_id == user.id)
+    if status in ("pending", "success", "failed"):
+        q = q.where(VividPayPayout.status == status)
+    rows, more = _paged(list((await db.execute(
+        q.order_by(VividPayPayout.created_at.desc(), VividPayPayout.id.desc())
+        .offset(offset).limit(limit + 1))).scalars()), limit)
+    return {"items": [_payout_out(p) for p in rows], "has_more": more}

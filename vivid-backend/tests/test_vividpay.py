@@ -409,7 +409,49 @@ def test_the_owner_sees_earnings_and_withdraws(api, maker, fake):
     me = api.get("/v1/earnings").json()
     assert me["balance_kobo"] == 3_990_000 and me["pending_kobo"] == 1_000_000
     assert me["kyc"]["status"] == "verified"
-    assert [w["status"] for w in api.get("/v1/earnings/withdrawals").json()] == ["pending"]
+    listed = api.get("/v1/earnings/withdrawals").json()
+    assert [w["status"] for w in listed["items"]] == ["pending"] and listed["has_more"] is False
+    assert api.get("/v1/earnings/withdrawals?status=success").json()["items"] == []
+
+    # History: one row per withdrawal, its ₦100 fee folded in; no fee rows.
+    history = api.get("/v1/earnings/entries").json()["items"]
+    assert [(h["kind"], h["amount_kobo"]) for h in history] == [
+        ("withdrawal", -1_010_000), ("payment", 5_000_000)]
+
+
+def test_history_folds_fees_filters_and_pages(api, maker, fake):
+    pid, _, _ = asyncio.run(_setup(maker))
+
+    async def orders():
+        for i in range(3):
+            cid = await _checkout(maker, pid, reference=f"MT-000{i}")
+            async with maker() as db:
+                await events.on_transfer(db, {"id": f"tr_{i}", "virtual_account_id": f"va_{i + 1}",
+                                              "amount": 1_500_000, "net_amount": 1_500_000})
+        await _checkout(maker, pid, reference="MT-waiting")
+    asyncio.run(orders())
+
+    page = api.get("/v1/earnings/entries?limit=2").json()
+    assert page["has_more"] is True and len(page["items"]) == 2
+    rest = api.get("/v1/earnings/entries?limit=2&offset=2").json()
+    assert rest["has_more"] is False and len(rest["items"]) == 1
+    rows = page["items"] + rest["items"]
+    # Each order is one row of what the owner got (₦15,000 less the 1.5% fee).
+    assert {r["kind"] for r in rows} == {"payment"}
+    assert all(r["amount_kobo"] == 1_500_000 - 22_500 for r in rows)
+    assert {r["title"] for r in rows} == {"MT-0000", "MT-0001", "MT-0002"}
+    assert rows[0]["app"] == "Mama's Kitchen" and rows[0]["customer"] == "Tunde"
+    assert api.get("/v1/earnings/entries?kind=withdrawals").json()["items"] == []
+    assert api.get("/v1/earnings/entries?since=2999-01-01").json()["items"] == []
+    assert api.get("/v1/earnings/entries?since=nope").status_code == 422
+
+    orders_ = api.get("/v1/earnings/checkouts").json()["items"]
+    assert len(orders_) == 4
+    assert [o["reference"] for o in api.get("/v1/earnings/checkouts?status=pending").json()["items"]] == ["MT-waiting"]
+    assert len(api.get("/v1/earnings/checkouts?status=paid").json()["items"]) == 3
+    assert [o["reference"] for o in api.get("/v1/earnings/checkouts?q=0001").json()["items"]] == ["MT-0001"]
+    assert len(api.get("/v1/earnings/checkouts?q=tunde").json()["items"]) == 4
+    assert api.get("/v1/earnings/checkouts?mode=test").json()["items"] == []
 
 
 def test_app_webhook_signature():
