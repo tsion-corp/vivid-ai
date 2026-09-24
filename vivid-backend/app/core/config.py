@@ -484,9 +484,11 @@ class Settings(BaseSettings):
     EXPO_OWNER: str = ""
     EXPO_API_TIMEOUT: int = 20
     # What a build on Vivid's account costs the user, in USD, debited from
-    # their wallet (about 2x EAS's $1 Android / $2 iOS medium worker).
-    EAS_BUILD_PRICE_ANDROID_USD: float = 2.0
-    EAS_BUILD_PRICE_IOS_USD: float = 4.0
+    # their wallet. Launch price while payments are being tested, below what
+    # EAS charges us ($1 Android / $2 iOS on a medium worker, after the free
+    # tier); the intended prices are $2 and $4. Set in app.env to change.
+    EAS_BUILD_PRICE_ANDROID_USD: float = 0.20
+    EAS_BUILD_PRICE_IOS_USD: float = 0.20
     # Builds on Vivid's account per user per calendar month, an abuse cap
     # on top of the wallet; 0 = no cap.
     EAS_VIVID_BUILDS_PER_MONTH: int = 0

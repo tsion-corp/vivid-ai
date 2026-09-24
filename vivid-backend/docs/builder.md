@@ -422,7 +422,7 @@ CF_API_TOKEN (Cloudflare Pages: Edit), CF_ACCOUNT_ID, CF_PAGES_PROJECT   publish
 BUILDER_PUBLISH_HOST          default {alias}.{project}.pages.dev
 E2B_MOBILE_TEMPLATE=vivid-expo, BUILDER_MOBILE_TEMPLATE_DIR   mobile projects' template
 EXPO_TOKEN, EXPO_OWNER        Vivid's Expo account for charged builds (a robot token)
-EAS_BUILD_PRICE_ANDROID, EAS_BUILD_PRICE_IOS, EAS_BUILD_CURRENCY   price per build
+EAS_BUILD_PRICE_ANDROID_USD, EAS_BUILD_PRICE_IOS_USD   price per build (launch: $0.20 each)
 EAS_VIVID_BUILDS_PER_MONTH    charged builds per user per month (default 5)
 ```
 

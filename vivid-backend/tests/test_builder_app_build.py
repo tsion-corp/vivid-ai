@@ -43,6 +43,9 @@ class FakeFreshManager:
 
 @pytest.fixture
 def eas(monkeypatch, maker):
+    # Prices pinned so the arithmetic below does not follow launch pricing.
+    monkeypatch.setattr(settings, "EAS_BUILD_PRICE_ANDROID_USD", 2.0)
+    monkeypatch.setattr(settings, "EAS_BUILD_PRICE_IOS_USD", 4.0)
     monkeypatch.setattr(settings, "EXPO_TOKEN", TOKEN)
     monkeypatch.setattr(settings, "EXPO_OWNER", "vivid-apps")
     monkeypatch.setattr(settings, "EAS_VIVID_BUILDS_PER_MONTH", 0)
