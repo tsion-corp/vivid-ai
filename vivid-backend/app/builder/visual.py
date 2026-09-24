@@ -10,6 +10,11 @@ EDITOR_START and EDITOR_END. It is kept there by `ensure_editor` whenever a
 preview is handed out, does nothing unless the page is framed and the parent
 turns edit mode on, and is stripped from the built site by `strip_editor` at
 publish, so a live app never carries it.
+
+A mobile (Expo) project previews through react-native-web as a single-page
+app whose HTML is public/index.html, so the same script goes there; its copy
+lives under app/, components/ and friends, and pictures come back from Metro
+as /assets/?unstable_path=<file> URLs.
 """
 import asyncio
 import io
@@ -18,7 +23,7 @@ import posixpath
 import re
 import secrets
 from dataclasses import dataclass, field
-from urllib.parse import unquote, urlparse
+from urllib.parse import parse_qs, unquote, urlparse
 
 from PIL import Image, ImageOps, UnidentifiedImageError
 
@@ -39,6 +44,9 @@ _FORMAT_EXT = {"JPEG": ".jpg", "PNG": ".png", "WEBP": ".webp", "GIF": ".gif", "A
 #: Where copy lives. Text in node_modules or a lockfile is never the user's.
 _SOURCE_EXT = (".tsx", ".jsx", ".ts", ".js", ".mdx", ".md", ".json", ".html")
 _SKIP = ("package.json", "package-lock.json", "tsconfig", "components.json")
+#: Where a mobile app's copy lives (Expo Router routes and their helpers).
+_MOBILE_SOURCE_DIRS = ("app/", "components/", "constants/", "lib/", "data/")
+_MOBILE_SKIP = ("app.json", "eas.json")
 
 
 class VisualError(Exception):
@@ -98,10 +106,11 @@ def fit_to(data: bytes, target_path: str) -> bytes | None:
     return out.getvalue()
 
 
-def new_image_path(filename: str, ext: str) -> str:
+def new_image_path(filename: str, ext: str, mobile: bool = False) -> str:
     stem = posixpath.splitext(posixpath.basename(filename or ""))[0]
     slug = re.sub(r"[^a-z0-9]+", "-", stem.lower()).strip("-")[:40] or "image"
-    return f"public/images/{slug}-{secrets.token_hex(3)}{ext}"
+    folder = "assets/images" if mobile else "public/images"
+    return f"{folder}/{slug}-{secrets.token_hex(3)}{ext}"
 
 
 @dataclass
@@ -112,7 +121,8 @@ class ImageTarget:
     refs: list[str] = field(default_factory=list)
 
 
-def resolve_src(src: str, preview_url: str, files: list[str]) -> ImageTarget:
+def resolve_src(src: str, preview_url: str, files: list[str],
+                mobile: bool = False) -> ImageTarget:
     """Which file a URL seen in the preview is.
 
     Vite serves src/ files at their own path (/src/assets/hero.jpg) and
@@ -128,6 +138,8 @@ def resolve_src(src: str, preview_url: str, files: list[str]) -> ImageTarget:
     local = not url.netloc or url.netloc == preview.netloc
     if not local:
         return ImageTarget(path=None, refs=[src])
+    if mobile:
+        return _resolve_metro(url, src, set(files))
     route = unquote(url.path)
     if route.startswith("/@fs/") or ".." in route.split("/"):
         raise VisualError("That picture is not one of the app's files.")
@@ -141,11 +153,50 @@ def resolve_src(src: str, preview_url: str, files: list[str]) -> ImageTarget:
     return ImageTarget(path=path, refs=refs)
 
 
+def _resolve_metro(url, src: str, known: set[str]) -> ImageTarget:
+    """A picture in an Expo app's web preview. Metro serves required files
+    as /assets/?unstable_path=./assets/uploads/x.png (or, bundled, at their
+    own path under /assets/); either way the path names the project file,
+    which is replaced in place, so a require() never has to change."""
+    raw = (parse_qs(url.query).get("unstable_path") or [""])[0]
+    rel = posixpath.normpath(unquote(raw or url.path).lstrip("./").lstrip("/")) if (raw or url.path) else ""
+    if ".." in rel.split("/"):
+        raise VisualError("That picture is not one of the app's files.")
+    for candidate in (rel, rel.removeprefix("assets/")):
+        if candidate in known:
+            return ImageTarget(path=candidate)
+        # Bundled URLs drop the project's own "assets/" once: /assets/uploads/x.png.
+        if f"assets/{candidate}" in known:
+            return ImageTarget(path=f"assets/{candidate}")
+    return ImageTarget(path=None, refs=[src])
+
+
+def relink_uri(sources: dict[str, str], src: str, new_path: str) -> list[str]:
+    """In a mobile app a remote picture is `{ uri: "<src>" }`; its local
+    replacement is required instead. Other uses of the URL (a string in a
+    data file) are left alone: they cannot become a require()."""
+    pattern = re.compile(r"\{\s*uri\s*:\s*([\"'`])" + re.escape(src) + r"\1\s*\}")
+    changed = []
+    for path, content in sources.items():
+        updated = pattern.sub(f'require("@/{new_path}")', content)
+        if updated != content:
+            sources[path] = updated
+            changed.append(path)
+    return changed
+
+
 # ------------------------------------------------------------------ text
+def _is_source(path: str, mobile: bool) -> bool:
+    if mobile:
+        return (path.startswith(_MOBILE_SOURCE_DIRS) and path.endswith(_SOURCE_EXT)
+                and path not in _MOBILE_SKIP)
+    return (path.startswith("src/") and path.endswith(_SOURCE_EXT)) or path == "index.html"
+
+
 async def read_sources(sandbox: Sandbox, files: list[str]) -> dict[str, str]:
     """Every file copy can live in, read concurrently."""
-    wanted = [f for f in files
-              if (f.startswith("src/") and f.endswith(_SOURCE_EXT)) or f == "index.html"]
+    mobile = sandbox.target.is_mobile
+    wanted = [f for f in files if _is_source(f, mobile)]
     wanted = [f for f in wanted if not any(s in f for s in _SKIP)]
     gate = asyncio.Semaphore(16)
 
@@ -384,13 +435,19 @@ def strip_editor(html: bytes) -> bytes:
     return html if stripped == text else stripped.encode("utf-8")
 
 
+#: The page the preview loads: Vite's index.html, or an Expo app's
+#: single-page template.
+MOBILE_HTML = "public/index.html"
+
+
 async def ensure_editor(sandbox: Sandbox) -> None:
     """Put the editor into the preview's index.html if it is missing or out
     of date. Cheap when it is already there: one read."""
+    path = MOBILE_HTML if sandbox.target.is_mobile else "index.html"
     try:
-        html = await sandbox.read_file("index.html")
+        html = await sandbox.read_file(path)
     except FileNotFoundError:
         return
     if EDITOR_BLOCK in html:
         return
-    await sandbox.write_file("index.html", with_editor(html))
+    await sandbox.write_file(path, with_editor(html))

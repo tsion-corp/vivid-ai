@@ -31,6 +31,13 @@ class Settings(BaseSettings):
     # verification; empty = fetch Decane's JWKS instead.
     DECANE_VERIFICATION_KEY: str = ""
     DECANE_API_BASE: str = "https://backend.decane.app"
+    # Decane sign-in for the apps the builder makes: the organization token
+    # (dck_org_...) that provisions one Decane client per project. Not the
+    # values above, which are Vivid's own sign-in. Server-only; empty turns
+    # the feature off.
+    DECANE_PARTNER_TOKEN: str = ""
+    DECANE_CONNECT_BASE: str = "https://backend.decane.app"
+    DECANE_CONNECT_TIMEOUT: float = 10.0
     JWT_ALGORITHM: str = "HS256"
     ACCESS_TOKEN_EXPIRE_MINUTES: int = 30
     REFRESH_TOKEN_EXPIRE_DAYS: int = 30
@@ -348,6 +355,11 @@ class Settings(BaseSettings):
     # The template's source on disk, for the local driver and the eval.
     # Relative paths resolve from the backend's working directory.
     BUILDER_TEMPLATE_DIR: str = "../sandbox-templates/vivid-web"
+    # Mobile projects (Expo, React Native) run in their own template. Metro
+    # serves the web preview and Expo Go from the same port.
+    E2B_MOBILE_TEMPLATE: str = "vivid-expo"
+    BUILDER_MOBILE_DEV_PORT: int = 8081
+    BUILDER_MOBILE_TEMPLATE_DIR: str = "../sandbox-templates/vivid-expo"
     # Where the local driver puts project directories.
     BUILDER_LOCAL_ROOT: str = "/tmp/vivid-builder"
 
@@ -442,6 +454,9 @@ class Settings(BaseSettings):
     # Extra steps the critique may spend beyond BUILDER_MAX_STEPS.
     BUILDER_CRITIQUE_STEPS: int = 6
     BUILDER_SCREENSHOT_TIMEOUT: int = 90
+    # Metro bundles a mobile app's web preview on the first request, which
+    # takes longer than Vite; its screenshots get more time.
+    BUILDER_MOBILE_SCREENSHOT_TIMEOUT: int = 180
     # Scores screenshots in the design eval. A different vendor from the
     # builder, so it is not grading its own work. Must take image input.
     DESIGN_JUDGE_MODEL: str = "z-ai/glm-5.3-flash"
@@ -452,6 +467,27 @@ class Settings(BaseSettings):
     # a hero; an edit rarely needs more than a few.
     BUILDER_IMAGES_PER_TURN: int = 6
     BUILDER_IMAGES_FIRST_BUILD: int = 16
+
+    # Mobile app builds on EAS (Expo's cloud). Vivid's own Expo account
+    # builds for users who have not connected theirs, and those builds are
+    # charged; a user's connected account (the "expo" connector) builds on
+    # their own quota for free. EXPO_TOKEN is a robot token of EXPO_OWNER's.
+    # It never enters a project's sandbox: builds start in a throwaway one.
+    EXPO_TOKEN: str = ""
+    EXPO_OWNER: str = ""
+    EXPO_API_TIMEOUT: int = 20
+    # What a build on Vivid's account costs the user, in the smallest unit
+    # of EAS_BUILD_CURRENCY.
+    EAS_BUILD_CURRENCY: str = "NGN"
+    EAS_BUILD_PRICE_ANDROID: int = 500_000
+    EAS_BUILD_PRICE_IOS: int = 800_000
+    # Builds on Vivid's account per user per calendar month; 0 = none. The
+    # seam where plan limits and real payment plug in (billing.py).
+    EAS_VIVID_BUILDS_PER_MONTH: int = 5
+    # How long starting a build (restore, install, upload) may take, and how
+    # often unfinished builds are polled.
+    EAS_START_TIMEOUT: int = 600
+    EAS_POLL_SECONDS: int = 30
 
     # Limits
     RATE_LIMIT_PER_MINUTE: int = 20

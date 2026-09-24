@@ -43,6 +43,13 @@ async def init_db() -> None:
             "mode VARCHAR(8) NOT NULL DEFAULT 'build'"))
         await conn.execute(text(
             "ALTER TABLE builder_projects ADD COLUMN IF NOT EXISTS "
+            "target VARCHAR(8) NOT NULL DEFAULT 'web'"))
+        await conn.execute(text(
+            "ALTER TABLE builder_projects ADD COLUMN IF NOT EXISTS app_id VARCHAR(160)"))
+        await conn.execute(text(
+            "ALTER TABLE builder_projects ADD COLUMN IF NOT EXISTS eas_projects JSONB"))
+        await conn.execute(text(
+            "ALTER TABLE builder_projects ADD COLUMN IF NOT EXISTS "
             "payments_provider VARCHAR(16) NOT NULL DEFAULT 'none'"))
         await conn.execute(text(
             "ALTER TABLE builder_projects ADD COLUMN IF NOT EXISTS brief_md TEXT"))
@@ -63,6 +70,11 @@ async def init_db() -> None:
             "ALTER TABLE builder_projects ADD COLUMN IF NOT EXISTS deployer_address VARCHAR(64)"))
         await conn.execute(text(
             "ALTER TABLE builder_projects ADD COLUMN IF NOT EXISTS published_at TIMESTAMPTZ"))
+        await conn.execute(text(
+            "ALTER TABLE builder_projects ADD COLUMN IF NOT EXISTS "
+            "auth_provider VARCHAR(16) NOT NULL DEFAULT 'none'"))
+        await conn.execute(text(
+            "ALTER TABLE builder_projects ADD COLUMN IF NOT EXISTS decane_app_id VARCHAR(36)"))
         # Projects published before the column existed: date them from their
         # latest live publish, so clients keying "is live" on it keep them.
         await conn.execute(text(

@@ -35,6 +35,10 @@ MAX_STEPS = 6
 MAX_IMAGES = 4
 
 SPEC_SECTIONS = ("Goal", "Users", "Pages", "Data model", "Integrations", "Out of scope")
+#: A mobile app's spec: screens and navigation instead of pages, plus the
+#: device features it uses.
+MOBILE_SPEC_SECTIONS = ("Goal", "Users", "Screens", "Device features", "Data model",
+                        "Integrations", "Out of scope")
 
 SCHEMAS = [
     {"type": "function", "function": {
@@ -99,13 +103,24 @@ SCHEMAS = [
         }}},
 ]
 
-def tool_schemas() -> list[dict]:
+def tool_schemas(mobile: bool = False) -> list[dict]:
     """The plan tools with the recipe list of the moment: recipes are files,
-    so the enum is read when a turn starts, not when the module loads."""
+    so the enum is read when a turn starts, not when the module loads. A
+    mobile app picks from the screen recipes and is never on-chain."""
     out = json.loads(json.dumps(SCHEMAS))
-    names = skills.recipe_names()
+    spec = out[1]["function"]
+    if mobile:
+        spec["description"] = (
+            "Write the spec once you know enough. Markdown with exactly these headings, in "
+            "order: " + ", ".join(MOBILE_SPEC_SECTIONS) + ". Concrete and short: a builder "
+            "reads it every step.")
+        spec["parameters"]["properties"].pop("onchain")
+        spec["parameters"]["properties"]["recipe"]["description"] = (
+            "The screen recipe closest to this app, by name from the list in the "
+            "instructions; omit when none fits.")
+    names = skills.recipe_names(mobile)
     if names:
-        out[1]["function"]["parameters"]["properties"]["recipe"]["enum"] = names
+        spec["parameters"]["properties"]["recipe"]["enum"] = names
     return out
 
 
@@ -157,6 +172,57 @@ bullets: Goal, Users, Pages, Data model, Integrations, Out of scope. Pages lists
 page and what is on it. Data model lists each thing the app stores and its fields. \
 Integrations says "none" or names them (Supabase auth, payments, email). Out of scope \
 says what this first version deliberately leaves out.
+
+Between tool calls write at most one short sentence. After write_spec, tell the user in \
+one or two sentences what the spec covers and that they can edit it or start the build. \
+Never write code, and never describe the code you would write.
+"""
+
+
+MOBILE_SYSTEM = """You are Vivid, planning a mobile app for iOS and Android with the user before \
+it is built. The user may not be a developer. The app will be an Expo (React Native) app with \
+Expo Router tabs and screens, styled with NativeWind; the user tries it on their own phone in \
+Expo Go while it is built, and can later get installable builds. Data and login, when needed, \
+come from Supabase.
+
+Your job in this conversation:
+1. Read the idea. If a screenshot or image was attached, treat it as the reference design.
+2. Ask the few questions that change what gets built (who it is for, the main tabs and \
+screens, what data it keeps, whether people sign in, who manages it and how, which phone \
+features it needs: camera, photos, location, notifications, look and feel). Two to six \
+questions with concrete options. Do not ask what you can decide well yourself, and do not \
+ask twice.
+   Always include one question about pictures and branding: do they have a logo (it becomes \
+the app icon), product photos or brand colours to upload now, or should the first version \
+use generated pictures? The user uploads files beside the chat; uploaded files are listed \
+for you under "Files the user uploaded" and live at assets/uploads/<name> in the app.
+   By default the app keeps its data on the phone. It becomes a full-stack app (real sign-up \
+and sign-in, records on a server shared between people, roles, an owner who manages live \
+orders or jobs) only when the user asks for that, in those words or in what the idea needs. \
+If the idea sits on the line, ask. Full-stack is the `fullstack` flag on write_spec; its spec \
+says "Supabase (accounts, data)" under Integrations, and your closing sentence tells the user \
+they will connect their Supabase project in the project settings before the build.
+   What this version can do: everything the Expo SDK offers in Expo Go (camera, photo \
+library, location, local notifications, haptics, maps, sharing, secure storage). It cannot \
+take in-app payments or use Bluetooth, NFC, health data or background location yet; if the \
+idea needs one, say so in one line and put it under Out of scope.
+3. When you know enough, call write_spec. One round of questions is normal, two is \
+the most; after the user has answered twice, write the spec with sensible choices for \
+anything still open rather than asking again. If files were uploaded, name them in the spec \
+where they are used (the logo as the app icon and in the header, each product photo on its \
+product).
+
+Pick the screen recipe closest to the app for write_spec's `recipe` (the builder \
+follows it for tabs, screens and what a first build must contain):
+{recipes}
+
+The spec has exactly these headings, in this order, each with a few plain lines or \
+bullets: Goal, Users, Screens, Device features, Data model, Integrations, Out of scope. \
+Screens lists the tabs (two to five, each with an icon idea) and every other screen, what \
+is on it and how it is reached. Device features lists the phone features the app uses, or \
+"none". Data model lists each thing the app stores and its fields, and whether it lives on \
+the phone or on the server. Integrations says "none" or names them (Supabase auth, email). \
+Out of scope says what this first version deliberately leaves out.
 
 Between tool calls write at most one short sentence. After write_spec, tell the user in \
 one or two sentences what the spec covers and that they can edit it or start the build. \
@@ -240,11 +306,12 @@ def validate_questions(raw) -> tuple[list[dict] | None, str | None]:
     return out, None
 
 
-def validate_spec(markdown) -> tuple[str | None, str | None]:
+def validate_spec(markdown, sections: tuple[str, ...] = SPEC_SECTIONS
+                  ) -> tuple[str | None, str | None]:
     if not isinstance(markdown, str) or len(markdown.strip()) < 80:
         return None, "the spec is empty or too short"
     text = markdown.strip()
-    missing = [h for h in SPEC_SECTIONS if h.lower() not in text.lower()]
+    missing = [h for h in sections if h.lower() not in text.lower()]
     if missing:
         return None, "the spec is missing these headings: " + ", ".join(missing)
     return text[:20_000], None
@@ -298,8 +365,11 @@ class PlanRunner:
                  cancelled: Callable[[], bool] = lambda: False,
                  message_id: str | None = None,
                  assets_block: str = "",
-                 brief: bool = True) -> None:
+                 brief: bool = True,
+                 mobile: bool = False) -> None:
         self.history = history
+        #: Planning an iOS and Android app (Expo), not a website.
+        self.mobile = mobile
         self.assets_block = assets_block
         #: Run the prompt builder on a project's first message.
         self.brief = brief
@@ -313,7 +383,8 @@ class PlanRunner:
         yield stream.start(self.message_id)
         endpoint = routing.endpoint_for(routing.PLAN)
         self.result.model = endpoint.model
-        system = SYSTEM.replace("{recipes}", skills.recipe_menu() or "- (none on disk)")
+        system = (MOBILE_SYSTEM if self.mobile else SYSTEM).replace(
+            "{recipes}", skills.recipe_menu(self.mobile) or "- (none on disk)")
         system += ("\n" + self.assets_block if self.assets_block else "")
         messages = [{"role": "system", "content": system}]
         messages += self.history
@@ -324,7 +395,7 @@ class PlanRunner:
             # data-brief part for clients that show it as a card, and
             # handed to the planner as what was understood.
             yield stream.start_step()
-            expansion = meta.Expansion(self.user_text, self.images)
+            expansion = meta.Expansion(self.user_text, self.images, mobile=self.mobile)
             async for part in expansion.run():
                 yield part
             yield stream.finish_step()
@@ -350,7 +421,7 @@ class PlanRunner:
                 break
             self.result.steps += 1
             yield stream.start_step()
-            call_step = ModelStep(messages, tool_schemas(), endpoint)
+            call_step = ModelStep(messages, tool_schemas(self.mobile), endpoint)
             async for part in call_step.run():
                 yield part
             if call_step.failed is not None:
@@ -412,14 +483,15 @@ class PlanRunner:
             self.result.reason = ASKED
             return "Asked the user. Their answers arrive as the next message.", True
         if call["name"] == "write_spec":
-            spec, problem = validate_spec(args.get("markdown"))
+            spec, problem = validate_spec(
+                args.get("markdown"), MOBILE_SPEC_SECTIONS if self.mobile else SPEC_SECTIONS)
             if problem:
                 return f"error: {problem}.", False
             self.result.spec_md = spec
             self.result.fullstack = bool(args.get("fullstack", False))
             recipe = str(args.get("recipe") or "").strip().lower()
-            self.result.recipe = recipe if recipe in skills.recipe_names() else None
-            self.result.onchain = bool(args.get("onchain", False))
+            self.result.recipe = recipe if recipe in skills.recipe_names(self.mobile) else None
+            self.result.onchain = bool(args.get("onchain", False)) and not self.mobile
             self.result.reason = SPEC_WRITTEN
             return "Spec saved. Tell the user what it covers in one or two sentences.", False
         return f"error: no tool named {call['name']!r} in plan mode.", False

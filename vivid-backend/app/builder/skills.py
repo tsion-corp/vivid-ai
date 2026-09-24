@@ -45,38 +45,44 @@ def clear_cache() -> None:
 _TITLE = re.compile(r"^#\s*Recipe:\s*(.+)$", re.M)
 
 
-def recipes() -> list[dict]:
-    """The page recipes on disk, name and title, so the planner can offer
+def _recipe_dir(mobile: bool) -> str:
+    """Page recipes for websites; screen recipes for mobile apps."""
+    return "mobile/references/recipes" if mobile else "design/references/recipes"
+
+
+def recipes(mobile: bool = False) -> list[dict]:
+    """The recipes on disk, name and title, so the planner can offer
     exactly what exists: dropping a file in the folder adds a recipe."""
-    folder = _root() / "design" / "references" / "recipes"
+    rel = _recipe_dir(mobile)
     out = []
-    for path in sorted(folder.glob("*.md")):
-        text = _read(f"design/references/recipes/{path.name}")
+    for path in sorted((_root() / rel).glob("*.md")):
+        text = _read(f"{rel}/{path.name}")
         m = _TITLE.search(text)
         out.append({"name": path.stem, "title": (m.group(1).strip() if m else path.stem)})
     return out
 
 
-def recipe_names() -> list[str]:
-    return [r["name"] for r in recipes()]
+def recipe_names(mobile: bool = False) -> list[str]:
+    return [r["name"] for r in recipes(mobile)]
 
 
-def recipe_menu() -> str:
+def recipe_menu(mobile: bool = False) -> str:
     """One line per recipe for a prompt."""
-    return "\n".join(f"- {r['name']}: {r['title']}" for r in recipes())
+    return "\n".join(f"- {r['name']}: {r['title']}" for r in recipes(mobile))
 
 
-async def pick_recipe(text: str) -> str | None:
+async def pick_recipe(text: str, mobile: bool = False) -> str | None:
     """Ask the planning model which recipe fits a project that skipped plan
     mode. One short call; the answer is stored on the project so it runs
     once. Returns None when nothing fits or the call fails."""
-    names = recipe_names()
+    names = recipe_names(mobile)
     if not names or not (text or "").strip():
         return None
     from app.builder import routing
     from app.services.models_gateway import code_llm
-    prompt = ("Which page recipe fits this app best? Answer with the recipe name only, "
-              f"or 'none'.\n\nRecipes:\n{recipe_menu()}\n\nApp:\n{text[:2000]}")
+    kind = "screen" if mobile else "page"
+    prompt = (f"Which {kind} recipe fits this app best? Answer with the recipe name only, "
+              f"or 'none'.\n\nRecipes:\n{recipe_menu(mobile)}\n\nApp:\n{text[:2000]}")
     try:
         out = []
         async for ev in code_llm.stream_chat([{"role": "user", "content": prompt}], [],
@@ -109,6 +115,29 @@ def design_block(spec_md: str | None, user_text: str = "", recipe: str | None = 
             parts.append(text)
     block = "\n\n".join(p for p in parts if p)
     return "## Design skill\n" + block
+
+
+#: Always part of the mobile skill, in this order: the method, then the kit
+#: every screen is built from, then how screens connect, then the rest.
+_MOBILE_REFS = ("components", "navigation", "native-apis", "motion", "fonts")
+
+
+def mobile_block(backend: bool = False, recipe: str | None = None) -> str:
+    """The mobile skill for an Expo app: native design method, the component
+    kit, navigation, the device APIs Expo Go has, motion and fonts, the
+    screen recipe the plan chose, and the data layer: on the phone, or
+    Supabase when a backend is linked. Takes the design and motion skills'
+    place; the palettes still apply."""
+    method = _read("mobile/SKILL.md")
+    if not method:
+        return ""
+    parts = [method] + [_read(f"mobile/references/{ref}.md") for ref in _MOBILE_REFS]
+    if recipe and recipe in recipe_names(mobile=True):
+        parts.append(_read(f"mobile/references/recipes/{recipe}.md"))
+    parts.append(_read("mobile/references/supabase.md" if backend
+                       else "mobile/references/state.md"))
+    parts.append(_read("design/references/palettes.md"))
+    return "## Mobile app skill\n" + "\n\n".join(p for p in parts if p)
 
 
 def copy_block() -> str:
@@ -149,6 +178,14 @@ def maps_block(provider: str | None) -> str:
     return "## Maps skill\n" + text if text else ""
 
 
+def auth_block(provider: str | None) -> str:
+    """The auth skill, when the app signs its users in with Decane."""
+    if provider != "decane":
+        return ""
+    text = _read("auth/SKILL.md")
+    return "## Sign-in skill\n" + text if text else ""
+
+
 #: Recipes with a marketing face and a hero: they get the motion skill.
 _MOTION_RECIPES = {"landing", "platform", "portfolio", "shop", "restaurant", "event", "real-estate",
                    "course", "saas", "nonprofit", "fitness", "hotel", "travel", "agency", "marketplace",
@@ -187,16 +224,24 @@ def web3_block(on: bool) -> str:
 def ui_block(spec_md: str | None, user_text: str = "",
              payments: str | None = None, backend: bool = False,
              recipe: str | None = None, maps: str | None = None,
-             chain: bool = False) -> str:
+             chain: bool = False, auth: str | None = None,
+             mobile: bool = False) -> str:
     """Everything a build or edit turn gets: the design skill with its
     recipe, the copy skill, the app-logic skill when a backend is linked,
-    and the payments skill when payments are enabled. The design skill is
+    the sign-in skill when the app has Decane sign-in (after app logic,
+    whose auth rules it overrides), and the payments skill when payments
+    are enabled. The design skill is
     first because the recipe names the sections the copy fills; app logic
-    comes before payments because the payments flow builds on its orders."""
+    comes before payments because the payments flow builds on its orders.
+    A mobile app gets the mobile skill in place of the web design and motion
+    skills; web-only integrations never reach it."""
+    if mobile:
+        blocks = (mobile_block(backend, recipe), copy_block(), fullstack_block(backend))
+        return "\n\n".join(b for b in blocks if b)
     blocks = (design_block(spec_md, user_text, recipe), copy_block(),
               motion_block(recipe, user_text),
-              fullstack_block(backend), payments_block(payments), maps_block(maps),
-              web3_block(chain))
+              fullstack_block(backend), auth_block(auth), payments_block(payments),
+              maps_block(maps), web3_block(chain))
     return "\n\n".join(b for b in blocks if b)
 
 

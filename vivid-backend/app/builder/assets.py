@@ -17,12 +17,14 @@ from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.builder import blob
+from app.builder import targets
 from app.builder.sandbox.base import Sandbox, SandboxError
 from app.core.config import settings
 from app.db.models import BuilderAsset
 
 log = logging.getLogger("vivid.builder.assets")
 
+#: The web target's; a mobile app keeps them at assets/uploads (targets.py).
 UPLOAD_DIR = "public/uploads"
 PUBLIC_PREFIX = "/uploads"
 
@@ -96,12 +98,14 @@ async def add(db: AsyncSession, project_id: str, filename: str, mime: str,
 
 
 async def by_sandbox_path(db: AsyncSession, project_id: str, path: str) -> BuilderAsset | None:
-    """The asset stored at public/uploads/<name>, if that is one."""
-    if not path.startswith(UPLOAD_DIR + "/"):
+    """The asset stored at <upload dir>/<name>, if that is one."""
+    dirs = {targets.get(n).upload_dir for n in targets.NAMES}
+    name = next((path[len(d) + 1:] for d in dirs if path.startswith(d + "/")), None)
+    if not name:
         return None
     return (await db.execute(select(BuilderAsset).where(
         BuilderAsset.project_id == project_id,
-        BuilderAsset.name == path[len(UPLOAD_DIR) + 1:]))).scalar_one_or_none()
+        BuilderAsset.name == name))).scalar_one_or_none()
 
 
 async def replace_bytes(db: AsyncSession, asset: BuilderAsset, data: bytes) -> None:
@@ -119,16 +123,21 @@ async def list_for(db: AsyncSession, project_id: str) -> list[BuilderAsset]:
     return list(rows.scalars())
 
 
-def public_path(asset: BuilderAsset) -> str:
+def public_path(asset: BuilderAsset, target: targets.Target | None = None) -> str:
+    """How the app's code refers to the file: a URL on the web, the file
+    itself (for require) in a mobile app."""
+    if target is not None and target.is_mobile:
+        return sandbox_path(asset, target)
     return f"{PUBLIC_PREFIX}/{asset.name}"
 
 
-def sandbox_path(asset: BuilderAsset) -> str:
-    return f"{UPLOAD_DIR}/{asset.name}"
+def sandbox_path(asset: BuilderAsset, target: targets.Target | None = None) -> str:
+    upload_dir = target.upload_dir if target is not None else UPLOAD_DIR
+    return f"{upload_dir}/{asset.name}"
 
 
 async def write_into(sandbox: Sandbox, asset: BuilderAsset, data: bytes) -> None:
-    await sandbox.write_bytes(sandbox_path(asset), data)
+    await sandbox.write_bytes(sandbox_path(asset, sandbox.target), data)
 
 
 async def sync(sandbox: Sandbox, rows: list[BuilderAsset]) -> int:
@@ -143,7 +152,7 @@ async def sync(sandbox: Sandbox, rows: list[BuilderAsset]) -> int:
         return 0
     written = 0
     for asset in rows:
-        if sandbox_path(asset) in present:
+        if sandbox_path(asset, sandbox.target) in present:
             continue
         try:
             await write_into(sandbox, asset, await blob.get(asset.r2_key))
@@ -153,19 +162,22 @@ async def sync(sandbox: Sandbox, rows: list[BuilderAsset]) -> int:
     return written
 
 
-def describe(rows: list[BuilderAsset]) -> str:
+def describe(rows: list[BuilderAsset], target: targets.Target | None = None) -> str:
     """The list the model sees, in both plan and build mode."""
     if not rows:
         return ""
-    lines = ["## Files the user uploaded",
-             "Use them by their public path; they are already in public/uploads.",
-             "Do not recreate or replace them."]
+    if target is not None and target.is_mobile:
+        how = (f"Use them with require() by their path; they are already in "
+               f"{target.upload_dir} (for example `require(\"@/{target.upload_dir}/<name>\")`).")
+    else:
+        how = "Use them by their public path; they are already in public/uploads."
+    lines = ["## Files the user uploaded", how, "Do not recreate or replace them."]
     for a in rows:
         size = f"{a.size_bytes // 1024} KB" if a.size_bytes >= 1024 else f"{a.size_bytes} B"
         dims = ""
         if a.meta and a.meta.get("width"):
             dims = f", {a.meta['width']}x{a.meta['height']}"
-        lines.append(f"- {public_path(a)} ({a.mime}, {size}{dims})")
+        lines.append(f"- {public_path(a, target)} ({a.mime}, {size}{dims})")
     return "\n".join(lines)
 
 

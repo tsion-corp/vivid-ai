@@ -16,6 +16,8 @@ import posixpath
 from abc import ABC, abstractmethod
 from dataclasses import dataclass
 
+from app.builder import targets
+
 
 class SandboxError(Exception):
     """The sandbox itself failed (unreachable, dead, refused). A command that
@@ -80,6 +82,9 @@ class Sandbox(ABC):
     root: str
     #: "e2b" or "local".
     driver: str
+    #: What the sandbox was made from; tools, typecheck and screenshots read
+    #: it. Web unless the driver was given another target.
+    target: targets.Target = targets.get(targets.WEB)
 
     @abstractmethod
     async def read_file(self, path: str) -> str: ...
@@ -96,7 +101,10 @@ class Sandbox(ABC):
     async def write_bytes(self, path: str, data: bytes) -> None: ...
 
     @abstractmethod
-    async def run(self, cmd: str, timeout: float = 60) -> RunResult: ...
+    async def run(self, cmd: str, timeout: float = 60,
+                  env: dict[str, str] | None = None) -> RunResult:
+        """`env` is added for this one command only (a token for a CLI), so
+        it is never in the command line, a file, or a later command."""
 
     @abstractmethod
     def preview_url(self) -> str: ...

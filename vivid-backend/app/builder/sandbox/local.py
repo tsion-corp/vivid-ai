@@ -19,6 +19,7 @@ import sys
 import uuid
 from pathlib import Path
 
+from app.builder import targets as targets_mod
 from app.builder.sandbox.base import DEV_LOG, RunResult, Sandbox, SandboxError, safe_path
 
 #: Environment for every command: the caller's PATH so node is found, and
@@ -60,8 +61,9 @@ class LocalSandbox(Sandbox):
         self._log = root / ".vivid-dev.log"
 
     @classmethod
-    async def create(cls, template_dir: str, base_dir: str,
-                     project_id: str) -> "LocalSandbox":
+    async def create(cls, template_dir: str, base_dir: str, project_id: str,
+                     target: targets_mod.Target | None = None) -> "LocalSandbox":
+        target = target or targets_mod.get(targets_mod.WEB)
         template = Path(template_dir).resolve()
         if not (template / "package.json").exists():
             raise SandboxError(f"template not found at {template}")
@@ -75,12 +77,18 @@ class LocalSandbox(Sandbox):
         await asyncio.to_thread(_git_init, root)
         port = _free_port()
         log = open(root / ".vivid-dev.log", "ab")
+        env = {**_ENV_BASE, "PORT": str(port)}
+        if target.is_mobile:
+            # Expo CLI turns file watching (fast refresh) off when CI is set.
+            env.pop("CI")
+            env["EXPO_NO_TELEMETRY"] = "1"
         proc = subprocess.Popen(
-            ["npm", "run", "dev", "--", "--host", "127.0.0.1",
-             "--port", str(port), "--strictPort"],
+            [arg.format(port=port) for arg in target.local_dev_cmd],
             cwd=root, stdout=log, stderr=subprocess.STDOUT,
-            env={**_ENV_BASE, "PORT": str(port)}, start_new_session=True)
-        return cls(sandbox_id, root, port, proc)
+            env=env, start_new_session=True)
+        sandbox = cls(sandbox_id, root, port, proc)
+        sandbox.target = target
+        return sandbox
 
     # --------------------------------------------------------------- files
     def _abs(self, path: str) -> Path:
@@ -119,12 +127,13 @@ class LocalSandbox(Sandbox):
         await asyncio.to_thread(_write)
 
     # ------------------------------------------------------------ commands
-    async def run(self, cmd: str, timeout: float = 60) -> RunResult:
+    async def run(self, cmd: str, timeout: float = 60,
+                  env: dict[str, str] | None = None) -> RunResult:
         # The dev log lives at a project path here; commands that name the
         # sandbox-wide DEV_LOG get it rewritten so `tail` finds it.
         cmd = cmd.replace(DEV_LOG, str(self._log))
         proc = await asyncio.create_subprocess_exec(
-            "bash", "-c", cmd, cwd=self.root, env=_ENV_BASE,
+            "bash", "-c", cmd, cwd=self.root, env={**_ENV_BASE, **(env or {})},
             stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE,
             start_new_session=True)
         try:

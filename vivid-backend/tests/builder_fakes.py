@@ -58,8 +58,11 @@ class FakeSandbox(Sandbox):
     async def dev_server_logs(self, lines: int = 100) -> str:
         return "\n".join(self.log.splitlines()[-lines:])
 
-    async def run(self, cmd: str, timeout: float = 60) -> RunResult:
+    async def run(self, cmd: str, timeout: float = 60,
+                  env: dict[str, str] | None = None) -> RunResult:
         self.commands.append(cmd)
+        #: The env of each command, in order, for tests of what saw a token.
+        self.envs = getattr(self, "envs", []) + [dict(env or {})]
         if "tsc --noEmit" in cmd:
             if self.tsc_output:
                 return RunResult(2, self.tsc_output, "")

@@ -261,6 +261,15 @@ class BuilderProject(Base):
     #: plan | build. New projects plan first; `POST .../build` moves them on.
     #: Rows from before plan mode existed default to build (see init_db).
     mode: Mapped[str] = mapped_column(String(8), default="plan")
+    #: web | mobile. What the project builds; fixed at creation (see
+    #: app/builder/targets.py).
+    target: Mapped[str] = mapped_column(String(8), default="web")
+    #: Mobile: the app's store id (iOS bundle identifier and Android
+    #: package), fixed at the first build because signing keys bind to it.
+    app_id: Mapped[str | None] = mapped_column(String(160), default=None)
+    #: Mobile: the EAS project per Expo account that has built it,
+    #: {"<account>": "<project id>"}; Vivid's account and the user's differ.
+    eas_projects: Mapped[dict | None] = mapped_column(JSONB, default=None)
     #: The brief the prompt builder wrote from the first message.
     brief_md: Mapped[str | None] = mapped_column(Text, default=None)
     #: spec.md as agreed in plan mode; injected into every turn.
@@ -281,6 +290,11 @@ class BuilderProject(Base):
     #: its address is public.
     chain: Mapped[str] = mapped_column(String(16), default="none")
     deployer_address: Mapped[str | None] = mapped_column(String(64), default=None)
+    #: "decane" when the app signs its users in with its own Decane client;
+    #: the API key is a project secret, the app id is public and kept after
+    #: a disable so re-enabling finds the same client and its users.
+    auth_provider: Mapped[str] = mapped_column(String(16), default="none")
+    decane_app_id: Mapped[str | None] = mapped_column(String(36), default=None)
     # Accounts, roles and server-side data are built only when asked for:
     # set by the plan (write_spec) or the client, never assumed.
     fullstack: Mapped[bool] = mapped_column(Boolean, default=False)
@@ -381,6 +395,41 @@ class BuilderPublish(Base):
         DateTime(timezone=True), default=_now, onupdate=_now)
 
 
+class BuilderAppBuild(Base):
+    """One installable build of a mobile project on EAS (Expo's cloud):
+    an Android APK or AAB, or an iOS build. Started from a snapshot in a
+    throwaway sandbox, then followed by polling Expo until it ends."""
+    __tablename__ = "builder_app_builds"
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=_uuid)
+    project_id: Mapped[str] = mapped_column(
+        ForeignKey("builder_projects.id", ondelete="CASCADE"), index=True)
+    snapshot_id: Mapped[str | None] = mapped_column(String(36), default=None)
+    #: android | ios
+    platform: Mapped[str] = mapped_column(String(8))
+    #: preview (APK / iOS simulator) | production (store builds)
+    profile: Mapped[str] = mapped_column(String(16), default="preview")
+    #: vivid (Vivid's Expo account, charged) | user (the user's connected one)
+    account: Mapped[str] = mapped_column(String(8))
+    eas_owner: Mapped[str | None] = mapped_column(String(64), default=None)
+    eas_build_id: Mapped[str | None] = mapped_column(String(64), default=None, index=True)
+    #: starting | queued | building | canceling | finished | failed | canceled
+    status: Mapped[str] = mapped_column(String(12), default="starting", index=True)
+    artifact_url: Mapped[str | None] = mapped_column(String(1024), default=None)
+    logs_url: Mapped[str | None] = mapped_column(String(1024), default=None)
+    error: Mapped[str | None] = mapped_column(Text, default=None)
+    #: What the user pays for a build on Vivid's account, in the smallest
+    #: unit of `currency`; 0 on their own account.
+    price: Mapped[int] = mapped_column(Integer, default=0)
+    currency: Mapped[str] = mapped_column(String(3), default="NGN")
+    #: none | charged | refunded (a failed or cancelled build is not paid for)
+    charge: Mapped[str] = mapped_column(String(10), default="none")
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_now)
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), default=_now, onupdate=_now)
+    finished_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), default=None)
+
+
 class BuilderUsageEvent(Base):
     """One metered thing: a model call, a sandbox session, a stored
     snapshot, a Supabase project. Billing is built on these later."""
@@ -389,7 +438,7 @@ class BuilderUsageEvent(Base):
     id: Mapped[str] = mapped_column(String(36), primary_key=True, default=_uuid)
     project_id: Mapped[str] = mapped_column(
         ForeignKey("builder_projects.id", ondelete="CASCADE"), index=True)
-    #: model | sandbox | storage | supabase
+    #: model | sandbox | storage | supabase | app_build
     kind: Mapped[str] = mapped_column(String(16), index=True)
     quantity: Mapped[float] = mapped_column(Numeric(20, 6), default=0)
     #: tokens | seconds | bytes | projects

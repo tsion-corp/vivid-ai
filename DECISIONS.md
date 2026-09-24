@@ -749,3 +749,24 @@ pins that.
 - Legacy fixes alongside: `published_at` backfilled from each project's
   latest live publish; `/publish` falls back to the latest snapshot when
   `current_snapshot_id` was never set, instead of a wrong nothing_to_publish.
+
+## 21. Decane sign-in for the apps the builder makes (2026-09-24)
+
+- Built to llms-decane.txt. Vivid's organization token
+  (DECANE_PARTNER_TOKEN) provisions one Decane client per builder project,
+  external_ref = project id, so each app has its own user pool and the user
+  connects nothing: a per-project toggle like the chain, not a connector
+  row. `POST/DELETE /builder/projects/{id}/auth`; `auth_provider`,
+  `decane_app_id` on the project; key, key id and ref as project secrets;
+  `.env` gets VITE_DECANE_APP_ID and VITE_DECANE_API_KEY; the auth skill
+  (decane-connect-kit, Google and email codes, identity only) rides every
+  turn and overrides the app-logic skill's "Supabase auth only".
+- Origins: the key allows the published host, the current preview and the
+  previous one. Synced when a sandbox starts (once per sandbox per
+  process, retried if the PATCH failed) and after a publish goes live,
+  which also moves the Google callback to the published host. The preview
+  hosts live in a fourth secret, DECANE_CLIENT_HOSTS, since Connect only
+  replaces the allowlist and never reports order.
+- A 201 whose key cannot be stored is revoked before answering; a 200
+  alreadyExisted mints a new key. Disable revokes the key and keeps the
+  client (no un-archive); project delete deprovisions, best effort.

@@ -1,0 +1,328 @@
+# Vivid Builder: Decane as an auth connector
+
+This file is for an agent adding Decane sign-in to the apps the builder makes.
+It says what to build in this backend (vivid-backend), in what order, and the
+exact calls to Decane. It is grounded in this repo's source and in Decane's
+published specs, not in either's prose:
+
+  Decane Connect API (provisioning)   https://kit.decane.app/llms-connect.txt
+  Browser SDK the generated app uses  https://kit.decane.app/llms.txt
+  Token verification on a server      https://kit.decane.app/llms-node.txt
+
+Read llms.txt in this directory first for the builder's conventions (routes,
+turns, connectors, publish). Nothing here changes them.
+
+------------------------------------------------------------------------
+## 0. The model
+
+Vivid is the organization. Each app the builder makes that needs sign-in gets
+its own Decane project and API key, provisioned from this backend with one
+organization token. The generated app signs its users in with the Decane
+browser SDK against that key. Vivid is never in the auth path of the app's
+users and never sees their sessions.
+
+    Vivid (one org token, DECANE_PARTNER_TOKEN)
+      └── builder project A  →  Decane client A  →  key A  →  A's users
+      └── builder project B  →  Decane client B  →  key B  →  B's users
+
+One Decane project per builder project is not a preference: Decane keys
+end-user rows on (project, subject), so the project is the isolation
+boundary. Two builder projects sharing one Decane project would share one
+user pool. Extra keys inside a client are for environments and domains, never
+for separating apps.
+
+Two Decane credentials exist in this backend and must not be confused:
+
+  DECANE_APP_ID / DECANE_VERIFICATION_KEY   Vivid's OWN sign-in (app/services/decane.py,
+                                            POST /auth/decane). Already there. Untouched.
+  DECANE_PARTNER_TOKEN                      the organization token, dck_org_…, new.
+                                            Server-only. Provisions clients. Never
+                                            reaches a browser or a sandbox.
+
+------------------------------------------------------------------------
+## 1. How it differs from the existing connectors
+
+Supabase, Paystack and Google Maps are the USER's accounts: a row in
+`connectors` per (user, provider), pasted or OAuth'd in, then linked per
+project. Decane is VIVID's account, offered as a platform feature. So:
+
+  - no POST /connectors {provider:"decane"}; no `connectors` row; nothing in
+    app/services/connectors/PROVIDERS
+  - it is a per-project toggle like the chain feature
+    (POST/DELETE /builder/projects/{id}/chain): enabling it provisions
+    something on Vivid's side, stores the result under the project, and the
+    app's .env carries the public values from the next turn
+  - the one credential is a deployment setting, reported by /health as a
+    boolean, exactly like `secrets` and `publish`
+
+Read `enable_chain` / `_enable_chain` / `disable_chain` in
+app/api/routes/builder.py before writing anything; this is that shape.
+
+------------------------------------------------------------------------
+## 2. Endpoints to add
+
+  POST   /builder/projects/{id}/auth      -> Project (auth_provider "decane")
+  DELETE /builder/projects/{id}/auth      -> Project (auth_provider "none")
+
+Both under the same ownership check (`_owned`) and error style (`APIError`)
+as the routes beside them. ProjectOut gains:
+
+  auth_provider: str = "none"          # "none" | "decane"
+  decane_app_id: str | None = None     # public; the SDK's appId
+
+Add both lines to the endpoint index and a section "9c. Decane sign-in" in
+llms.txt, next to 9b, so the frontend developer sees them.
+
+------------------------------------------------------------------------
+## 3. Storage
+
+builder_projects, two columns, added the way this repo adds columns
+(app/db/session.py, `ALTER TABLE ... ADD COLUMN IF NOT EXISTS`, since
+create_all never alters):
+
+  auth_provider   VARCHAR(16) NOT NULL DEFAULT 'none'
+  decane_app_id   VARCHAR(36)
+
+Project secrets (app/builder/secrets.py, Fernet, per project), three keys:
+
+  DECANE_CLIENT_API_KEY   the dck_live_… key. Decane shows it ONCE; there is
+                          no read-back. Store it in the same request that
+                          minted it, before anything else can fail.
+  DECANE_CLIENT_KEY_ID    the key's id, needed to PATCH its origins later.
+  DECANE_CLIENT_REF       the external_ref used (see 4); lets teardown find
+                          the client without the app id.
+
+The API key is browser-public by design (it is authorised by its origin
+allowlist, not by secrecy), which is why it may go into the app's .env like
+VITE_PAYSTACK_PUBLIC_KEY does. It still lives in secrets at rest, not in a
+column, for the same reason PAYSTACK_PUBLIC_KEY does.
+
+Refuse to enable when `secrets.configured()` is false, with the same
+503 not_configured the other features raise.
+
+------------------------------------------------------------------------
+## 4. The Decane calls (app/builder/decane_connect.py, new)
+
+Base: `{DECANE_CONNECT_BASE}/connect/v1`, default https://backend.decane.app.
+Every call: `Authorization: Bearer {DECANE_PARTNER_TOKEN}`, JSON body, the
+shared httpx client (`app.services.models_gateway.http.client()`), a timeout.
+No CORS on that surface, by design: it is only ever called from here.
+
+`configured()` -> bool: the token is set. Reported in /health's builder
+block as `"decane_connect": decane_connect.configured()`.
+
+### provision(project) — on POST /auth
+
+    POST /clients
+    {
+      "external_ref":    "<builder project id>",         # [A-Za-z0-9._:-]{1,128}; the uuid fits
+      "name":            "<project name>",
+      "allowed_origins": ["<current preview host>", "<published host if any>"],
+      "callback_url":    "https://<published host or preview host>/auth/callback"
+    }
+
+  201 -> { client: {appId, name, clientRef, createdAt, archived},
+           apiKey: {id, key, keyPrefix} }
+         store appId in the column; key, id, ref in secrets; set auth_provider.
+
+  200 -> { client, alreadyExisted: true, apiKey: null }
+         The client exists (a retry after a timeout, or a re-enable). The
+         original key is unrecoverable, so mint one:
+           POST /clients/{ref}/keys {name:"vivid", allowed_origins:[...], callback_url}
+           -> 201 {id, key, keyPrefix}
+         and store as above. This is the ONLY correct response to
+         alreadyExisted; never treat it as an error, never assume the old
+         secret is still around.
+
+  400 BAD_REQUEST     -> 400 bad_request with Decane's message
+  401 UNAUTHORIZED    -> 503 not_configured ("Decane sign-in is not configured."):
+                         the org token is missing, revoked or expired — an
+                         operator problem, never the user's
+  403 QUOTA_EXCEEDED  -> 503 not_configured, message from Decane
+  network / 5xx       -> 502 upstream_error, like the faucet route
+
+  Provision and store are one unit: if storing the key fails after a 201,
+  revoke that key (DELETE /clients/{ref}/keys/{id}) before raising, or the
+  next attempt lands on alreadyExisted and mints a second live key nobody
+  recorded.
+
+  allowed_origins may not be empty — Decane refuses it — and there is
+  always at least the preview host, so build the list before the call.
+
+### sync_origins(project, hosts) — see 5
+
+    PATCH /clients/{ref}/keys/{key_id}
+    { "allowed_origins": [...every host that should still work...],
+      "callback_url": "https://<primary host>/auth/callback" }
+    -> 200 {ok: true}; the new allowlist is in force when this returns.
+
+  `allowed_origins` is REPLACED, not appended. Send the whole set.
+
+### deprovision(project) — see 7
+
+    DELETE /clients/{ref}/keys/{key_id}   -> 200 {ok:true}          (disable)
+    DELETE /clients/{ref}                 -> 200 {ok, revokedKeys}  (project deleted)
+
+`:ref` accepts the external_ref or the appId; use the external_ref, which is
+the builder project id, so teardown works even if the column is empty.
+
+------------------------------------------------------------------------
+## 5. Origins: the part that is specific to a builder
+
+Decane matches origins on hostname only, exactly, no wildcard, and a key
+minted through Connect is `origin_policy: strict`: a request with no Origin
+is refused. So the key works only on hosts it was told about, and a builder
+has two kinds of host, one of which changes:
+
+  preview    https://<port>-<sandbox id>.e2b.app   (sandbox.preview_url(); new
+             on every sandbox, so every time a project is reopened)
+  published  https://<alias>.<CF_PAGES_PROJECT>.pages.dev
+             (app/builder/publish.py public_url; stable per project)
+
+Therefore:
+
+  1. When a sandbox comes up for a project with auth_provider "decane", PATCH
+     the key with the new preview host. The place is where the turn already
+     syncs .env into a fresh sandbox (`_sync_env` at turn start in
+     app/api/routes/builder.py); do it there, before the turn, and once per
+     sandbox, not per turn.
+  2. On publish (`POST /builder/projects/{id}/publish`), PATCH with the
+     published host added, and move callback_url to it.
+  3. Keep the set bounded and honest: the published host, the current
+     preview host, and the previous preview host (a tab may still be open).
+     Do not accumulate every sandbox the project ever had.
+  4. A PATCH failure must not fail the turn or the publish: log it, keep
+     going. The app then answers 403 on sign-in until the next sync; the
+     skill (6) tells the model what that error means so it does not
+     "fix" the app.
+
+callback_url is a single value on the key and is only used by Google
+sign-in. Email and phone codes need none. Consequence: Google sign-in works
+on one host at a time — the preview host during building, the published
+host after publish. Say so in the skill; do not try to work around it with
+two keys unless a user asks for Google on both.
+
+------------------------------------------------------------------------
+## 6. What the generated app gets
+
+.env (from `_env_for`, when auth_provider == "decane" and both values exist):
+
+  VITE_DECANE_APP_ID=<decane_app_id>
+  VITE_DECANE_API_KEY=<DECANE_CLIENT_API_KEY>
+
+A skill, skills/auth/SKILL.md, with frontmatter like the others
+(`name: auth`, a `description` that says when it applies), wired through
+`auth_block(provider)` in app/builder/skills.py and added to `ui_block` the
+way `maps_block` is, so it rides with every turn of a project that has it.
+What the skill must tell the model (the SDK spec is the source; keep the
+skill to the builder's rules):
+
+  - `npm install decane-connect-kit` (React 18+, peer). Wrap the app once:
+
+        <DecaneKit config={{
+          appId: import.meta.env.VITE_DECANE_APP_ID,
+          mode: "social",
+          social: { apiKey: import.meta.env.VITE_DECANE_API_KEY,
+                    authMethods: ["google", "email"] },
+        }}>
+
+    `useSocialAuth()` gives `isConnected`, `signInWithGoogle`,
+    `sendEmailCode` / `confirmEmailCode`, `profile`, `addresses`,
+    `sessionExpiresAt` and `disconnect()` (sign out); `useSocialWallet()`
+    gives `getAccessToken()`. The stable identity is the `uid` claim of the
+    access token (Decane's user id); key every user-owned row on it, never on
+    an email. Sessions last two hours with no refresh: when `sessionExpiresAt`
+    passes, the kit drops the session and the app must ask to sign in again.
+  - Identity only unless the user asked for wallets: no wallet UI, no
+    balance screens; ignore `addresses` and `hasShare`.
+  - With a Supabase backend (`fullstack`): Decane is the identity,
+    Supabase stays the data. Rows carry `decane_user_id`; RLS keys on it via
+    an edge function that verifies the Decane token against
+    `{DECANE_API_BASE}/.well-known/jwks.json` (ES256, `project_id` claim ==
+    VITE_DECANE_APP_ID). The fullstack skill's "Supabase auth only" rule is
+    superseded for these projects; say which rule wins, in the skill.
+  - Without a backend: sign-in gates screens and personalises; nothing is
+    stored server-side.
+  - `403` from Decane on sign-in from the preview means the origin is not
+    on the key yet (5). It is not a bug in the app; do not change code.
+  - Google sign-in redirects to the key's callback_url (5); the app must
+    serve `/auth/callback` (the kit handles the return; the route just has
+    to exist in the SPA router).
+  - Passkeys are bound to the hostname: one registered on the preview does
+    not carry to the published site. Do not promise otherwise in copy.
+  - Final reply: tell the user sign-in is live on the published domain, and
+    where users are visible (Decane has no per-user dashboard for the
+    builder's user; Vivid may show a count later — not in this change).
+
+------------------------------------------------------------------------
+## 7. Disable, delete, re-enable
+
+  DELETE /builder/projects/{id}/auth
+      revoke the key (DELETE /clients/{ref}/keys/{key_id}), delete the three
+      secrets, auth_provider = "none", keep decane_app_id (it is public and
+      harmless, and re-enable finds the same client). There is no
+      un-archive in Connect, so do NOT archive the client here.
+
+  re-enable (POST /auth again)
+      POST /clients answers 200 alreadyExisted -> mint a key (4). The users
+      the app already had are still there: same client, same user pool.
+
+  project deleted (DELETE /builder/projects/{id})
+      DELETE /clients/{ref}: archives the client and revokes every key.
+      Decane has no hard-delete, deliberately (end users' wallet shares);
+      archive is the strongest operation and it is enough.
+
+  Every teardown call is best-effort: a Decane outage must not stop a
+  project being deleted. Log and continue.
+
+------------------------------------------------------------------------
+## 8. Configuration
+
+app/core/config.py:
+
+  DECANE_PARTNER_TOKEN: str = ""                       # dck_org_…; server-only
+  DECANE_CONNECT_BASE: str = "https://backend.decane.app"
+  DECANE_CONNECT_TIMEOUT: float = 10.0
+
+deploy/app.env.example, under the existing "Decane auth, if in use" block:
+
+  # Decane sign-in for the apps the builder makes (organization token from
+  # dashboard.decane.app -> Organization). Server-only; never in an app.
+  DECANE_PARTNER_TOKEN=
+
+Getting the token: dashboard.decane.app -> Organization -> Generate token.
+Shown once. Scopes needed: clients:read, clients:write, keys:write (all
+three; narrowing any of them breaks 4, 5 or 7).
+
+------------------------------------------------------------------------
+## 9. Tests (tests/test_builder_auth.py)
+
+Follow tests/test_builder_chain.py: the route tests run against the app
+with the Decane client faked (monkeypatch `decane_connect` functions, or
+an httpx MockTransport on the base URL). Cover:
+
+  - POST /auth with no token configured -> 503 not_configured, no DB change
+  - POST /auth 201 -> column set, three secrets stored, ProjectOut shows
+    auth_provider "decane" and decane_app_id; .env carries both VITE_ values
+  - POST /auth 200 alreadyExisted -> a key is minted via POST keys and stored
+  - POST /auth 201 then secret store raises -> the minted key is revoked
+  - a sandbox start on an enabled project PATCHes the preview host; a PATCH
+    failure does not fail the turn
+  - publish PATCHes with the published host and moves callback_url
+  - DELETE /auth revokes the key and clears secrets, keeps decane_app_id
+  - project delete calls DELETE /clients/{ref}; its failure does not block
+  - 401 / 403 QUOTA_EXCEEDED / network from Decane map to 503 / 503 / 502
+
+`pytest -q` must stay green; `GET /health` on a deployment with the token
+shows `builder.decane_connect: true`.
+
+------------------------------------------------------------------------
+## 10. Order of work
+
+  1. config + decane_connect.py (client with the five calls, typed errors)
+  2. models + session.py ALTER + ProjectOut
+  3. routes: POST/DELETE /auth; _env_for; project delete hook
+  4. origins sync at sandbox start and at publish
+  5. skills/auth/SKILL.md + skills.py wiring
+  6. health, app.env.example, llms.txt (index + 9c)
+  7. tests

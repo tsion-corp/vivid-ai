@@ -145,6 +145,20 @@ with public/favicon.png present; the footer has the real business details; the c
 skill's checks. list_files and read what you need, then build everything that is missing or thin \
 now, in this turn. Do not shorten anything. When it is complete, reply to the user in one or \
 two sentences about what the app now contains."""
+MOBILE_COMPLETION_BRIEF = """Before we show this to the user, review the app against the spec, \
+screen by screen. Check: every screen in the spec exists as a route under app/ and is reachable \
+(a tab in app/(tabs)/_layout.tsx with a clear icon and label, or a link from a screen that is); \
+any admin or owner area sits behind a sign-in and is NOT a customer tab; each list is a FlatList \
+with at least eight realistic seeded items with names, prices in the spec's currency, short \
+descriptions and an image (generate_image for anything without an upload); every image the \
+code requires exists under assets/ (list_files it; generate or repoint any that do not, a \
+missing require crashes the app); every screen has loading and empty states, keeps its content \
+inside the safe area, and scrolls when it is taller than a phone; forms work end to end and move \
+out of the keyboard's way; touch targets are at least 44pt; app.json has the real app name; the \
+copy passes the copy skill's checks; nothing uses DOM elements, window or document. list_files \
+and read what you need, then build everything that is missing or thin now, in this turn. Do not \
+shorten anything. When it is complete, reply to the user in one or two sentences about what the \
+app now contains."""
 #: Added to the completeness brief when the project has a Supabase backend:
 #: the app-logic skill's definition of done, checked, not assumed.
 CHAIN_BRIEF = """ This project is on-chain, so also check: every contract the spec needs is deployed \
@@ -236,7 +250,8 @@ class TurnRunner:
                  backend_env: bool = False,
                  recipe: str | None = None,
                  maps: str | None = None,
-                 chain: "tools.Chain | None" = None) -> None:
+                 chain: "tools.Chain | None" = None,
+                 auth: str | None = None) -> None:
         self.sandbox = sandbox
         self.backend = backend
         #: The app has a Supabase client (keys pasted) but this turn has no
@@ -246,6 +261,8 @@ class TurnRunner:
         self.recipe = recipe
         #: "google" when the project has a Maps key; adds the maps skill.
         self.maps = maps
+        #: "decane" when the app has its own sign-in; adds the auth skill.
+        self.auth = auth
         #: The chain and deployer when the project is on-chain; adds the
         #: deploy tools and the web3 skill.
         self.chain = chain
@@ -319,6 +336,10 @@ class TurnRunner:
         yield stream.finish()
 
     @property
+    def _mobile(self) -> bool:
+        return self.sandbox.target.is_mobile
+
+    @property
     def _app_logic(self) -> bool:
         """The app-logic skill and its done check apply only to a project
         the user asked to be full-stack, and only once a backend is linked
@@ -348,10 +369,11 @@ class TurnRunner:
                                                     payments=self.payments,
                                                     backend=self._app_logic,
                                                     recipe=self.recipe, maps=self.maps,
-                                                    chain=self.chain is not None),
+                                                    chain=self.chain is not None,
+                                                    auth=self.auth, mobile=self._mobile),
                          fullstack=self.fullstack, backend_env=self.backend_env,
                          functions=self.backend is None or self.backend.can_functions,
-                         chain=self.chain)}]
+                         chain=self.chain, mobile=self._mobile)}]
         messages += self.history
         messages.append({"role": "user", "content": self.user_text})
         if self._carry:
@@ -408,7 +430,8 @@ class TurnRunner:
                             "broken": bool(screenshots.last_report and screenshots.last_report.broken),
                             "screenshots": [{"name": s.name, "width": s.width, "url": s.url}
                                             for s in shots]})
-                        messages.append(screenshots.critique_message(shots, screenshots.last_report))
+                        messages.append(screenshots.critique_message(shots, screenshots.last_report,
+                                                                    mobile=self._mobile))
                         budget = step + settings.BUILDER_CRITIQUE_STEPS
                         self.result.reason = ANSWERED
                         if self.keepalive is not None:
@@ -468,7 +491,8 @@ class TurnRunner:
                     yield stream.data("status", {"text": "Checking the app against the spec"})
                     yield stream.data("review", {"kind": "completeness",
                                                  "round": self.result.completion_rounds})
-                    brief = COMPLETION_BRIEF + (FULLSTACK_BRIEF if self._app_logic else "") \
+                    brief = (MOBILE_COMPLETION_BRIEF if self._mobile else COMPLETION_BRIEF) \
+                        + (FULLSTACK_BRIEF if self._app_logic else "") \
                         + (CHAIN_BRIEF if self.chain is not None else "")
                     messages.append({"role": "user", "content": brief})
                     budget = step + settings.BUILDER_COMPLETION_STEPS
@@ -483,7 +507,9 @@ class TurnRunner:
                     # The page is whole: look at it, then keep going with a
                     # few extra steps for the fixes.
                     critique_left -= 1
-                    yield stream.data("status", {"text": "Looking at the page on desktop and phone"})
+                    yield stream.data("status", {"text": "Looking at the app on iPhone and Android"
+                                                  if self._mobile else
+                                                  "Looking at the page on desktop and phone"})
                     shots = await screenshots.capture(
                         self.sandbox, self.project_id or "project",
                         f"{self.message_id}-r{self.result.critique_rounds + 1}")
@@ -496,7 +522,8 @@ class TurnRunner:
                             "broken": bool(screenshots.last_report and screenshots.last_report.broken),
                             "screenshots": [{"name": s.name, "width": s.width, "url": s.url}
                                             for s in shots]})
-                        messages.append(screenshots.critique_message(shots, screenshots.last_report))
+                        messages.append(screenshots.critique_message(shots, screenshots.last_report,
+                                                                    mobile=self._mobile))
                         budget = step + settings.BUILDER_CRITIQUE_STEPS
                         if self.keepalive is not None:
                             await self.keepalive()

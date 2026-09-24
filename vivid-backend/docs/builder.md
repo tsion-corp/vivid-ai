@@ -11,7 +11,7 @@ All routes take the usual bearer token (a session or a `vivid_` key) and
 only ever see the caller's own projects.
 
 ```
-POST   /v1/builder/projects                 {name?, skip_plan?} -> project (mode: plan)
+POST   /v1/builder/projects                 {name?, skip_plan?, target?} -> project (mode: plan)
 POST   /v1/builder/projects/{id}/build      leave plan mode    -> project (mode: build)
 GET    /v1/builder/projects                                    -> [project]
 GET    /v1/builder/projects/{id}                               -> project
@@ -20,12 +20,17 @@ DELETE /v1/builder/projects/{id}            kills the sandbox too
 GET    /v1/builder/projects/{id}/messages                      -> [message]
 POST   /v1/builder/projects/{id}/chat       {text}             -> event stream
 POST   /v1/builder/projects/{id}/cancel                        -> {cancelled}
-GET    /v1/builder/projects/{id}/preview                       -> {url, sandbox_id, driver}
+GET    /v1/builder/projects/{id}/preview                       -> {url, sandbox_id, driver, target, device_url}
 GET    /v1/builder/projects/{id}/files                         -> {files: [path]}
 GET    /v1/builder/projects/{id}/files/{path}                  -> {path, content}
 GET    /v1/builder/projects/{id}/snapshots                     -> [snapshot]
 POST   /v1/builder/projects/{id}/snapshots/{seq}/restore       -> snapshot
 GET    /v1/builder/projects/{id}/usage                         -> usage totals
+POST   /v1/builder/projects/{id}/builds     {platform, profile?, account?} -> 202 build (mobile)
+GET    /v1/builder/projects/{id}/builds                        -> [build], newest first
+GET    /v1/builder/projects/{id}/builds/{build_id}             -> build (refreshed from Expo)
+POST   /v1/builder/projects/{id}/builds/{build_id}/cancel      -> build
+GET    /v1/builder/app-builds/options                          -> accounts, prices, what is left
 ```
 
 Errors use the backend's envelope (`{"error": {"code", "message"}}`). Codes a
@@ -281,6 +286,58 @@ the project's `published_url` is set. A failed build puts the compiler's
 last lines in `error`. When a custom domain fronts the Pages project,
 `BUILDER_PUBLISH_HOST` changes the pattern and nothing else moves.
 
+## Mobile apps (iOS and Android)
+
+A project is a website or a mobile app, chosen at creation (`target: "web"`
+or `"mobile"`, default web) and fixed for life; `app/builder/targets.py`
+holds everything that differs. A mobile project is an Expo app (React
+Native, Expo Router, NativeWind) in the `vivid-expo` sandbox template:
+
+- Plan mode writes a spec with Screens and Device features instead of Pages,
+  and picks a screen recipe from `skills/mobile/references/recipes`.
+- Build turns get the mobile prompt and the mobile skill (method, component
+  kit, navigation, device APIs, motion, fonts, state or Supabase, the recipe)
+  instead of the web design and motion skills.
+- The model may only add packages Expo Go can run (`npx expo install`; the
+  Expo SDK and pure JavaScript). Other native modules are refused with the
+  reason, so the device preview never breaks.
+- Uploads live at `assets/uploads/<name>` and are used with `require()`.
+  A generated logo becomes the app icon.
+- `GET .../preview` returns the web preview (react-native-web) as `url`,
+  and `device_url` (`exps://…`) for Expo Go, shown to the user as a QR code.
+  It is null for a local sandbox, which a phone cannot reach.
+- Payments, maps, on-chain and Decane sign-in are web only for now: their
+  routes answer 400 `not_supported` for a mobile project, and so does
+  `/publish`. A mobile project ships through builds.
+
+### Builds
+
+```
+POST /v1/builder/projects/{id}/builds   {platform: android|ios, profile: preview|production, account: auto|vivid|user}
+```
+
+`preview` is an Android APK to install directly (or an iOS simulator build);
+`production` is a store build (an Android AAB; iOS only on the user's own
+account, where their Apple credentials live). The row comes back `starting`.
+Poll `GET .../builds/{build_id}` until `finished` (with `artifact_url`),
+`failed` (with `error`) or `canceled`; each GET refreshes a build in flight
+from Expo, and a background poller does the same every `EAS_POLL_SECONDS`.
+
+The upload to EAS runs in a throwaway sandbox: the snapshot is restored,
+`app.config.*` removed, app.json given the store ids (`app.vivid.<name><id>`,
+fixed at the first build) and the Expo account, then `eas init` (first
+build on that account) and `eas build --no-wait` run with the token in their
+own environment only. The token never enters the project's sandbox.
+
+Accounts: `vivid` builds on Vivid's Expo account (`EXPO_TOKEN`,
+`EXPO_OWNER`) and is charged: `price` and `currency` are on the row,
+`charge` is `charged`, and a build that fails or is cancelled is
+`refunded`. At most `EAS_VIVID_BUILDS_PER_MONTH` charged builds per user a
+month; past that the POST answers 402 `payment_required`. `user` builds on
+the user's own Expo account, connected as the `expo` connector
+(`POST /v1/connectors {provider: "expo", token}`), and costs nothing here.
+`auto` picks the user's account when it is connected.
+
 ## Versions
 
 Every turn that changes a file ends with a snapshot: a git commit in the
@@ -322,6 +379,10 @@ SUPABASE_OAUTH_RETURN_URL     where the browser goes after connecting (default: 
 PUBLIC_BASE_URL               this backend's public origin
 CF_API_TOKEN (Cloudflare Pages: Edit), CF_ACCOUNT_ID, CF_PAGES_PROJECT   publishing
 BUILDER_PUBLISH_HOST          default {alias}.{project}.pages.dev
+E2B_MOBILE_TEMPLATE=vivid-expo, BUILDER_MOBILE_TEMPLATE_DIR   mobile projects' template
+EXPO_TOKEN, EXPO_OWNER        Vivid's Expo account for charged builds (a robot token)
+EAS_BUILD_PRICE_ANDROID, EAS_BUILD_PRICE_IOS, EAS_BUILD_CURRENCY   price per build
+EAS_VIVID_BUILDS_PER_MONTH    charged builds per user per month (default 5)
 ```
 
 A turn is capped at `BUILDER_MAX_STEPS` (20) tool calls. A model call whose
@@ -341,6 +402,10 @@ the dev server runs on port 5173. On E2B it is a custom template built with
 (`SANDBOX_DRIVER=local`) the same directory is copied per project and
 `npm run dev` started as a child process; run `npm install` in the template
 directory once first.
+
+Mobile projects use `sandbox-templates/vivid-expo` (Expo SDK 57, Metro on
+port 8081, serving the web preview and Expo Go). Build it with its
+`template.py`; for the local driver run its `setup.sh` once.
 
 ## Evaluating models
 

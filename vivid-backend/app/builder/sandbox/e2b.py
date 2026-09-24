@@ -16,6 +16,7 @@ import httpx
 from e2b import AsyncSandbox, CommandExitException, TimeoutException
 from e2b.exceptions import NotFoundException, SandboxException
 
+from app.builder import targets as targets_mod
 from app.builder.sandbox.base import RunResult, Sandbox, SandboxError, safe_path
 from app.core.config import settings
 
@@ -34,21 +35,26 @@ class E2BSandbox(Sandbox):
     driver = "e2b"
     root = APP_ROOT
 
-    def __init__(self, sb: AsyncSandbox) -> None:
+    def __init__(self, sb: AsyncSandbox,
+                 target: targets_mod.Target | None = None) -> None:
         self._sb = sb
         self.id = sb.sandbox_id
+        if target is not None:
+            self.target = target
 
     @classmethod
-    async def create(cls, project_id: str) -> "E2BSandbox":
+    async def create(cls, project_id: str,
+                     target: targets_mod.Target | None = None) -> "E2BSandbox":
+        target = target or targets_mod.get(targets_mod.WEB)
         last: Exception | None = None
         for attempt in (1, 2):
             try:
                 sb = await AsyncSandbox.create(
-                    template=settings.E2B_TEMPLATE,
+                    template=target.e2b_template,
                     timeout=settings.BUILDER_SANDBOX_TIMEOUT_SECONDS,
                     metadata={"project_id": project_id},
                     **_api())
-                return cls(sb)
+                return cls(sb, target)
             except httpx.HTTPError as e:
                 # A dropped connection to the control plane, not a refusal;
                 # one more try before giving up.
@@ -60,7 +66,8 @@ class E2BSandbox(Sandbox):
         raise SandboxError(f"could not create sandbox: {last}") from last
 
     @classmethod
-    async def connect(cls, sandbox_id: str) -> "E2BSandbox | None":
+    async def connect(cls, sandbox_id: str,
+                      target: targets_mod.Target | None = None) -> "E2BSandbox | None":
         """The running sandbox with this id, or None if it is gone."""
         try:
             sb = await AsyncSandbox.connect(
@@ -72,7 +79,7 @@ class E2BSandbox(Sandbox):
             return None
         if not await sb.is_running():
             return None
-        return cls(sb)
+        return cls(sb, target)
 
     # --------------------------------------------------------------- files
     def _abs(self, path: str) -> str:
@@ -120,11 +127,12 @@ class E2BSandbox(Sandbox):
             raise SandboxError(f"write failed: {e}") from e
 
     # ------------------------------------------------------------ commands
-    async def run(self, cmd: str, timeout: float = 60) -> RunResult:
+    async def run(self, cmd: str, timeout: float = 60,
+                  env: dict[str, str] | None = None) -> RunResult:
         try:
             result = await self._sb.commands.run(cmd, cwd=APP_ROOT, timeout=timeout,
                                                  envs={"CI": "1", "NO_COLOR": "1",
-                                                       "FORCE_COLOR": "0"})
+                                                       "FORCE_COLOR": "0", **(env or {})})
         except CommandExitException as e:
             return RunResult(e.exit_code, e.stdout, e.stderr)
         except TimeoutException:
@@ -136,7 +144,7 @@ class E2BSandbox(Sandbox):
 
     # ------------------------------------------------------------ lifetime
     def preview_url(self) -> str:
-        return f"https://{self._sb.get_host(settings.BUILDER_DEV_PORT)}"
+        return f"https://{self._sb.get_host(self.target.port)}"
 
     async def touch(self) -> None:
         try:

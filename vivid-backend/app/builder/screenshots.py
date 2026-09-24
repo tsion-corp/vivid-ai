@@ -17,7 +17,6 @@ from app.core.config import settings
 
 log = logging.getLogger("vivid.builder.screenshots")
 
-SHOTS = (("desktop", 1280), ("mobile", 390))
 
 
 @dataclass
@@ -76,13 +75,14 @@ async def capture(sandbox: Sandbox, project_id: str, label: str,
     last_report = None
     out_dir = f"/tmp/vivid-shots-{sandbox.id}"
     result = await sandbox.run(
-        f"rm -rf {out_dir} && node scripts/screenshot.mjs http://localhost:{settings.BUILDER_DEV_PORT} {out_dir}",
-        timeout=settings.BUILDER_SCREENSHOT_TIMEOUT)
+        f"rm -rf {out_dir} && node scripts/screenshot.mjs http://localhost:{sandbox.target.port} {out_dir}",
+        timeout=(settings.BUILDER_MOBILE_SCREENSHOT_TIMEOUT if sandbox.target.is_mobile
+                 else settings.BUILDER_SCREENSHOT_TIMEOUT))
     if not result.ok:
         log.warning("screenshot failed for %s: %s", project_id, result.output[-300:])
         return []
     shots: list[Shot] = []
-    for name, width in SHOTS:
+    for name, width in sandbox.target.shots:
         try:
             data = await sandbox.read_bytes(f"{out_dir}/{name}.jpg")
         except (FileNotFoundError, SandboxError) as e:
@@ -121,18 +121,32 @@ genuinely good on both screens, say so in one line and do not change anything.
 Reply to the user afterwards in one or two sentences about what you adjusted."""
 
 
+MOBILE_CRITIQUE_BRIEF = """Here is your app as a user sees it, on an iPhone-sized screen (390pt) \
+and an Android-sized one (412dp), rendered through the web preview. Look at both carefully.
+
+List the problems you can see, most important first, at most five: content under the status \
+bar or the home indicator, text clipped or overflowing, tap targets smaller than 44pt, a tab \
+bar without clear icons and labels, wrong hierarchy (what should read first does not), uneven \
+spacing, images without a fixed aspect ratio, low contrast, an empty-looking screen with no \
+empty state, anything that still says placeholder. Then fix them with edit_file. If the app \
+is genuinely good on both screens, say so in one line and do not change anything.
+
+Reply to the user afterwards in one or two sentences about what you adjusted."""
+
+
 BROKEN_BRIEF = """Before any design critique: the page is BROKEN. Fix the runtime error first: read \
 the errors below, use get_dev_server_logs and read_file, correct the code, and make sure the \
 app renders on both screens. Then continue with the design review.\n\n"""
 
 
-def critique_message(shots: list[Shot], report: PageReport | None = None) -> dict:
+def critique_message(shots: list[Shot], report: PageReport | None = None,
+                     mobile: bool = False) -> dict:
     """The user-role message that shows the model its own page. A broken
     page leads with the errors, so the model fixes the crash before the
     spacing."""
-    brief = CRITIQUE_BRIEF
+    brief = MOBILE_CRITIQUE_BRIEF if mobile else CRITIQUE_BRIEF
     if report is not None and report.broken:
-        brief = BROKEN_BRIEF + report.summary() + "\n\n" + CRITIQUE_BRIEF
+        brief = BROKEN_BRIEF + report.summary() + "\n\n" + brief
     parts: list[dict] = [{"type": "text", "text": brief}]
     for shot in shots:
         parts.append({"type": "text", "text": f"[{shot.name}, {shot.width}px wide]"})

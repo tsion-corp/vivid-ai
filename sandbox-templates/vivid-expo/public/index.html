@@ -1,0 +1,59 @@
+<!DOCTYPE html>
+<html lang="%LANG_ISO_CODE%">
+  <head>
+    <meta charset="utf-8" />
+    <meta httpEquiv="X-UA-Compatible" content="IE=edge" />
+    <meta name="viewport" content="width=device-width, initial-scale=1, shrink-to-fit=no" />
+    <title>%WEB_TITLE%</title>
+    <!-- The `react-native-web` recommended style reset: https://necolas.github.io/react-native-web/docs/setup/#root-element -->
+    <style id="expo-reset">
+      /* These styles make the body full-height */
+      html,
+      body {
+        height: 100%;
+      }
+      /* These styles disable body scrolling if you are using <ScrollView> */
+      body {
+        overflow: hidden;
+      }
+      /* These styles make the root element full-height */
+      #root {
+        display: flex;
+        height: 100%;
+        flex: 1;
+      }
+    </style>
+  </head>
+
+  <body>
+    <!-- The web preview's page (the app is a single-page app: web.output "single").
+         Phones never load it. The builder keeps its editor script between the
+         vivid:editor markers. -->
+    <noscript>
+      You need to enable JavaScript to run this app.
+    </noscript>
+    <!-- The root element for your Expo app. -->
+    <div id="root"></div>
+    <!-- Uncaught errors go to the builder's preview pane (same reporter as the web template). -->
+    <script>
+      // The preview runs inside the Vivid builder's iframe on another origin.
+      // Relay runtime errors to the parent so the builder can show "Fix this".
+      (function () {
+        if (window.parent === window) return;
+        function relay(message, stack) {
+          try {
+            window.parent.postMessage(
+              { type: "vivid:error", message: String(message || "").slice(0, 500), stack: String(stack || "").slice(0, 1500) },
+              "*"
+            );
+          } catch (_) {}
+        }
+        window.addEventListener("error", function (e) { relay(e.message, e.error && e.error.stack); });
+        window.addEventListener("unhandledrejection", function (e) {
+          var r = e.reason || {};
+          relay(r.message || String(r), r.stack);
+        });
+      })();
+    </script>
+  </body>
+</html>

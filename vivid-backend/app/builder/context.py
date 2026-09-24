@@ -8,6 +8,7 @@ turn cheap: the whole block is resent on every step.
 from app.builder.sandbox.base import Sandbox, SandboxError
 from app.core.config import settings
 
+#: The web target's; each sandbox's target names its own (targets.py).
 KEY_FILES = ("src/App.tsx", "src/main.tsx", "package.json")
 
 #: The tree is capped separately so a project with hundreds of files still
@@ -29,8 +30,9 @@ async def build(sandbox: Sandbox, recent: list[str]) -> str:
     out = [f"## Files\n{tree}"]
     used = len(out[0])
 
+    key_files = sandbox.target.key_files
     wanted: list[str] = []
-    for path in list(KEY_FILES) + [p for p in recent if p not in KEY_FILES]:
+    for path in list(key_files) + [p for p in recent if p not in key_files]:
         if path in files and path not in wanted:
             wanted.append(path)
 

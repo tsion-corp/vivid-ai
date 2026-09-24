@@ -59,11 +59,24 @@ question with your default.
 Be concrete and specific to this idea; no generic filler, no marketing tone, under 450 words."""
 
 
+#: The same brief for an iOS and Android app: screens, not pages.
+MOBILE_META_PROMPT = (META_PROMPT
+                      .replace("a short idea for a web app", "a short idea for a mobile app "
+                               "(iOS and Android, built with Expo)")
+                      .replace("## Pages and flows\nEvery page a first version needs",
+                               "## Screens and flows\nThe tabs (two to five) and every screen "
+                               "a first version needs")
+                      .replace("(the browser only, or", "(on the phone only, or")
+                      .replace("hero image", "app icon, splash screen"))
+
+
 class Expansion:
     """Runs the meta-prompt as a streamed step; `text` holds the brief."""
 
-    def __init__(self, user_text: str, images: list[str] | None = None) -> None:
+    def __init__(self, user_text: str, images: list[str] | None = None,
+                 mobile: bool = False) -> None:
         self.user_text, self.images = user_text, images
+        self.mobile = mobile
         self.text = ""
         self.usage = None
 
@@ -73,7 +86,8 @@ class Expansion:
         if self.images:
             content = [{"type": "text", "text": self.user_text}] + [
                 {"type": "image_url", "image_url": {"url": u}} for u in self.images[:4]]
-        step = ModelStep([{"role": "system", "content": META_PROMPT},
+        step = ModelStep([{"role": "system",
+                           "content": MOBILE_META_PROMPT if self.mobile else META_PROMPT},
                           {"role": "user", "content": content}], [], endpoint)
         async for part in step.run():
             yield part

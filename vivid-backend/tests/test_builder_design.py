@@ -27,7 +27,7 @@ def env(monkeypatch):
 
 
 def test_recipes_come_from_disk_and_the_block_carries_the_chosen_one():
-    assert skills.available() == ["copy", "design", "fullstack", "maps", "motion", "payments", "web3"]
+    assert skills.available() == ["auth", "copy", "design", "fullstack", "maps", "mobile", "motion", "payments", "web3"]
     names = skills.recipe_names()
     assert len(names) >= 35 and names == sorted(names)
     for n in ("booking", "dashboard", "landing", "platform", "portfolio", "shop", "wallet", "restaurant",
@@ -96,7 +96,7 @@ def test_fullstack_skill_only_with_a_backend(monkeypatch):
 
 
 def test_copy_skill_rides_with_the_design_skill():
-    assert skills.available() == ["copy", "design", "fullstack", "maps", "motion", "payments", "web3"]
+    assert skills.available() == ["auth", "copy", "design", "fullstack", "maps", "mobile", "motion", "payments", "web3"]
     block = skills.ui_block("# Spec\nA salon booking app", "", recipe="booking")
     assert "## Design skill" in block and "## Copy skill" in block
     assert block.index("## Design skill") < block.index("## Copy skill")

@@ -12,7 +12,7 @@ import re
 from dataclasses import dataclass
 
 from app.builder.sandbox.base import PathError, Sandbox, SandboxError, safe_path
-from app.builder import chain as chain_mod
+from app.builder import chain as chain_mod, targets
 from app.builder.chain import Chain
 from app.builder.images import ImageError, ImageMaker
 from app.builder.supabase import Management, SupabaseError
@@ -211,6 +211,65 @@ BLOCKED = [
 
 _TS_ERROR = re.compile(r"error TS\d+")
 
+#: Third-party native modules that ship inside Expo Go. Anything named
+#: expo-* or @expo/* is part of the SDK; other react-native packages carry
+#: native code Expo Go does not have, and the app would crash on the phone.
+EXPO_GO_NATIVE = frozenset({
+    "react-native", "react-native-web", "react-dom",
+    "react-native-reanimated", "react-native-gesture-handler", "react-native-screens",
+    "react-native-safe-area-context", "react-native-svg", "react-native-maps",
+    "react-native-webview", "react-native-pager-view", "react-native-view-shot",
+    "react-native-worklets", "react-native-edge-to-edge", "react-native-keyboard-controller",
+    "@react-native-async-storage/async-storage", "@react-native-community/datetimepicker",
+    "@react-native-community/slider", "@react-native-community/netinfo",
+    "@react-native-picker/picker", "@react-native-masked-view/masked-view",
+    "@shopify/flash-list", "@shopify/react-native-skia", "lottie-react-native",
+    "@stripe/stripe-react-native", "react-native-get-random-values", "react-native-url-polyfill",
+    "nativewind", "react-native-css-interop",
+})
+#: react-native-* packages that are only JavaScript (on top of modules above).
+PURE_JS_RN = frozenset({
+    "react-native-qrcode-svg", "react-native-markdown-display", "react-native-calendars",
+    "react-native-toast-message", "react-native-element-dropdown", "react-native-modal",
+    "react-native-gifted-charts", "react-native-animatable", "react-native-render-html",
+    "react-native-swiper", "react-native-country-codes-picker", "react-native-otp-entry",
+    "react-native-confirmation-code-field", "react-native-uuid", "react-native-paper",
+})
+_NATIVE_HINT = re.compile(r"^(react-native-|@react-native|@react-native-community/|rn-)|"
+                          r"(-react-native|-native)$")
+_EXPO_INSTALL = re.compile(r"\bexpo\s+install\b(?P<args>[^;&|]*)")
+
+
+def _package_name(spec: str) -> str:
+    """`@scope/name@1.2` and `name@^3` without the version."""
+    if spec.startswith("@"):
+        scope, _, rest = spec[1:].partition("/")
+        return "@" + scope + "/" + rest.split("@", 1)[0]
+    return spec.split("@", 1)[0]
+
+
+def expo_go_problem(command: str) -> str | None:
+    """Why an `expo install` would add a package Expo Go cannot run, or
+    None. Pure JavaScript packages pass; so does the Expo SDK."""
+    refused = []
+    for m in _EXPO_INSTALL.finditer(command):
+        for spec in m.group("args").split():
+            if spec.startswith("-"):
+                continue
+            name = _package_name(spec)
+            if (name.startswith(("expo-", "@expo/")) or name == "expo"
+                    or name in EXPO_GO_NATIVE or name in PURE_JS_RN):
+                continue
+            if _NATIVE_HINT.search(name.split("/")[-1]) or name.startswith("@react-native"):
+                refused.append(name)
+    if not refused:
+        return None
+    return (f"{', '.join(refused)} has native code that Expo Go does not include, so the app "
+            "would crash on the user's phone. Use an Expo SDK module or a pure JavaScript "
+            "package instead (see the mobile skill's device features table); if nothing "
+            "fits, build without it and tell the user in one sentence what a later native "
+            "build would add.")
+
 
 @dataclass
 class Outcome:
@@ -301,9 +360,15 @@ async def _generate_image(args: dict, images: ImageMaker) -> Outcome:
                             kind=str(args.get("kind") or "photo"))
     dims = out["meta"].get("width")
     size = f"{out['meta']['width']}x{out['meta']['height']}, " if dims else ""
+    if images.sandbox.target.is_mobile:
+        use = (f"Use it as <Image source={{require(\"@/{out['path']}\")}} ...> (expo-image) "
+               f"with a fixed aspect ratio.")
+        if args.get("kind") == "logo":
+            use += " It is also the app icon now (assets/icon.png)."
+    else:
+        use = f"Use it as <img src=\"{out['path']}\" ...> with a fixed aspect ratio."
     return Outcome(f"Image ready at {out['path']} ({size}{out['bytes'] // 1024} KB). "
-                   f"Use it as <img src=\"{out['path']}\" ...> with a fixed aspect ratio. "
-                   f"{images.left} more this turn.", touched=None)
+                   f"{use} {images.left} more this turn.", touched=None)
 
 
 # ---------------------------------------------------- supabase handlers
@@ -528,9 +593,13 @@ async def _run_command(args: dict, sandbox: Sandbox) -> Outcome:
     command = str(args.get("command") or "").strip()
     if not command:
         return Outcome("error: command is required")
-    reason = blocked_reason(command)
+    reason = blocked_reason(command, sandbox.target)
     if reason:
         return Outcome(f"error: that command is not allowed here ({reason}).")
+    if sandbox.target.is_mobile:
+        problem = expo_go_problem(command)
+        if problem:
+            return Outcome(f"error: {problem}")
     result = await sandbox.run(command, timeout=settings.BUILDER_COMMAND_TIMEOUT)
     head = (f"[timed out after {settings.BUILDER_COMMAND_TIMEOUT}s]" if result.timed_out
             else f"[exit code {result.exit_code}]")
@@ -553,8 +622,9 @@ _HANDLERS = {
 }
 
 
-def blocked_reason(command: str) -> str | None:
-    for pattern, reason in BLOCKED:
+def blocked_reason(command: str, target: "targets.Target | None" = None) -> str | None:
+    extra = target.blocked if target is not None else ()
+    for pattern, reason in (*BLOCKED, *extra):
         if pattern.search(command):
             return reason
     return None
@@ -563,7 +633,7 @@ def blocked_reason(command: str) -> str | None:
 async def typecheck(sandbox: Sandbox) -> tuple[bool, str]:
     """`tsc --noEmit` over the app. Returns (passed, report) where the report
     is the first BUILDER_TYPECHECK_ERROR_LINES error lines, or one word."""
-    result = await sandbox.run("npx tsc --noEmit -p tsconfig.app.json",
+    result = await sandbox.run(sandbox.target.typecheck_cmd,
                                timeout=settings.BUILDER_TYPECHECK_TIMEOUT)
     if result.timed_out:
         return False, "Typecheck: timed out."

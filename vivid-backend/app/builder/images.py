@@ -89,6 +89,27 @@ def favicon_bytes(logo_png: bytes, size: int = 256) -> bytes | None:
         return None
 
 
+def app_icon_bytes(logo_png: bytes, size: int = 1024, background=(255, 255, 255)) -> bytes | None:
+    """The logo centred on a square, opaque canvas: iOS rejects icons with
+    transparency, and Android's adaptive icon crops to a circle, so the mark
+    keeps a margin. None when Pillow cannot read it."""
+    try:
+        from PIL import Image
+        import io
+        mark = Image.open(io.BytesIO(logo_png)).convert("RGBA")
+        mark.thumbnail((int(size * 0.66), int(size * 0.66)))
+        canvas = Image.new("RGB", (size, size), background)
+        canvas.paste(mark, ((size - mark.width) // 2, (size - mark.height) // 2), mark)
+        out = io.BytesIO(); canvas.save(out, format="PNG", optimize=True)
+        return out.getvalue()
+    except Exception:
+        return None
+
+
+#: Where an Expo app's app.json points its icons (the template's defaults).
+APP_ICON_FILES = ("assets/icon.png", "assets/adaptive-icon.png")
+
+
 def with_favicon_links(html: str) -> str:
     """index.html with the favicon links, added once, before </head>."""
     if 'rel="icon"' in html or "rel='icon'" in html:
@@ -116,6 +137,21 @@ class ImageMaker:
     def left(self) -> int:
         cap = self.limit if self.limit is not None else settings.BUILDER_IMAGES_PER_TURN
         return cap - len(self.made)
+
+    async def _app_icon(self, logo_png: bytes) -> None:
+        """A mobile app's logo is its home-screen icon, on iOS and Android,
+        and the web preview's favicon. Never fails the picture."""
+        icon = app_icon_bytes(logo_png)
+        if icon is None:
+            return
+        try:
+            for path in APP_ICON_FILES:
+                await self.sandbox.write_bytes(path, icon)
+            small = favicon_bytes(logo_png, size=48)
+            if small is not None:
+                await self.sandbox.write_bytes("assets/favicon.png", small)
+        except SandboxError as e:
+            log.warning("app icon not written: %s", e)
 
     async def _favicon(self, logo_png: bytes) -> None:
         """Every site gets a favicon: the mark at 256px as public/favicon.png
@@ -163,7 +199,9 @@ class ImageMaker:
                                      unit="images", model=settings.OPENROUTER_IMAGE_MODEL,
                                      meta={"stage": "image", "name": asset.name}))
             await db.commit()
-            path, sb_path, meta = assets.public_path(asset), assets.sandbox_path(asset), asset.meta
+            target = self.sandbox.target
+            path, sb_path, meta = (assets.public_path(asset, target),
+                                   assets.sandbox_path(asset, target), asset.meta)
         # A megabyte into the sandbox times out now and then; the picture is
         # already in storage, so a second try is cheap and usually enough.
         last: SandboxError | None = None
@@ -181,7 +219,10 @@ class ImageMaker:
         self.made.remove(None)
         self.made.append(path)
         if kind == "logo":
-            await self._favicon(data)
+            if self.sandbox.target.is_mobile:
+                await self._app_icon(data)
+            else:
+                await self._favicon(data)
         return {"path": path, "bytes": len(data), "meta": meta or {}}
 
 

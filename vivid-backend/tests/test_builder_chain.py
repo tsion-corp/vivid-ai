@@ -97,7 +97,7 @@ def test_prompt_and_skill_for_onchain_projects():
     assert block.startswith("## Web3 skill\n# dApps on Ark Constellation") and "Marketplace.sol" in block
     assert skills.web3_block(False) == ""
     assert "## Web3 skill" in skills.ui_block("x", "", chain=True)
-    assert skills.available() == ["copy", "design", "fullstack", "maps", "motion", "payments", "web3"]
+    assert skills.available() == ["auth", "copy", "design", "fullstack", "maps", "mobile", "motion", "payments", "web3"]
 
 
 def test_wallet_recipe_and_patterns_exist():

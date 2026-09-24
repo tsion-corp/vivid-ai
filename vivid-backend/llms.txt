@@ -32,10 +32,11 @@ Versions    GET/POST /builder/projects/{id}/snapshots · POST .../snapshots/{seq
 Connectors  GET /connectors · POST /connectors · DELETE /connectors/{id} · GET /connectors/supabase/authorize
 Per project POST/DELETE /builder/projects/{id}/supabase · POST/DELETE .../payments · POST/DELETE .../maps
             POST/DELETE /builder/projects/{id}/chain (dApp on Ark Constellation) · POST .../chain/faucet
+            POST/DELETE /builder/projects/{id}/auth (the app's own sign-in, Decane)
 Publish     POST /builder/projects/{id}/publish · GET .../publishes · GET .../publishes/{publish_id}
 Usage       GET /builder/projects/{id}/usage · GET /builder/projects/{id}/analytics?days=30
 Public      POST /a/{project_id} (pageview reporter used by published sites; no auth)
-Health      GET /health (builder block: models, sandbox, storage, secrets, images, publish, supabase_oauth, skills, recipes, chain)
+Health      GET /health (builder block: models, sandbox, storage, secrets, images, publish, supabase_oauth, skills, recipes, chain, decane_connect)
 
 CORS: the allow-list is the deployment's CORS_ORIGINS setting (in the
 server's app.env; the code default of localhost 5173, 3000 and 3001 applies
@@ -539,6 +540,39 @@ explorer link (https://explorer.34.60.137.196.sslip.io/address/<addr>) and a
 "Fund deployer" button. Visitors of the built app need MetaMask and test
 KASH from https://faucet.34.60.137.196.sslip.io; the model's final reply
 says so and names the deployed contracts.
+
+## 9c. Decane sign-in (the app's own users)
+
+Sign-in for the app being built, not for Vivid: each project gets its own
+Decane client (its own user pool) on Vivid's organization, so the user needs
+no Decane account and pastes no key. It is a platform feature, not a
+connector: no POST /connectors, just a per-project toggle.
+
+  POST   /builder/projects/{id}/auth   -> Project {auth_provider: "decane", decane_app_id}
+         503 not_configured when this deployment has no Decane organization
+         token (GET /health builder.decane_connect is false: hide the toggle);
+         400 bad_request / 502 upstream_error with Decane's reason otherwise.
+         Idempotent. May start the sandbox first (the key needs a host).
+  DELETE /builder/projects/{id}/auth   -> Project {auth_provider: "none"}
+         The key is revoked; the client and its users are kept, and
+         decane_app_id stays, so turning it back on brings the same users back.
+
+Project fields: auth_provider ("none" | "decane") and decane_app_id (public).
+From the next turn the app's .env has VITE_DECANE_APP_ID and
+VITE_DECANE_API_KEY (browser-public; the key is bound to hostnames), and the
+model gets the sign-in skill: decane-connect-kit, Google and emailed codes,
+no passwords. Asked for sign-in in chat, the model uses it once this is on;
+turn it on before or with a message like "add sign-in".
+
+Hosts: the key allows the published site, the current preview and the one
+before. The backend updates it when a sandbox starts and on publish, so
+sign-in from a brand-new preview can answer ORIGIN_NOT_ALLOWED for a moment.
+Google sign-in returns to one host: the preview while building, the
+published site after publishing. Email codes work on every allowed host.
+
+Show in project settings, under Connectors: "Sign-in (Decane)" with a
+toggle, "Google and email codes, no passwords. Your app's users are its own."
+and, when on, the app id. Deleting the project archives the client.
 
 ## 10. Publish
 

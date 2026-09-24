@@ -11,6 +11,7 @@ x-backend-env: &backend-env
   ALLOW_PASSWORD_AUTH: ${ALLOW_PASSWORD_AUTH:-true}
   DECANE_APP_ID: ${DECANE_APP_ID:-}
   DECANE_VERIFICATION_KEY: ${DECANE_VERIFICATION_KEY:-}
+  DECANE_PARTNER_TOKEN: ${DECANE_PARTNER_TOKEN:-}
   # RunPod model services — set these in a root .env (see .env.example)
   LLM_BASE_URL: ${LLM_BASE_URL:-}
   LLM_CONTEXT_TOKENS: ${LLM_CONTEXT_TOKENS:-8192}

@@ -1,4 +1,5 @@
 from datetime import datetime
+from typing import Literal
 
 from pydantic import BaseModel, ConfigDict, Field
 
@@ -7,6 +8,8 @@ class ProjectCreate(BaseModel):
     name: str = Field(default="Untitled app", max_length=120)
     #: Start in build mode with no spec (a developer who knows what they want).
     skip_plan: bool = False
+    #: What to build: a website or an iOS and Android app. Fixed for life.
+    target: Literal["web", "mobile"] = "web"
 
 
 class ProjectUpdate(BaseModel):
@@ -22,6 +25,7 @@ class ProjectOut(BaseModel):
     id: str
     name: str
     mode: str
+    target: str = "web"
     brief_md: str | None = None
     spec_md: str | None
     current_snapshot_id: str | None
@@ -31,6 +35,9 @@ class ProjectOut(BaseModel):
     maps_provider: str = "none"
     chain: str = "none"
     deployer_address: str | None = None
+    #: "decane" when the app has its own sign-in; decane_app_id is the SDK's appId.
+    auth_provider: str = "none"
+    decane_app_id: str | None = None
     fullstack: bool = False
     recipe: str | None = None
     published_url: str | None
@@ -64,6 +71,11 @@ class PreviewOut(BaseModel):
     url: str
     sandbox_id: str
     driver: str
+    #: web | mobile, the project's target.
+    target: str = "web"
+    #: Mobile projects: the exps:// URL Expo Go opens (as a QR code). None on
+    #: the web, and for a local sandbox a phone cannot reach.
+    device_url: str | None = None
 
 
 class FileOut(BaseModel):
@@ -138,6 +150,63 @@ class PublishOut(BaseModel):
     error: str | None
     created_at: datetime
     updated_at: datetime
+
+
+class AppBuildIn(BaseModel):
+    platform: Literal["android", "ios"]
+    #: preview: an Android APK to install directly, or an iOS simulator
+    #: build. production: store builds (an Android AAB; iOS needs the user's
+    #: own Expo account with Apple credentials set up there).
+    profile: Literal["preview", "production"] = "preview"
+    #: auto: the user's connected Expo account if there is one, else Vivid's.
+    account: Literal["auto", "vivid", "user"] = "auto"
+
+
+class AppBuildOut(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
+    id: str
+    snapshot_id: str | None
+    platform: str
+    profile: str
+    account: str
+    #: starting | queued | building | canceling | finished | failed | canceled
+    status: str
+    #: The installable file once finished (an .apk to open on the phone,
+    #: an .aab for the Play Store, or an iOS simulator archive).
+    artifact_url: str | None = None
+    #: The build's page on expo.dev: logs, and an install QR for internal builds.
+    logs_url: str | None = None
+    error: str | None = None
+    #: What this build costs, in the smallest unit of `currency`; 0 on the
+    #: user's own account. `charge` is refunded when a build fails.
+    price: int = 0
+    currency: str = "NGN"
+    charge: str = "none"
+    created_at: datetime
+    finished_at: datetime | None = None
+
+
+class BuildAccountOut(BaseModel):
+    id: Literal["vivid", "user"]
+    available: bool
+    #: vivid: the price per platform; user: 0, the builds use their quota.
+    price_android: int = 0
+    price_ios: int = 0
+    currency: str = "NGN"
+    #: vivid: builds left this month; user: None.
+    remaining: int | None = None
+    #: user: the Expo account builds go to.
+    owner: str | None = None
+    reason: str | None = None
+
+
+class BuildOptionsOut(BaseModel):
+    #: Which account `auto` picks.
+    default: Literal["vivid", "user"]
+    accounts: list[BuildAccountOut]
+    #: iOS store builds need the user's own account (Apple credentials).
+    ios_production_needs_user_account: bool = True
 
 
 class AssetOut(BaseModel):

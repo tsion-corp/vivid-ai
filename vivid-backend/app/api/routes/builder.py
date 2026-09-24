@@ -32,14 +32,22 @@
     POST   /builder/projects/{id}/assets     upload a logo, photo, font (multipart)
     GET    /builder/projects/{id}/assets
     DELETE /builder/projects/{id}/assets/{asset_id}
+    POST   /builder/projects/{id}/auth       the app signs its users in with Decane
+    DELETE /builder/projects/{id}/auth       stop (the client and its users are kept)
     POST   /builder/projects/{id}/publish    build and put the app on a live URL (202)
     GET    /builder/projects/{id}/publishes  history, newest first
     GET    /builder/projects/{id}/publishes/{publish_id}
+    POST   /builder/projects/{id}/builds     build a mobile app on EAS (202)
+    GET    /builder/projects/{id}/builds     history, newest first
+    GET    /builder/projects/{id}/builds/{build_id}
+    POST   /builder/projects/{id}/builds/{build_id}/cancel
+    GET    /builder/app-builds/options       build accounts, prices, what is left
 
 One turn per project at a time (409 otherwise). The stream is the contract
 for any client: see docs/builder.md.
 """
 import asyncio
+import json
 import pathlib
 import mimetypes
 import base64
@@ -52,20 +60,23 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.deps import get_current_user, get_db
-from app.builder import (analytics, assets, blob, chain as chain_mod, images, pgdirect, planning, publish, routing, secrets, skills,
-                         snapshots, stream, supabase, tools, usage, visual)
+from app.builder import (analytics, app_build, assets, billing, blob, chain as chain_mod,
+                         decane_connect, expo, images, pgdirect, planning, publish, routing,
+                         secrets, skills, snapshots, stream, supabase, targets, tools, usage,
+                         visual)
 from app.builder.loop import FEED_DONE, ModelCall, TurnRunner, turns
 from app.builder.planning import PlanRunner
 from app.builder.sandbox.base import PathError, SandboxError, safe_path
 from app.builder.sandbox.manager import manager
 from app.core.config import settings
 from app.core.errors import APIError
-from app.db.models import (BuilderAsset, BuilderMessage, BuilderProject, BuilderPublish,
-                           BuilderSnapshot, Connector, User)
+from app.db.models import (BuilderAppBuild, BuilderAsset, BuilderMessage, BuilderProject,
+                           BuilderPublish, BuilderSnapshot, Connector, User)
 from app.services.connectors import supabase as supabase_connector
 from app.services.connectors import tokens as connector_tokens
 from app.db.session import async_session
-from app.schemas.builder import (AnalyticsOut, AssetOut, CancelOut, ChatIn, EditsIn, EditsOut, FileOut,
+from app.schemas.builder import (AnalyticsOut, AppBuildIn, AppBuildOut, AssetOut, BuildAccountOut,
+                                 BuildOptionsOut, CancelOut, ChatIn, EditsIn, EditsOut, FileOut,
                                  FilesOut, ImageReplaceOut, MessageOut, PreviewOut, ProjectCreate,
                                  ProjectOut, ProjectUpdate, PublishOut, SnapshotOut, SupabaseLinkIn,
                                  TextEditOut, UsageOut)
@@ -98,10 +109,19 @@ async def _latest_seq(project_id: str, db: AsyncSession) -> int:
 async def create_project(body: ProjectCreate, user: User = Depends(get_current_user),
                          db: AsyncSession = Depends(get_db)):
     project = BuilderProject(owner_id=user.id, name=body.name.strip() or "Untitled app",
-                             mode="build" if body.skip_plan else "plan")
+                             mode="build" if body.skip_plan else "plan",
+                             target=body.target)
     db.add(project)
     await db.commit()
     return project
+
+
+def _require_integration(project: BuilderProject, name: str) -> None:
+    """Some integrations exist only for websites so far (targets.py)."""
+    target = targets.of(project)
+    if name not in target.integrations:
+        raise APIError(400, "not_supported",
+                       f"{name.capitalize()} is not available for {target.name} projects yet.")
 
 
 def _present(project: BuilderProject) -> BuilderProject:
@@ -154,6 +174,14 @@ async def delete_project(project_id: str, request: Request,
     project = await _owned(project_id, user, db)
     turns.cancel(project_id)
     await manager.kill(project_id, request.app.state.redis)
+    if project.decane_app_id and decane_connect.configured():
+        # Archive the Decane client and revoke its keys. Best effort: an
+        # outage there must not keep a project from being deleted.
+        try:
+            await decane_connect.deprovision(project_id)
+        except decane_connect.ConnectError as e:
+            log.warning("decane deprovision for %s failed: %s", project_id, e)
+    _auth_synced.pop(project_id, None)
     await db.delete(project)
     await db.commit()
     await snapshots.delete_all(project_id)
@@ -230,15 +258,17 @@ async def chat(project_id: str, body: ChatIn, request: Request,
     spec_md, recent = project.spec_md, _recent(project)
     payments = project.payments_provider if project.payments_provider != "none" else None
     maps = project.maps_provider if project.maps_provider != "none" else None
+    auth = project.auth_provider if project.auth_provider != "none" else None
     chain = None if planning_mode else await _chain_for(project, db)
     if not planning_mode and project.recipe is None and (spec_md or project.brief_md):
         # A project that skipped plan mode still gets a recipe, chosen once.
-        project.recipe = await skills.pick_recipe(spec_md or project.brief_md or "")
+        project.recipe = await skills.pick_recipe(spec_md or project.brief_md or "",
+                                                  mobile=targets.of(project).is_mobile)
         await db.commit()
     backend = None if planning_mode else await _backend_for(project, user, db)
     env_vars = None if planning_mode else await _env_for(project, db)
     uploaded = await assets.list_for(db, project_id)
-    assets_block = assets.describe(uploaded)
+    assets_block = assets.describe(uploaded, targets.of(project))
     plan_images = list(body.images)
     if planning_mode and uploaded:
         for url in assets.image_urls(uploaded):
@@ -255,7 +285,8 @@ async def chat(project_id: str, body: ChatIn, request: Request,
         try:
             if planning_mode:
                 runner = PlanRunner(history, body.text, plan_images, cancelled=cancel.is_set,
-                                    assets_block=assets_block)
+                                    assets_block=assets_block,
+                                    mobile=targets.of(project).is_mobile)
                 async for part in runner.run():
                     collector.add(part)
                     await feed.push(part)
@@ -264,7 +295,7 @@ async def chat(project_id: str, body: ChatIn, request: Request,
                 await feed.push(FEED_DONE)
                 return
             try:
-                sandbox = await _start_sandbox(project_id, redis)
+                sandbox = await _start_sandbox(project_id, redis, targets.of(project))
                 await _sync_spec(sandbox, spec_md)
                 await _sync_env(sandbox, env_vars)
                 await assets.sync(sandbox, uploaded)
@@ -277,9 +308,10 @@ async def chat(project_id: str, body: ChatIn, request: Request,
             runner = TurnRunner(sandbox, stage, history, body.text, spec_md, recent,
                                 cancelled=cancel.is_set, backend=backend,
                                 assets_block=assets_block, payments=payments, maps=maps,
-                                chain=chain,
+                                chain=chain, auth=auth,
                                 fullstack=project.fullstack, recipe=project.recipe,
-                                backend_env=bool(env_vars and "VITE_SUPABASE_URL" in env_vars),
+                                backend_env=bool(env_vars and targets.of(project).env("SUPABASE_URL")
+                                                 in env_vars),
                                 keepalive=lambda: manager.touch(project_id),
                                 project_id=project_id,
                                 images=(images.ImageMaker(
@@ -460,7 +492,22 @@ async def _env_for(project: BuilderProject, db: AsyncSession) -> dict[str, str] 
             env["VITE_GOOGLE_MAPS_KEY"] = key
     if project.chain in chain_mod.CHAINS:
         env.update(chain_mod.env_for(chain_mod.CHAINS[project.chain], project.deployer_address))
-    return env or None
+    if project.auth_provider == "decane" and project.decane_app_id:
+        # Browser-public by design: the key is authorised by its origin
+        # allowlist, not by secrecy.
+        key = await secrets.get_secret(db, project.id, "DECANE_CLIENT_API_KEY")
+        if key:
+            env.update({"VITE_DECANE_APP_ID": project.decane_app_id, "VITE_DECANE_API_KEY": key})
+    return _prefixed(env, targets.of(project)) or None
+
+
+def _prefixed(env: dict[str, str], target: targets.Target) -> dict[str, str]:
+    """Env names are written the web way (VITE_*); another target's bundler
+    reads its own prefix (EXPO_PUBLIC_* for Expo)."""
+    if target.env_prefix == "VITE_":
+        return env
+    return {(target.env_prefix + k[len("VITE_"):] if k.startswith("VITE_") else k): v
+            for k, v in env.items()}
 
 
 async def _supabase_connector(user_id: str, db: AsyncSession) -> Connector | None:
@@ -539,7 +586,8 @@ async def link_supabase(project_id: str, body: SupabaseLinkIn, request: Request,
     await db.commit()
     sandbox = manager.peek(project_id)
     if sandbox is not None:
-        await _sync_env(sandbox, {"VITE_SUPABASE_URL": url, "VITE_SUPABASE_ANON_KEY": anon})
+        await _sync_env(sandbox, _prefixed({"VITE_SUPABASE_URL": url, "VITE_SUPABASE_ANON_KEY": anon},
+                                           targets.of(project)))
     return project
 
 
@@ -557,6 +605,7 @@ async def enable_payments(project_id: str, user: User = Depends(get_current_user
     key goes into the app's .env; with a Supabase backend the secret key
     goes into that project's edge-function secrets, never into the app."""
     project = await _owned(project_id, user, db)
+    _require_integration(project, "payments")
     if not secrets.configured():
         raise APIError(503, "not_configured", "Secrets storage is not configured.")
     connector = await _paystack_connector(user.id, db)
@@ -624,6 +673,7 @@ async def enable_chain(project_id: str, user: User = Depends(get_current_user),
     """Make the project a dApp on Ark Constellation: a deployer wallet is
     created and funded, the deploy tools and the web3 skill switch on."""
     project = await _owned(project_id, user, db)
+    _require_integration(project, "chain")
     if not secrets.configured():
         raise APIError(503, "not_configured", "Secrets storage is not configured.")
     if project.chain == "none":
@@ -659,6 +709,144 @@ async def disable_chain(project_id: str, user: User = Depends(get_current_user),
     return _present(project)
 
 
+# ------------------------------------------------------------------ auth
+#: The project's Decane key, its id and the client ref (the project id).
+_AUTH_SECRETS = ("DECANE_CLIENT_API_KEY", "DECANE_CLIENT_KEY_ID", "DECANE_CLIENT_REF")
+#: Preview hosts on the key, newest first; the published host comes from the row.
+_AUTH_HOSTS = "DECANE_CLIENT_HOSTS"
+#: The preview host each project's key was last synced for, in this process,
+#: so a sandbox is synced once rather than on every request that starts it.
+_auth_synced: dict[str, str] = {}
+
+
+def _connect_error(e: decane_connect.ConnectError) -> APIError:
+    if e.kind == "bad_request":
+        return APIError(400, "bad_request", f"Decane: {e}")
+    if e.kind == "not_configured":
+        return APIError(503, "not_configured", str(e))
+    return APIError(502, "upstream_error", str(e))
+
+
+async def _sync_auth_origins(db: AsyncSession, project: BuilderProject,
+                             preview_host: str | None = None) -> bool:
+    """Tell the project's key which hosts may sign in: the published one,
+    this preview and the previous preview. A new sandbox is a new preview
+    host, and publishing adds the published one and moves the Google
+    callback to it. Never raises: a failure only means sign-in answers
+    "origin not allowed" until the next sync."""
+    if project.auth_provider != "decane" or not decane_connect.configured():
+        return True
+    key_id = await secrets.get_secret(db, project.id, "DECANE_CLIENT_KEY_ID")
+    if not key_id:
+        return True
+    ref = await secrets.get_secret(db, project.id, "DECANE_CLIENT_REF") or project.id
+    previews = json.loads(await secrets.get_secret(db, project.id, _AUTH_HOSTS) or "[]")
+    if preview_host:
+        previews = [preview_host] + [h for h in previews if h != preview_host]
+    previews = previews[:2]
+    origins, callback = decane_connect.origins_for(project.published_url, previews)
+    if not origins:
+        return True
+    try:
+        await decane_connect.update_key(ref, key_id, origins, callback)
+    except decane_connect.ConnectError as e:
+        log.warning("decane origins for %s not updated: %s", project.id, e)
+        return False
+    await secrets.set_secret(db, project.id, _AUTH_HOSTS, json.dumps(previews))
+    await db.commit()
+    return True
+
+
+async def _sync_auth_for_sandbox(project_id: str, sandbox) -> None:
+    host = decane_connect.host_of(sandbox.preview_url())
+    if not host or _auth_synced.get(project_id) == host:
+        return
+    try:
+        async with async_session() as db:
+            project = await db.get(BuilderProject, project_id)
+            ok = project is None or await _sync_auth_origins(db, project, host)
+    except Exception:                               # never fails a request
+        log.exception("decane origin sync for %s failed", project_id)
+        return
+    if ok:
+        _auth_synced[project_id] = host
+
+
+@router.post("/projects/{project_id}/auth", response_model=ProjectOut)
+async def enable_auth(project_id: str, request: Request,
+                      user: User = Depends(get_current_user),
+                      db: AsyncSession = Depends(get_db)):
+    """Give the app its own sign-in: a Decane client for this project (its
+    own user pool) and a key allowed on the preview and the published site.
+    The app's .env gets the app id and key; the auth skill rides every turn."""
+    project = await _owned(project_id, user, db)
+    _require_integration(project, "auth")
+    if not secrets.configured() or not decane_connect.configured():
+        raise APIError(503, "not_configured", "Decane sign-in is not configured.")
+    if (project.auth_provider == "decane"
+            and await secrets.get_secret(db, project_id, "DECANE_CLIENT_API_KEY")):
+        return _present(project)
+
+    sandbox = manager.peek(project_id)
+    if sandbox is None and not project.published_url:
+        sandbox = await _sandbox(project_id, request)   # the key needs at least one host
+    preview = decane_connect.host_of(sandbox.preview_url()) if sandbox is not None else None
+    previews = [preview] if preview else []
+    origins, callback = decane_connect.origins_for(project.published_url, previews)
+    try:
+        app_id, minted = await decane_connect.create_client(project_id, project.name, origins, callback)
+        if minted is None:
+            # The client exists (a retry, or re-enabling): its first key
+            # cannot be read back, so this project gets a new one.
+            minted = await decane_connect.mint_key(project_id, origins, callback)
+    except decane_connect.ConnectError as e:
+        raise _connect_error(e)
+    try:
+        await secrets.set_secret(db, project_id, "DECANE_CLIENT_API_KEY", minted.key)
+        await secrets.set_secret(db, project_id, "DECANE_CLIENT_KEY_ID", minted.id)
+        await secrets.set_secret(db, project_id, "DECANE_CLIENT_REF", project_id)
+        await secrets.set_secret(db, project_id, _AUTH_HOSTS, json.dumps(previews))
+        project.auth_provider = "decane"
+        project.decane_app_id = app_id
+        await db.commit()
+    except Exception:
+        # The key is shown once. Unrecorded, it would be a live credential
+        # nobody holds, and the next attempt would mint another.
+        await db.rollback()
+        try:
+            await decane_connect.revoke_key(project_id, minted.id)
+        except decane_connect.ConnectError as e:
+            log.error("could not revoke unrecorded decane key for %s: %s", project_id, e)
+        log.exception("storing the decane key for %s failed", project_id)
+        raise APIError(503, "storage_unavailable", "Sign-in could not be saved. Try again.")
+    if preview:
+        _auth_synced[project_id] = preview
+    if sandbox is not None:
+        await _sync_env(sandbox, await _env_for(project, db))
+    return _present(project)
+
+
+@router.delete("/projects/{project_id}/auth", response_model=ProjectOut)
+async def disable_auth(project_id: str, user: User = Depends(get_current_user),
+                       db: AsyncSession = Depends(get_db)):
+    """Stop the app's sign-in: its key is revoked. The client and its users
+    stay (Connect has no un-archive), so turning it back on finds them."""
+    project = await _owned(project_id, user, db)
+    key_id = await secrets.get_secret(db, project_id, "DECANE_CLIENT_KEY_ID")
+    ref = await secrets.get_secret(db, project_id, "DECANE_CLIENT_REF") or project_id
+    if key_id and decane_connect.configured():
+        try:
+            await decane_connect.revoke_key(ref, key_id)
+        except decane_connect.ConnectError as e:
+            log.warning("revoking the decane key for %s failed: %s", project_id, e)
+    for name in (*_AUTH_SECRETS, _AUTH_HOSTS):
+        await secrets.delete_secret(db, project_id, name)
+    project.auth_provider = "none"
+    await db.commit()
+    _auth_synced.pop(project_id, None)
+    return _present(project)
+
+
 # ------------------------------------------------------------------ maps
 async def _maps_connector(user_id: str, db: AsyncSession) -> Connector | None:
     return (await db.execute(
@@ -672,6 +860,7 @@ async def enable_maps(project_id: str, user: User = Depends(get_current_user),
     """Address autocomplete, maps and distance with the user's Google Maps
     key. It is a browser key, so it goes into the app's .env."""
     project = await _owned(project_id, user, db)
+    _require_integration(project, "maps")
     if not secrets.configured():
         raise APIError(503, "not_configured", "Secrets storage is not configured.")
     connector = await _maps_connector(user.id, db)
@@ -710,9 +899,9 @@ async def unlink_supabase(project_id: str, user: User = Depends(get_current_user
 
 
 # ---------------------------------------------------------------- assets
-def _asset_out(asset: BuilderAsset) -> AssetOut:
+def _asset_out(asset: BuilderAsset, target: targets.Target | None = None) -> AssetOut:
     out = AssetOut.model_validate(asset)
-    out.path = assets.public_path(asset)
+    out.path = assets.public_path(asset, target)
     try:
         out.url = blob.presigned_url(asset.r2_key)
     except Exception as e:                       # the store is down; the row still lists
@@ -727,7 +916,7 @@ async def upload_asset(project_id: str, request: Request, file: UploadFile = Fil
     """Give the builder a file. It lands in the app at /uploads/<name> (a
     live sandbox gets it at once; a fresh one on start), and the model is
     told about it in every turn."""
-    await _owned(project_id, user, db)
+    project = await _owned(project_id, user, db)
     data = await file.read()
     try:
         asset = await assets.add(db, project_id, file.filename or "file",
@@ -744,14 +933,14 @@ async def upload_asset(project_id: str, request: Request, file: UploadFile = Fil
             await assets.write_into(sandbox, asset, data)
         except SandboxError as e:
             log.warning("asset %s not written to the live sandbox: %s", asset.name, e)
-    return _asset_out(asset)
+    return _asset_out(asset, targets.of(project))
 
 
 @router.get("/projects/{project_id}/assets", response_model=list[AssetOut])
 async def list_assets(project_id: str, user: User = Depends(get_current_user),
                       db: AsyncSession = Depends(get_db)):
-    await _owned(project_id, user, db)
-    return [_asset_out(a) for a in await assets.list_for(db, project_id)]
+    project = await _owned(project_id, user, db)
+    return [_asset_out(a, targets.of(project)) for a in await assets.list_for(db, project_id)]
 
 
 @router.delete("/projects/{project_id}/assets/{asset_id}", status_code=204)
@@ -764,10 +953,140 @@ async def delete_asset(project_id: str, asset_id: str,
         raise APIError(404, "not_found", "No such file")
     sandbox = manager.peek(project_id)
     if sandbox is not None:
-        await sandbox.run(f"rm -f {assets.sandbox_path(asset)}", timeout=15)
+        await sandbox.run(f"rm -f {assets.sandbox_path(asset, sandbox.target)}", timeout=15)
     await db.delete(asset)
     await db.commit()
     await blob.delete_prefix(asset.r2_key)
+
+
+# ------------------------------------------------------------ app builds
+#: Build starts in flight (the upload to EAS), kept so they are not collected.
+_app_builds: dict[str, asyncio.Task] = {}
+
+
+async def _build_account(db: AsyncSession, user: User, wanted: str) -> str:
+    """auto: the user's connected Expo account if there is one, else Vivid's."""
+    if wanted != "auto":
+        return wanted
+    return (billing.USER if await app_build.user_connector(db, user.id) is not None
+            else billing.VIVID)
+
+
+@router.get("/app-builds/options", response_model=BuildOptionsOut)
+async def build_options(user: User = Depends(get_current_user),
+                        db: AsyncSession = Depends(get_db)):
+    """The accounts a mobile build can run on, what each costs and whether it
+    is available: for the build button and its price."""
+    connector = await app_build.user_connector(db, user.id)
+    used = await billing.vivid_builds_this_month(db, user.id)
+    cap = settings.EAS_VIVID_BUILDS_PER_MONTH
+    vivid_ready = bool(settings.EXPO_TOKEN and settings.EXPO_OWNER)
+    vivid = BuildAccountOut(
+        id="vivid", available=vivid_ready and used < cap,
+        price_android=billing.price_for("android", billing.VIVID),
+        price_ios=billing.price_for("ios", billing.VIVID),
+        currency=settings.EAS_BUILD_CURRENCY, remaining=max(cap - used, 0),
+        reason=None if vivid_ready and used < cap else
+        ("not_configured" if not vivid_ready else "payment_required"))
+    mine = BuildAccountOut(
+        id="user", available=connector is not None,
+        currency=settings.EAS_BUILD_CURRENCY,
+        owner=((connector.config_json or {}).get("owner") if connector else None),
+        reason=None if connector else "not_connected")
+    return BuildOptionsOut(default="user" if connector else "vivid", accounts=[vivid, mine])
+
+
+@router.post("/projects/{project_id}/builds", response_model=AppBuildOut, status_code=202)
+async def start_app_build(project_id: str, body: AppBuildIn,
+                          user: User = Depends(get_current_user),
+                          db: AsyncSession = Depends(get_db)):
+    """Build the mobile app's current version on EAS. The row comes back
+    `starting`; poll it until `finished` (with `artifact_url`), `failed` or
+    `canceled`. On Vivid's account the build is charged, and refunded if it
+    fails."""
+    project = await _owned(project_id, user, db)
+    if not targets.of(project).is_mobile:
+        raise APIError(400, "not_supported", "Only mobile projects have app builds. "
+                                             "Publish a website instead.")
+    if turns.running(project_id):
+        raise APIError(409, "busy", "Wait for the running turn to finish first.")
+    snapshot = await snapshots.current(db, project)
+    if snapshot is None:
+        raise APIError(409, "no_snapshot", "Build the app in the chat before making an installable build.")
+    account = await _build_account(db, user, body.account)
+    if account == billing.USER and await app_build.user_connector(db, user.id) is None:
+        raise APIError(400, "not_connected", "Connect your Expo account first.")
+    if body.platform == "ios" and body.profile == "production" and account != billing.USER:
+        raise APIError(400, "needs_own_account",
+                       "iOS store builds need your own Expo account with your Apple developer "
+                       "credentials set up there. Connect it, or make an iOS preview build.")
+    running = (await db.execute(select(BuilderAppBuild.id).where(
+        BuilderAppBuild.project_id == project_id, BuilderAppBuild.platform == body.platform,
+        BuilderAppBuild.status.in_(app_build.ACTIVE)))).first()
+    if running is not None:
+        raise APIError(409, "busy", f"An {body.platform} build is already running for this app.")
+    decision = await billing.can_start_build(db, user.id, body.platform, account)
+    if not decision.ok:
+        raise APIError(402 if decision.code == "payment_required" else 503,
+                       decision.code, decision.message)
+    build = BuilderAppBuild(project_id=project_id, snapshot_id=snapshot.id,
+                            platform=body.platform, profile=body.profile, account=account)
+    db.add(build)
+    await db.flush()
+    billing.charge(db, build)
+    await db.commit()
+    task = asyncio.create_task(app_build.start(build.id))
+    _app_builds[build.id] = task
+    task.add_done_callback(lambda _t, bid=build.id: _app_builds.pop(bid, None))
+    return build
+
+
+@router.get("/projects/{project_id}/builds", response_model=list[AppBuildOut])
+async def list_app_builds(project_id: str, user: User = Depends(get_current_user),
+                          db: AsyncSession = Depends(get_db)):
+    await _owned(project_id, user, db)
+    rows = await db.execute(select(BuilderAppBuild)
+                            .where(BuilderAppBuild.project_id == project_id)
+                            .order_by(BuilderAppBuild.created_at.desc()).limit(50))
+    return list(rows.scalars())
+
+
+async def _owned_build(project_id: str, build_id: str, user: User,
+                       db: AsyncSession) -> BuilderAppBuild:
+    await _owned(project_id, user, db)
+    build = await db.get(BuilderAppBuild, build_id)
+    if build is None or build.project_id != project_id:
+        raise APIError(404, "not_found", "No such build")
+    return build
+
+
+@router.get("/projects/{project_id}/builds/{build_id}", response_model=AppBuildOut)
+async def get_app_build(project_id: str, build_id: str,
+                        user: User = Depends(get_current_user),
+                        db: AsyncSession = Depends(get_db)):
+    """The build as last seen; a build in flight is refreshed from Expo first,
+    so polling this is enough without waiting for the timer."""
+    build = await _owned_build(project_id, build_id, user, db)
+    if build.status in app_build.ACTIVE and build.eas_build_id:
+        try:
+            await app_build.refresh(db, build, user.id)
+            await db.commit()
+        except (expo.ExpoError, app_build.BuildError) as e:
+            log.warning("could not refresh app build %s: %s", build_id, e)
+    return build
+
+
+@router.post("/projects/{project_id}/builds/{build_id}/cancel", response_model=AppBuildOut)
+async def cancel_app_build(project_id: str, build_id: str,
+                           user: User = Depends(get_current_user),
+                           db: AsyncSession = Depends(get_db)):
+    build = await _owned_build(project_id, build_id, user, db)
+    try:
+        await app_build.cancel(db, build, user.id)
+    except (expo.ExpoError, app_build.BuildError) as e:
+        raise APIError(502, "upstream_error", f"Could not cancel the build: {e}")
+    await db.commit()
+    return build
 
 
 # --------------------------------------------------------------- publish
@@ -783,6 +1102,10 @@ async def start_publish(project_id: str, request: Request,
     """Build the current files and put them on the project's live URL. The
     row comes back `pending`; poll it until `live` or `failed`."""
     project = await _owned(project_id, user, db)
+    if targets.of(project).is_mobile:
+        raise APIError(400, "not_supported",
+                       "Mobile apps are not published as websites. Start a build instead "
+                       "(POST /builds).")
     if not publish.configured():
         raise APIError(503, "not_configured", "Publishing is not configured.")
     if turns.running(project_id):
@@ -831,6 +1154,13 @@ async def _run_publish(project_id: str, publish_id: str, alias: str, redis) -> N
         await publish.wait_until_live(url)
         await update(status="live", url=url)
         log.info("project %s published at %s", project_id, url)
+        try:
+            async with async_session() as db:
+                project = await db.get(BuilderProject, project_id)
+                if project is not None:
+                    await _sync_auth_origins(db, project)   # the published host, and the callback
+        except Exception:
+            log.exception("decane origin sync after publish of %s failed", project_id)
     except (publish.PublishError, SandboxError, snapshots.SnapshotError) as e:
         await update(status="failed", error=str(e)[:2000])
     except Exception as e:                          # never a stuck "building"
@@ -895,7 +1225,8 @@ async def preview(project_id: str, request: Request,
     except SandboxError as e:                       # the preview works without it
         log.warning("editor not placed in %s: %s", project_id, e)
     return PreviewOut(url=sandbox.preview_url(), sandbox_id=sandbox.id,
-                      driver=sandbox.driver)
+                      driver=sandbox.driver, target=sandbox.target.name,
+                      device_url=_device_url(sandbox))
 
 
 @router.get("/projects/{project_id}/files", response_model=FilesOut)
@@ -1030,8 +1361,9 @@ async def replace_image(project_id: str, request: Request,
     async with _editing.setdefault(project_id, asyncio.Lock()):
         sandbox = await _sandbox(project_id, request)
         files = await sandbox.list_files()
+        mobile = sandbox.target.is_mobile
         try:
-            target = visual.resolve_src(src, sandbox.preview_url(), files)
+            target = visual.resolve_src(src, sandbox.preview_url(), files, mobile=mobile)
             fitted = visual.fit_to(data, target.path) if target.path else None
         except visual.VisualError as e:
             raise APIError(400, "bad_image", str(e))
@@ -1050,9 +1382,18 @@ async def replace_image(project_id: str, request: Request,
         if not any(ref in content for ref in refs for content in sources.values()):
             raise APIError(404, "not_found",
                            "Could not find where the app uses that picture. Ask Vivid to change it.")
-        new_path = visual.new_image_path(file.filename or "image", visual.upload_ext(data))
-        await sandbox.write_bytes(new_path, data)
-        changed = visual.relink(sources, refs, "/" + new_path.removeprefix("public/"))
+        new_path = visual.new_image_path(file.filename or "image", visual.upload_ext(data),
+                                         mobile=mobile)
+        if mobile:
+            # A remote picture becomes a required file; only `{ uri }` uses move.
+            changed = visual.relink_uri(sources, src, new_path)
+            if not changed:
+                raise APIError(404, "not_found",
+                               "Could not find where the app uses that picture. Ask Vivid to change it.")
+            await sandbox.write_bytes(new_path, data)
+        else:
+            await sandbox.write_bytes(new_path, data)
+            changed = visual.relink(sources, refs, "/" + new_path.removeprefix("public/"))
         for path in changed:
             await sandbox.write_file(path, sources[path])
         row = await _save_hand_edit(db, sandbox, project, f"Replaced an image with {new_path}")
@@ -1103,12 +1444,22 @@ def _is_binary(path: str, data: bytes) -> bool:
     return b"\x00" in data[:8000]
 
 
-async def _start_sandbox(project_id: str, redis):
+async def _target_of(project_id: str) -> targets.Target:
+    async with async_session() as db:
+        value = (await db.execute(select(BuilderProject.target)
+                                  .where(BuilderProject.id == project_id))).scalar_one_or_none()
+    return targets.get(value)
+
+
+async def _start_sandbox(project_id: str, redis, target: targets.Target | None = None):
     """The project's sandbox. A fresh one is restored from the current
     snapshot and then given everything that lives outside git or may have
     changed since: spec.md, the backend .env, the uploaded files. Own
     session: the manager may call this long after the request's session
-    was used, and from any route."""
+    was used, and from any route. `target` saves the lookup when the caller
+    has the row."""
+    if target is None:
+        target = await _target_of(project_id)
     async def restore(sandbox):
         async with async_session() as db:
             project = await db.get(BuilderProject, project_id)
@@ -1123,9 +1474,22 @@ async def _start_sandbox(project_id: str, redis):
         await _sync_spec(sandbox, spec_md)
         await _sync_env(sandbox, env_vars)
         await assets.sync(sandbox, uploaded)
-    sandbox = await manager.get_or_create(project_id, redis, restore=restore)
+    sandbox = await manager.get_or_create(project_id, redis, restore=restore, target=target)
     await manager.touch(project_id)
+    await _sync_auth_for_sandbox(project_id, sandbox)
     return sandbox
+
+
+def _device_url(sandbox) -> str | None:
+    """What Expo Go opens on the user's phone (shown as a QR code): the same
+    Metro server as the web preview, over the exps:// scheme (https). Local
+    sandboxes are on this host only, so a phone cannot reach them."""
+    if not sandbox.target.is_mobile:
+        return None
+    url = sandbox.preview_url()
+    if url.startswith("https://"):
+        return "exps://" + url.removeprefix("https://")
+    return None
 
 
 async def _sandbox(project_id: str, request: Request):

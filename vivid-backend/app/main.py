@@ -11,6 +11,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import PlainTextResponse
 
 from app.api.routes import api_router
+from app.builder import app_build
 from app.builder.sandbox.manager import manager as sandbox_manager
 from app.core import errors
 from app.core.config import settings
@@ -40,8 +41,11 @@ async def lifespan(app: FastAPI):
     # The builder's sandboxes cost money while they run; the sweeper kills
     # the ones nobody has touched for a while.
     sweeper = asyncio.create_task(sandbox_manager.sweeper(app.state.redis))
+    # Mobile app builds run for minutes on Expo's side; this follows them.
+    app_builds = asyncio.create_task(app_build.poller(app.state.redis))
     yield
     sweeper.cancel()
+    app_builds.cancel()
     if settings.BUILDER_KILL_SANDBOXES_ON_SHUTDOWN:
         await sandbox_manager.kill_all(app.state.redis)
     await gateway_http.aclose()

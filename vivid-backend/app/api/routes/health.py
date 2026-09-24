@@ -21,7 +21,7 @@ def _builder_status() -> dict:
     """What the app builder can do on this deployment, as booleans: which
     integration is configured, never a value. Enough to see from outside
     that a deploy carried its env and its skills."""
-    from app.builder import blob, chain, images, publish, routing, secrets, skills, supabase
+    from app.builder import blob, chain, decane_connect, images, publish, routing, secrets, skills, supabase
     return {
         "models": routing.endpoint_for(routing.BUILD).configured,
         "sandbox": settings.SANDBOX_DRIVER if (settings.E2B_API_KEY or
@@ -34,6 +34,7 @@ def _builder_status() -> dict:
         "skills": skills.available(),
         "recipes": skills.recipe_names(),
         "chain": chain.ARK["key"],
+        "decane_connect": decane_connect.configured(),
     }
 
 

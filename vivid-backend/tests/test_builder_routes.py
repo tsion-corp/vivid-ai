@@ -49,7 +49,10 @@ class FakeManager:
         self.killed: list[str] = []
         self.touched: list[str] = []
 
-    async def get_or_create(self, project_id, redis, restore=None):
+    async def get_or_create(self, project_id, redis, restore=None, target=None):
+        if target is not None:
+            # A sandbox is made from its project's target (targets.py).
+            self.sandbox.target = target
         if self.fail:
             raise SandboxError("no sandbox for you")
         if self.fresh and restore is not None:
@@ -277,7 +280,8 @@ def test_not_configured(client, monkeypatch):
 def test_preview_and_files(client, fake_manager):
     pid = client.post("/v1/builder/projects", json={"skip_plan": True}).json()["id"]
     r = client.get(f"/v1/builder/projects/{pid}/preview")
-    assert r.json() == {"url": "http://fake:5173", "sandbox_id": "fake_1", "driver": "fake"}
+    assert r.json() == {"url": "http://fake:5173", "sandbox_id": "fake_1", "driver": "fake",
+                        "target": "web", "device_url": None}
     assert client.get(f"/v1/builder/projects/{pid}/files").json() == {
         "files": ["package.json", "src/App.tsx", "src/main.tsx"]}
     assert client.get(f"/v1/builder/projects/{pid}/files/src/App.tsx").json() == {
@@ -446,7 +450,7 @@ def test_skip_plan_with_a_brief_picks_a_recipe_once(client, monkeypatch, fake_ma
     from app.builder import skills
     picks = []
 
-    async def pick(text):
+    async def pick(text, mobile=False):
         picks.append(text)
         return "shop"
     monkeypatch.setattr(skills, "pick_recipe", pick)

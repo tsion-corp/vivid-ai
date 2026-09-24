@@ -18,7 +18,7 @@ class Driver:
         self.fail_wait = False
 
     def install(self, monkeypatch, manager: SandboxManager) -> None:
-        async def create(project_id):
+        async def create(project_id, target=None):
             sb = FakeSandbox({"src/App.tsx": "x"})
             sb.id = f"sb_{len(self.created) + 1}"
             self.created.append(sb)
@@ -96,7 +96,7 @@ async def test_reconnects_from_redis_after_restart(manager, driver, monkeypatch)
 
     class E2BStub:
         @staticmethod
-        async def connect(sandbox_id):
+        async def connect(sandbox_id, target=None):
             return revived if sandbox_id == "sb_old" else None
     monkeypatch.setattr("app.builder.sandbox.e2b.E2BSandbox", E2BStub)
 

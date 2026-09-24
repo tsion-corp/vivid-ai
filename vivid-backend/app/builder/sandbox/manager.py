@@ -19,7 +19,7 @@ from typing import Awaitable, Callable
 
 import httpx
 
-from app.builder import usage
+from app.builder import targets, usage
 from app.builder.sandbox.base import Sandbox, SandboxError
 from app.core.config import settings
 
@@ -45,15 +45,19 @@ class SandboxManager:
 
     # ---------------------------------------------------------------- api
     async def get_or_create(self, project_id: str, redis,
-                            restore: Restore | None = None) -> Sandbox:
+                            restore: Restore | None = None,
+                            target: targets.Target | None = None) -> Sandbox:
+        """`target` picks the template for a new sandbox (web by default);
+        a project's target never changes, so a live one is always right."""
+        target = target or targets.get(targets.WEB)
         lock = self._locks.setdefault(project_id, asyncio.Lock())
         async with lock:
-            sandbox = await self._existing(project_id, redis)
+            sandbox = await self._existing(project_id, redis, target)
             if sandbox is not None:
                 self._seen[project_id] = time.monotonic()
                 return sandbox
 
-            sandbox = await self._create(project_id)
+            sandbox = await self._create(project_id, target)
             log.info("sandbox %s created for project %s (%s)",
                      sandbox.id, project_id, sandbox.driver)
             try:
@@ -116,7 +120,8 @@ class SandboxManager:
                 log.warning("kill of project %s at shutdown failed: %s", pid, e)
 
     # ----------------------------------------------------------- internals
-    async def _existing(self, project_id: str, redis) -> Sandbox | None:
+    async def _existing(self, project_id: str, redis,
+                        target: targets.Target | None = None) -> Sandbox | None:
         sandbox = self._live.get(project_id)
         if sandbox is not None:
             if await sandbox.is_running():
@@ -128,13 +133,14 @@ class SandboxManager:
             if started is not None:
                 await usage.record_sandbox(project_id, sandbox.id,
                                            time.monotonic() - started)
-        sandbox = await self._reconnect(project_id, redis)
+        sandbox = await self._reconnect(project_id, redis, target)
         if sandbox is not None:
             self._live[project_id] = sandbox
             self._started[project_id] = time.monotonic()
         return sandbox
 
-    async def _reconnect(self, project_id: str, redis) -> Sandbox | None:
+    async def _reconnect(self, project_id: str, redis,
+                         target: targets.Target | None = None) -> Sandbox | None:
         if settings.SANDBOX_DRIVER != "e2b":
             return None                     # local sandboxes die with the process
         try:
@@ -145,15 +151,20 @@ class SandboxManager:
         if not sandbox_id:
             return None
         from app.builder.sandbox.e2b import E2BSandbox
-        sandbox = await E2BSandbox.connect(sandbox_id)
+        sandbox = await E2BSandbox.connect(sandbox_id, target)
         if sandbox is None:
             await self._forget(redis, project_id)
         return sandbox
 
-    async def create_fresh(self, project_id: str) -> Sandbox:
+    async def create_fresh(self, project_id: str,
+                           target: targets.Target | None = None,
+                           wait: bool = True) -> Sandbox:
         """A new sandbox from the template, not registered with the manager:
-        the caller owns it and kills it. For the eval script and tests."""
-        sandbox = await self._create(project_id)
+        the caller owns it and kills it. For app builds, the eval script and
+        tests; `wait=False` for work that never needs the dev server."""
+        sandbox = await self._create(project_id, target or targets.get(targets.WEB))
+        if not wait:
+            return sandbox
         try:
             await self._wait_for_dev_server(sandbox)
         except Exception:
@@ -161,15 +172,15 @@ class SandboxManager:
             raise
         return sandbox
 
-    async def _create(self, project_id: str) -> Sandbox:
+    async def _create(self, project_id: str, target: targets.Target) -> Sandbox:
         driver = settings.SANDBOX_DRIVER
         if driver == "e2b":
             from app.builder.sandbox.e2b import E2BSandbox
-            return await E2BSandbox.create(project_id)
+            return await E2BSandbox.create(project_id, target)
         if driver == "local":
             from app.builder.sandbox.local import LocalSandbox
-            return await LocalSandbox.create(settings.BUILDER_TEMPLATE_DIR,
-                                             settings.BUILDER_LOCAL_ROOT, project_id)
+            return await LocalSandbox.create(target.template_dir,
+                                             settings.BUILDER_LOCAL_ROOT, project_id, target)
         raise SandboxError(f"SANDBOX_DRIVER must be e2b or local, not {driver!r}")
 
     async def _wait_for_dev_server(self, sandbox: Sandbox) -> None:
