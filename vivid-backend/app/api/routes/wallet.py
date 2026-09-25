@@ -7,7 +7,10 @@ plan it pays for.
     GET    /v1/wallet/rates             USD rates for the display currencies
     POST   /v1/wallet/bank-account      the user's naira virtual account (made on first call)
     GET    /v1/wallet/crypto/options    tokens and chains to top up with
-    POST   /v1/wallet/crypto/address    the user's address for one option (made on first call)
+    GET    /v1/wallet/crypto/chains     every network a deposit can come from
+    GET    /v1/wallet/crypto/tokens     the tokens one network can send (?chain_id=)
+    POST   /v1/wallet/crypto/address    the user's address for one option, or any
+                                        {chain_id, asset} (made on first call)
     POST   /v1/wallet/credit-packs      buy extra builder credits
     GET    /v1/plans                    the plans and their prices
     GET    /v1/me/plan                  the user's plan, usage meters and extra tokens
@@ -15,6 +18,7 @@ plan it pays for.
     DELETE /v1/me/plan                  cancel at the end of the period
 """
 import logging
+import time
 from datetime import datetime
 
 from fastapi import APIRouter, Depends, Query
@@ -136,35 +140,125 @@ async def crypto_options_list(user: User = Depends(get_session_user),
                         for o in crypto_options.OPTIONS]}
 
 
+# The Dextopus catalog barely changes; an hour's cache keeps the Add funds
+# flow instant and Dextopus unbothered.
+_CATALOG_TTL = 3600
+_catalog: dict[str, tuple[float, list[dict]]] = {}
+
+
+async def _cached(key: str, load) -> list[dict]:
+    hit = _catalog.get(key)
+    if hit and time.monotonic() - hit[0] < _CATALOG_TTL:
+        return hit[1]
+    if not dextopus.configured():
+        raise APIError(503, "not_configured", "Crypto top-ups are not set up yet.")
+    try:
+        rows = await load()
+    except dextopus.DextopusError as e:
+        if hit:
+            return hit[1]                        # stale beats nothing
+        raise APIError(502, "upstream_error", str(e))
+    _catalog[key] = (time.monotonic(), rows)
+    return rows
+
+
+async def _chains() -> list[dict]:
+    async def load():
+        out = []
+        for c in await dextopus.chains():
+            if not c.get("chainId") or not c.get("name"):
+                continue
+            out.append({"chain_id": int(c["chainId"]), "name": str(c["name"]),
+                        "logo_url": c.get("logoUrl"),
+                        "native_symbol": (c.get("nativeCurrency") or {}).get("symbol")})
+        return sorted(out, key=lambda c: c["name"].lower())
+    return await _cached("chains", load)
+
+
+async def _tokens(chain_id: int) -> list[dict]:
+    async def load():
+        rank = {s: i for i, s in enumerate(crypto_options.TOKEN_ORDER)}
+        rows = [{"asset": crypto_options.origin_asset(chain_id, str(t["address"])),
+                 "symbol": str(t.get("symbol") or "?"), "name": str(t.get("name") or ""),
+                 "logo_url": t.get("logoUrl")}
+                for t in await dextopus.tokens(chain_id) if t.get("address")]
+        native = crypto_options.origin_asset(chain_id, crypto_options.NATIVE_PLACEHOLDER)
+        # Stablecoins first (what people pay with), then the native coin, then the rest.
+        return sorted(rows, key=lambda t: (rank.get(t["symbol"].upper(), len(rank) + (0 if t["asset"] == native else 1)),
+                                           t["symbol"].lower()))
+    return await _cached(f"tokens:{chain_id}", load)
+
+
+def _min_usd(chain_id: int) -> float:
+    """Ethereum mainnet costs more to move than a dollar is worth."""
+    return max(settings.WALLET_CRYPTO_MIN_USD, 10.0) if chain_id == crypto_options.ETHEREUM \
+        else settings.WALLET_CRYPTO_MIN_USD
+
+
+@router.get("/wallet/crypto/chains")
+async def crypto_chains(user: User = Depends(get_session_user)):
+    chains = await _chains()
+    by_name = {c["name"]: c for c in chains}
+    return {"available": dextopus.configured(), "settles_as": "USDC on Base",
+            "min_usd": settings.WALLET_CRYPTO_MIN_USD,
+            "recommended": [by_name[n]["chain_id"] for n in crypto_options.RECOMMENDED if n in by_name],
+            "chains": chains}
+
+
+@router.get("/wallet/crypto/tokens")
+async def crypto_tokens(chain_id: int, user: User = Depends(get_session_user)):
+    return {"chain_id": chain_id, "min_usd": _min_usd(chain_id), "tokens": await _tokens(chain_id)}
+
+
 class CryptoAddressIn(BaseModel):
-    option: str = Field(max_length=32)
+    option: str | None = Field(default=None, max_length=32)
+    chain_id: int | None = None
+    asset: str | None = Field(default=None, max_length=128)
 
 
 @router.post("/wallet/crypto/address")
 async def crypto_address(body: CryptoAddressIn, user: User = Depends(get_session_user),
                          db: AsyncSession = Depends(get_db)):
-    option = crypto_options.get(body.option)
-    if option is None:
-        raise APIError(400, "bad_request", "Unknown token or network.")
+    """The user's address for a named option ("usdc-base"), or for any token
+    and chain from the catalog. The symbol and network name come from the
+    catalog, never from the request."""
+    if body.chain_id is not None and body.asset:
+        chain = next((c for c in await _chains() if c["chain_id"] == body.chain_id), None)
+        token = next((t for t in await _tokens(body.chain_id)
+                      if t["asset"].lower() == body.asset.lower()), None) if chain else None
+        if chain is None or token is None:
+            raise APIError(400, "bad_request", "That token can't be deposited on that network.")
+        key = crypto_options.pair_key(chain["chain_id"], token["asset"])
+        chain_id, asset, symbol, chain_name = chain["chain_id"], token["asset"], token["symbol"], chain["name"]
+        note = f"{chain_name} network only"
+    else:
+        option = crypto_options.get(body.option or "")
+        if option is None:
+            raise APIError(400, "bad_request", "Unknown token or network.")
+        key, chain_id, asset, symbol, chain_name = (option.key, option.chain_id, option.asset,
+                                                    option.symbol, option.chain)
+        note = option.network_note
     existing = (await db.execute(select(WalletFunding).where(
         WalletFunding.user_id == user.id, WalletFunding.provider == "dextopus",
-        WalletFunding.option == option.key))).scalars().first()
+        WalletFunding.option == key))).scalars().first()
     if existing is None:
         if not dextopus.configured():
             raise APIError(503, "not_configured", "Crypto top-ups are not set up yet.")
         try:
-            data = await dextopus.static_address(user.id, option)
+            data = await dextopus.static_address_for(user.id, key, chain_id, asset)
         except dextopus.DextopusError as e:
             raise APIError(502, "upstream_error", str(e))
-        existing = WalletFunding(user_id=user.id, provider="dextopus", option=option.key,
+        # For crypto, account_name and bank_name hold the token and network
+        # names, so a deposit's receipt can say what arrived.
+        existing = WalletFunding(user_id=user.id, provider="dextopus", option=key,
                                  external_id=data.get("id") or data["depositAddress"],
-                                 address=data["depositAddress"], chain_id=option.chain_id,
-                                 asset=option.asset)
+                                 address=data["depositAddress"], chain_id=chain_id,
+                                 asset=asset, account_name=symbol[:160], bank_name=chain_name[:80])
         db.add(existing)
         await db.commit()
-    return {"option": option.key, "symbol": option.symbol, "chain": option.chain,
-            "address": existing.address, "network_note": option.network_note,
-            "min_usd": settings.WALLET_CRYPTO_MIN_USD, "settles_as": "USDC on Base"}
+    return {"option": key, "symbol": symbol, "chain": chain_name, "chain_id": chain_id,
+            "address": existing.address, "network_note": note,
+            "min_usd": _min_usd(chain_id), "settles_as": "USDC on Base"}
 
 
 class PackIn(BaseModel):

@@ -90,11 +90,14 @@ async def credit_dextopus_deposit(db: AsyncSession, deposit: dict) -> WalletEntr
         return None
     micro = settled * MICRO // 10 ** crypto_options.SETTLEMENT_DECIMALS
     option = crypto_options.get(funding.option)
+    # A named option, or a catalog pair whose names were kept on the funding.
+    symbol = option.symbol if option else funding.account_name
+    chain = option.chain if option else funding.bank_name
     entry = await ledger.credit(
         db, funding.user_id, micro, ledger.DEPOSIT_CRYPTO, DEXTOPUS, str(ref),
         original_amount=str(deposit.get("originAmountFormatted") or deposit.get("originAmount")),
-        original_currency=option.symbol if option else None,
-        description=f"{option.symbol} on {option.chain}" if option else "Crypto deposit",
+        original_currency=symbol,
+        description=f"{symbol} on {chain}" if symbol and chain else "Crypto deposit",
         meta={"origin_tx": deposit.get("originTxHash"),
               "settlement_tx": deposit.get("settlementTxHash"),
               "origin_usd": deposit.get("originAmountUsd")})

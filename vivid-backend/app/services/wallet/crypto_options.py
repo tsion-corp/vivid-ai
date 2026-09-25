@@ -53,3 +53,38 @@ BY_KEY = {o.key: o for o in OPTIONS}
 
 def get(key: str) -> Option | None:
     return BY_KEY.get(key)
+
+
+# --------------------------------------------------------------- the catalog
+# Beyond the options above, any token Dextopus takes on any chain can fund a
+# wallet: the person picks a network, then a token, as in the Add funds flow.
+
+#: The generic "native gas token" address Dextopus's per-chain catalog uses;
+#: address generation wants the all-zero address on EVM chains and the system
+#: program id on Solana instead (verified live).
+NATIVE_PLACEHOLDER = "0xeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee"
+EVM_NATIVE = "0x0000000000000000000000000000000000000000"
+SOLANA_NATIVE = "11111111111111111111111111111111"
+
+#: Shown first on the network step.
+RECOMMENDED = ("Base", "Ethereum", "Solana", "Tron", "Polygon", "Arbitrum", "BNB Chain",
+               "Optimism", "Avalanche")
+#: Shown first on the token step: what most people hold to pay with.
+TOKEN_ORDER = ("USDC", "USDT")
+
+
+def origin_asset(chain_id: int, address: str) -> str:
+    """The token address Dextopus's generate endpoint accepts."""
+    if address.lower() != NATIVE_PLACEHOLDER:
+        return address
+    return SOLANA_NATIVE if chain_id == SOLANA else EVM_NATIVE
+
+
+def pair_key(chain_id: int, asset: str) -> str:
+    """A funding option key for any chain and token (fits the 32-char column).
+    The ten named options keep their own keys, so existing addresses carry on."""
+    for o in OPTIONS:
+        if o.chain_id == chain_id and o.asset.lower() == asset.lower():
+            return o.key
+    import hashlib
+    return "c-" + hashlib.sha256(f"{chain_id}:{asset.lower()}".encode()).hexdigest()[:24]

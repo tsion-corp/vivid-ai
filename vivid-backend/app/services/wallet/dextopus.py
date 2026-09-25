@@ -49,18 +49,30 @@ async def _call(method: str, path: str, *, json_body: dict | None = None,
     return body
 
 
-async def static_address(user_id: str, option: crypto_options.Option) -> dict:
-    """The user's reusable address for this token and chain."""
+async def static_address_for(user_id: str, key: str, chain_id: int, asset: str) -> dict:
+    """The user's reusable address for any token Dextopus takes on any chain."""
     out = await _call("POST", "/deposit/static/generate", json_body={
         "userId": user_id,
-        "originChainId": option.chain_id,
-        "originAsset": option.asset,
+        "originChainId": chain_id,
+        "originAsset": asset,
         "settlementChainId": crypto_options.SETTLEMENT_CHAIN,
         "settlementAsset": crypto_options.SETTLEMENT_ASSET,
         "settlementAddress": settings.DEXTOPUS_SETTLEMENT_ADDRESS,
-        "metadata": {"vivid_user": user_id, "option": option.key},
+        "metadata": {"vivid_user": user_id, "option": key},
     })
     return out["data"]
+
+
+async def chains() -> list[dict]:
+    """Every chain Dextopus takes deposits from."""
+    return (await _call("GET", "/deposit/chains")).get("chains") or []
+
+
+async def tokens(chain_id: int) -> list[dict]:
+    """The tokens on a chain that a static (reusable) address accepts."""
+    out = await _call("GET", "/deposit/tokens",
+                      params={"chainId": chain_id, "supportsStaticAddress": "true"})
+    return [t for t in out.get("tokens") or [] if t.get("supportsStaticAddress", True)]
 
 
 async def deposits(user_id: str | None = None, status: str | None = None,

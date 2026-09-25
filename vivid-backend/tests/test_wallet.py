@@ -112,6 +112,17 @@ async def test_a_dextopus_deposit_credits_its_settled_usdc(maker):
                                                            "userId": "u2"}) is None
 
 
+async def test_a_deposit_to_a_catalog_pair_says_what_arrived(maker):
+    await _funding(maker, provider="dextopus", option="c-abc", external_id="addr_c",
+                   address="0xdep", chain_id=42220, account_name="USDT", bank_name="Celo")
+    async with maker() as db:
+        entry = await deposits.credit_dextopus_deposit(db, {
+            "requestId": "0xc1", "status": "COMPLETED", "staticAddressId": "addr_c",
+            "depositAddress": "0xdep", "userId": "u1", "originAmountFormatted": "5.0",
+            "settlementAmount": "4950000"})
+        assert entry.original_currency == "USDT" and entry.description == "USDT on Celo"
+
+
 async def test_the_reconciler_finds_what_webhooks_missed(maker, monkeypatch):
     monkeypatch.setattr(settings, "POUCH_API_KEY", "sk_test")
     monkeypatch.setattr(settings, "DEXTOPUS_API_KEY", "pk_test")
@@ -231,16 +242,60 @@ def test_crypto_addresses_are_made_once_per_option(app_client, monkeypatch):
     monkeypatch.setattr(settings, "DEXTOPUS_SETTLEMENT_ADDRESS", "0xtreasury")
     calls = []
 
-    async def static_address(user_id, option):
-        calls.append(option.key)
-        return {"id": f"addr_{option.key}", "depositAddress": f"dep-{option.key}"}
-    monkeypatch.setattr(dextopus, "static_address", static_address)
+    async def static_address_for(user_id, key, chain_id, asset):
+        calls.append((key, chain_id, asset))
+        return {"id": f"addr_{key}", "depositAddress": f"dep-{key}"}
+    monkeypatch.setattr(dextopus, "static_address_for", static_address_for)
     a = app_client.post("/v1/wallet/crypto/address", json={"option": "usdt-tron"}).json()
     b = app_client.post("/v1/wallet/crypto/address", json={"option": "usdt-tron"}).json()
-    assert a["address"] == b["address"] == "dep-usdt-tron" and calls == ["usdt-tron"]
+    assert a["address"] == b["address"] == "dep-usdt-tron" and [c[0] for c in calls] == ["usdt-tron"]
     opts = app_client.get("/v1/wallet/crypto/options").json()
     assert {o["key"]: o["address"] for o in opts["options"]}["usdt-tron"] == "dep-usdt-tron"
     bad = app_client.post("/v1/wallet/crypto/address", json={"option": "doge-moon"})
+    assert bad.status_code == 400
+
+
+def test_any_network_and_token_from_the_catalog(app_client, monkeypatch):
+    """The Add funds flow: a network, then a token, then the address. Names
+    come from the catalog, the native-coin placeholder is normalised, and a
+    named option picked this way keeps its existing address."""
+    from app.api.routes import wallet as wallet_routes
+    monkeypatch.setattr(settings, "DEXTOPUS_API_KEY", "pk_test")
+    monkeypatch.setattr(settings, "DEXTOPUS_SETTLEMENT_ADDRESS", "0xtreasury")
+    monkeypatch.setattr(wallet_routes, "_catalog", {})
+    made = []
+
+    async def chains():
+        return [{"chainId": 8453, "name": "Base", "logoUrl": "b.png", "nativeCurrency": {"symbol": "ETH"}},
+                {"chainId": 1, "name": "Ethereum", "logoUrl": "e.png", "nativeCurrency": {"symbol": "ETH"}},
+                {"chainId": 42220, "name": "Celo", "logoUrl": None, "nativeCurrency": {"symbol": "CELO"}}]
+
+    async def tokens(chain_id):
+        return [{"address": "0xEeeeeEeeeEeEeeEeEeEeeEEEeeeeEeeeeeeeEEeE", "symbol": "CELO", "name": "Celo"},
+                {"address": "0xdeg", "symbol": "DEGEN", "name": "Degen"},
+                {"address": "0xusdt", "symbol": "USDT", "name": "Tether USD"}]
+
+    async def static_address_for(user_id, key, chain_id, asset):
+        made.append((key, chain_id, asset))
+        return {"id": f"addr_{key}", "depositAddress": f"dep-{chain_id}-{asset}"}
+    monkeypatch.setattr(dextopus, "chains", chains)
+    monkeypatch.setattr(dextopus, "tokens", tokens)
+    monkeypatch.setattr(dextopus, "static_address_for", static_address_for)
+
+    listed = app_client.get("/v1/wallet/crypto/chains").json()
+    assert [c["name"] for c in listed["chains"]] == ["Base", "Celo", "Ethereum"]
+    assert listed["recommended"] == [8453, 1]
+    toks = app_client.get("/v1/wallet/crypto/tokens?chain_id=42220").json()
+    # Stablecoins first, then the native coin (normalised), then the rest.
+    assert [(t["symbol"], t["asset"]) for t in toks["tokens"]] == [
+        ("USDT", "0xusdt"), ("CELO", "0x0000000000000000000000000000000000000000"), ("DEGEN", "0xdeg")]
+    assert app_client.get("/v1/wallet/crypto/tokens?chain_id=1").json()["min_usd"] >= 10
+
+    out = app_client.post("/v1/wallet/crypto/address", json={"chain_id": 42220, "asset": "0xusdt"}).json()
+    assert out["symbol"] == "USDT" and out["chain"] == "Celo" and out["address"] == "dep-42220-0xusdt"
+    again = app_client.post("/v1/wallet/crypto/address", json={"chain_id": 42220, "asset": "0xUSDT"}).json()
+    assert again["address"] == out["address"] and len(made) == 1
+    bad = app_client.post("/v1/wallet/crypto/address", json={"chain_id": 42220, "asset": "0xnope"})
     assert bad.status_code == 400
 
 
