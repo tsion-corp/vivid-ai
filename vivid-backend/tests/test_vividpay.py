@@ -467,6 +467,7 @@ def test_history_folds_fees_filters_and_pages(api, maker, fake):
     apps = api.get("/v1/earnings").json()["apps"]
     assert [(a["name"], a["net_kobo"]) for a in apps] == [("Mama's Kitchen", 3 * (1_500_000 - 22_500)),
                                                          ("Quiet Shop", 0)]
+    assert [a["orders"] for a in apps] == [3, 0] and apps[1]["last_paid_at"] is None
 
 
 def test_app_webhook_signature():

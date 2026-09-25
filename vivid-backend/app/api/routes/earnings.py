@@ -54,7 +54,14 @@ async def my_earnings(user: User = Depends(get_session_user), db: AsyncSession =
             .join(BuilderProject, BuilderProject.id == VividPayProject.project_id)
             .where(VividPayProject.owner_id == user.id))).all():
         totals.setdefault(pid, (name, 0))
-    apps = sorted(({"project_id": pid, "name": name, "net_kobo": total}
+    orders = {pid: (int(n), last) for pid, n, last in (await db.execute(
+        select(VividPayCheckout.project_id, func.count(), func.max(VividPayCheckout.paid_at))
+        .where(VividPayCheckout.owner_id == user.id, VividPayCheckout.mode == "live",
+               VividPayCheckout.status.in_(("paid", "partial")))
+        .group_by(VividPayCheckout.project_id))).all()}
+    apps = sorted(({"project_id": pid, "name": name, "net_kobo": total,
+                    "orders": orders.get(pid, (0, None))[0],
+                    "last_paid_at": orders.get(pid, (0, None))[1]}
                    for pid, (name, total) in totals.items()),
                   key=lambda a: (-a["net_kobo"], (a["name"] or "").lower()))
     return {"balance_kobo": account.balance_kobo, "pending_kobo": account.pending_kobo,
