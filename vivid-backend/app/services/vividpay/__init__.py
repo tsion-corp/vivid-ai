@@ -24,10 +24,10 @@ class VividPayError(Exception):
 
 
 def fee_for(amount_kobo: int) -> int:
-    """Vivid's fee on a payment: basis points between the minimum and the
-    cap, never more than the payment."""
+    """Vivid's fee on a payment: the larger of the basis points and the
+    minimum, plus the flat part, never above the cap nor the payment."""
     fee = amount_kobo * settings.VIVIDPAY_FEE_BPS // 10_000
-    fee = max(fee, settings.VIVIDPAY_MIN_FEE_KOBO)
+    fee = max(fee, settings.VIVIDPAY_MIN_FEE_KOBO) + settings.VIVIDPAY_FIXED_FEE_KOBO
     fee = min(fee, settings.VIVIDPAY_FEE_CAP_KOBO)
     return max(min(fee, amount_kobo), 0)
 

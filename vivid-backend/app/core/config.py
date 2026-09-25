@@ -539,11 +539,13 @@ class Settings(BaseSettings):
     # earnings (naira, separate from the credits wallet) and is withdrawn
     # to a Nigerian bank after a one-time BVN check.
     VIVIDPAY_ENABLED: bool = True
-    # Vivid's fee per payment: basis points, never below the minimum (which
-    # covers moving the money to the owner's earnings account) nor above
-    # the cap. Kobo.
+    # Vivid's fee per payment, kobo: the larger of the basis points and the
+    # minimum, plus a flat part that covers moving the money to the owner's
+    # earnings account (a ₦20 Pouch transfer), never above the cap.
+    # ₦1,000 -> ₦45; ₦10,000 -> ₦170; ₦133,334 and up -> ₦2,000.
     VIVIDPAY_FEE_BPS: int = 150
-    VIVIDPAY_MIN_FEE_KOBO: int = 10_000
+    VIVIDPAY_MIN_FEE_KOBO: int = 2_500
+    VIVIDPAY_FIXED_FEE_KOBO: int = 2_000
     VIVIDPAY_FEE_CAP_KOBO: int = 200_000
     VIVIDPAY_CHECKOUT_MINUTES: int = 30
     VIVIDPAY_MIN_CHECKOUT_KOBO: int = 10_000

@@ -114,6 +114,7 @@ def fake(monkeypatch):
         vault._fernet.cache_clear()
     monkeypatch.setattr(settings, "VIVIDPAY_FEE_BPS", 150)
     monkeypatch.setattr(settings, "VIVIDPAY_MIN_FEE_KOBO", 10_000)
+    monkeypatch.setattr(settings, "VIVIDPAY_FIXED_FEE_KOBO", 0)     # the flows below use a plain 1.5%
     monkeypatch.setattr(settings, "VIVIDPAY_FEE_CAP_KOBO", 200_000)
     monkeypatch.setattr(settings, "POUCH_AMOUNTS_IN_KOBO", True)
     monkeypatch.setattr(checkouts, "_BANK_UUIDS", {})
@@ -152,14 +153,14 @@ async def _checkout(maker, pid, amount=1_500_000, reference="order-1", mode="liv
 
 
 # ------------------------------------------------------------------- money
-def test_fee_is_basis_points_between_the_minimum_and_the_cap(monkeypatch):
-    monkeypatch.setattr(settings, "VIVIDPAY_FEE_BPS", 150)
-    monkeypatch.setattr(settings, "VIVIDPAY_MIN_FEE_KOBO", 10_000)
-    monkeypatch.setattr(settings, "VIVIDPAY_FEE_CAP_KOBO", 200_000)
-    assert fee_for(1_500_000) == 22_500            # 1.5% of ₦15,000
-    assert fee_for(100_000) == 10_000              # the ₦100 minimum
+def test_fee_is_the_larger_of_the_rate_and_the_minimum_plus_a_flat_part(monkeypatch):
+    for name in ("VIVIDPAY_FEE_BPS", "VIVIDPAY_MIN_FEE_KOBO", "VIVIDPAY_FIXED_FEE_KOBO", "VIVIDPAY_FEE_CAP_KOBO"):
+        monkeypatch.setattr(settings, name, type(settings).model_fields[name].default)
+    assert fee_for(35_000) == 4_500                # ₦350: ₦25 minimum + ₦20
+    assert fee_for(100_000) == 4_500               # ₦1,000: 1.5% is ₦15, so ₦25 + ₦20
+    assert fee_for(1_000_000) == 17_000            # ₦10,000: ₦150 + ₦20
     assert fee_for(50_000_000) == 200_000          # the ₦2,000 cap
-    assert fee_for(5_000) == 5_000                 # never more than the payment
+    assert fee_for(3_000) == 3_000                 # never more than the payment
 
 
 async def test_a_checkout_opens_an_account_limited_to_the_order(maker, fake):
