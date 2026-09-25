@@ -69,6 +69,8 @@ SOLANA_NATIVE = "11111111111111111111111111111111"
 #: Shown first on the network step.
 RECOMMENDED = ("Base", "Ethereum", "Solana", "Tron", "Polygon", "Arbitrum", "BNB Chain",
                "Optimism", "Avalanche")
+#: Dextopus's chain names that read better as people say them.
+CHAIN_NAMES = {"BNB": "BNB Chain"}
 #: Shown first on the token step: what most people hold to pay with.
 TOKEN_ORDER = ("USDC", "USDT")
 

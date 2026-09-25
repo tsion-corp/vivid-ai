@@ -168,7 +168,8 @@ async def _chains() -> list[dict]:
         for c in await dextopus.chains():
             if not c.get("chainId") or not c.get("name"):
                 continue
-            out.append({"chain_id": int(c["chainId"]), "name": str(c["name"]),
+            name = crypto_options.CHAIN_NAMES.get(str(c["name"]), str(c["name"]))
+            out.append({"chain_id": int(c["chainId"]), "name": name,
                         "logo_url": c.get("logoUrl"),
                         "native_symbol": (c.get("nativeCurrency") or {}).get("symbol")})
         return sorted(out, key=lambda c: c["name"].lower())
