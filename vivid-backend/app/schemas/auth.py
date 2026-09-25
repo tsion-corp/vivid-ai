@@ -17,6 +17,17 @@ class RefreshRequest(BaseModel):
     refresh_token: str
 
 
+class EmailStartRequest(BaseModel):
+    # Pasted addresses and codes often carry spaces.
+    model_config = ConfigDict(str_strip_whitespace=True)
+
+    email: str = Field(min_length=3, max_length=320, pattern=r"^[^@\s]+@[^@\s]+$")
+
+
+class EmailVerifyRequest(EmailStartRequest):
+    code: str = Field(min_length=4, max_length=12)
+
+
 class DecaneLoginRequest(BaseModel):
     # The Decane access token from the sign-in callback.
     access_token: str

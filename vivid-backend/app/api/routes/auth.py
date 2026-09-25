@@ -9,9 +9,9 @@ from app.core.config import settings
 from app.core.security import (create_token_pair, decode_token, hash_password,
                                verify_password)
 from app.db.models import User
-from app.schemas.auth import (DecaneLoginRequest, LoginRequest, ProfileUpdate,
-                              RefreshRequest, SignupRequest, TokenPairOut,
-                              UserOut)
+from app.schemas.auth import (DecaneLoginRequest, EmailStartRequest, EmailVerifyRequest,
+                              LoginRequest, ProfileUpdate, RefreshRequest,
+                              SignupRequest, TokenPairOut, UserOut)
 from app.services import decane
 
 # Sentinel password hash for social-login accounts — it can never verify, so
@@ -56,15 +56,13 @@ async def login(body: LoginRequest, db: AsyncSession = Depends(get_db)):
     return _pair(user)
 
 
-@router.post("/decane", response_model=TokenPairOut)
-async def decane_login(body: DecaneLoginRequest,
-                       db: AsyncSession = Depends(get_db)):
-    """Social sign-in via Decane Connect (Google etc.). The browser SDK hands
-    us a Decane access token; we verify it offline (ES256, JWKS) and key the
-    account on the stable `uid` claim — never on a client-supplied email,
-    which would allow account takeover."""
+async def _session(db: AsyncSession, access_token: str, name: str | None = None,
+                   email: str | None = None, picture: str | None = None) -> TokenPairOut:
+    """A verified Decane token -> Vivid's own token pair. The account is keyed
+    on the token's stable `uid`, never on an email the caller supplies, which
+    would allow account takeover."""
     try:
-        claims = decane.verify_access_token(body.access_token)
+        claims = decane.verify_access_token(access_token)
     except decane.DecaneAuthError as e:
         status = 503 if "not configured" in str(e) else 401
         raise HTTPException(status_code=status, detail=str(e))
@@ -77,16 +75,68 @@ async def decane_login(body: DecaneLoginRequest,
     if user is None:
         user = User(email=identity, password_hash=OAUTH_SENTINEL)
         db.add(user)
-    # Google's profile fills what the account doesn't have yet: a real name,
-    # a photo, and the address to show (the account key stays synthetic).
-    if body.name and not user.name:
-        user.name = body.name.strip()
-    if body.picture and not user.avatar_url:
-        user.avatar_url = body.picture
-    if body.email and not user.profile_email:
-        user.profile_email = body.email.lower()
+    # The profile fills what the account doesn't have yet: a real name, a
+    # photo, and the address to show (the account key stays synthetic).
+    if name and not user.name:
+        user.name = name.strip()[:120]
+    if picture and not user.avatar_url:
+        user.avatar_url = picture[:1024]
+    if email and not user.profile_email:
+        user.profile_email = email.lower()[:320]
     await db.commit()
     return _pair(user)
+
+
+def _decane_error(e: decane.DecaneError) -> APIError:
+    """A Decane failure as something safe to show."""
+    if e.code == "INVALID_CODE":
+        return APIError(400, "invalid_code", "That code is wrong or has expired.")
+    if e.code == "RATE_LIMITED" or e.status == 429:
+        return APIError(429, "rate_limited", "Too many sign-ins right now. Wait a few minutes and try again.")
+    if e.code == "not_configured":
+        return APIError(503, "not_configured", str(e))
+    return APIError(502, "sign_in_unavailable", "Sign-in is unavailable right now. Try again shortly.")
+
+
+@router.post("/email/start", status_code=202)
+async def email_start(body: EmailStartRequest):
+    """Emails a sign-in code. Always 202 for a well-formed address: whether
+    an account exists is never revealed."""
+    try:
+        await decane.start_email(body.email.strip().lower())
+    except decane.DecaneError as e:
+        raise _decane_error(e)
+    return {"ok": True}
+
+
+@router.post("/email/verify", response_model=TokenPairOut)
+async def email_verify(body: EmailVerifyRequest, db: AsyncSession = Depends(get_db)):
+    email = body.email.strip().lower()
+    try:
+        result = await decane.verify_email(email, body.code.strip())
+    except decane.DecaneError as e:
+        raise _decane_error(e)
+    profile = result.get("profile") or {}
+    return await _session(db, str(result.get("jwt") or ""), name=profile.get("name"),
+                          email=profile.get("email") or email, picture=profile.get("picture"))
+
+
+@router.get("/google/start")
+async def google_start():
+    """Where to send the browser for Google; it comes back to the callback
+    registered in Decane with `decane_jwt`, which POST /auth/decane takes."""
+    try:
+        return {"url": await decane.google_consent_url()}
+    except decane.DecaneError as e:
+        raise _decane_error(e)
+
+
+@router.post("/decane", response_model=TokenPairOut)
+async def decane_login(body: DecaneLoginRequest,
+                       db: AsyncSession = Depends(get_db)):
+    """The end of the Google redirect: the `decane_jwt` Decane put on the
+    callback URL, verified offline (ES256, JWKS) and traded for a session."""
+    return await _session(db, body.access_token, body.name, body.email, body.picture)
 
 
 @router.get("/me", response_model=UserOut)
