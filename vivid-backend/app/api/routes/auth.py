@@ -169,11 +169,17 @@ async def email_verify(body: EmailVerifyRequest, db: AsyncSession = Depends(get_
 
 
 @router.get("/google/start")
-async def google_start():
+async def google_start(request: Request):
     """Where to send the browser for Google; it comes back to the callback
-    registered in Decane with `decane_jwt`, which POST /auth/decane takes."""
+    registered in Decane with `decane_jwt`, which POST /auth/decane takes.
+
+    The caller's Origin decides WHICH callback: the key carries one per host
+    (vividbuild.ai, the preview hosts, localhost), and Decane matches on it.
+    Referer is the fallback for a plain navigation, which sends no Origin.
+    """
+    origin = request.headers.get("origin") or request.headers.get("referer")
     try:
-        return {"url": await decane.google_consent_url()}
+        return {"url": await decane.google_consent_url(origin=origin)}
     except decane.DecaneError as e:
         raise _decane_error(e)
 

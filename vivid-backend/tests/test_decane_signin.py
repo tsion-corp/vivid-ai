@@ -23,8 +23,9 @@ class FakeDecane:
         self.calls: list[tuple] = []
         self.fail: decane.DecaneError | None = None
 
-    async def call(self, method, path, body=None):
+    async def call(self, method, path, body=None, origin=None):
         self.calls.append((method, path, body))
+        self.origin = origin
         if self.fail:
             raise self.fail
         if path == "/auth/email/start":
@@ -111,6 +112,13 @@ def test_google_starts_from_the_server(api, fake):
     out = api.get("/v1/auth/google/start")
     assert out.json()["url"].startswith("https://accounts.google.com/")
     assert fake.calls[-1][:2] == ("GET", "/auth/google/init")
+    # The host the person started from picks which of the key's callbacks
+    # Google returns them to (Referer for a plain navigation).
+    assert fake.origin is None
+    api.get("/v1/auth/google/start", headers={"origin": "https://vividbuild.ai"})
+    assert fake.origin == "https://vividbuild.ai"
+    api.get("/v1/auth/google/start", headers={"referer": "https://vivid-build.vercel.app/"})
+    assert fake.origin == "https://vivid-build.vercel.app/"
 
 
 def test_codes_per_address_are_counted_so_nobody_hammers_a_silent_button(api, fake, monkeypatch):

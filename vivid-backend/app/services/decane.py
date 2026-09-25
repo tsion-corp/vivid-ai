@@ -76,13 +76,32 @@ def sign_in_configured() -> bool:
     return bool(settings.DECANE_APP_ID and settings.DECANE_API_KEY)
 
 
-async def _call(method: str, path: str, body: dict | None = None) -> dict:
+async def _call(method: str, path: str, body: dict | None = None,
+                origin: str | None = None) -> dict:
+    """`origin` is the browser's Origin (or Referer), forwarded as-is.
+
+    A Decane API key can carry several sign-in callback URLs — one per host the
+    app runs on. Decane chooses between them by matching this header's host
+    against the registered list, falling back to the FIRST entry when the
+    request carries neither Origin nor Referer. A server-to-server call carries
+    neither, so without this every Google sign-in came back to the first URL no
+    matter which host the user started from.
+
+    Forwarding a client-controlled header is safe here because Decane never
+    takes a URL from the request: the candidates are only the URLs registered
+    on the key, and this merely selects among them. A forged value can at worst
+    pick another of our own callbacks. It is the same header the browser SDK
+    sends when it calls Decane directly.
+    """
     if not sign_in_configured():
         raise DecaneError("not_configured", "Sign-in is not set up on this server.", 503)
+    headers = {"X-API-Key": settings.DECANE_API_KEY, "X-App-Id": settings.DECANE_APP_ID}
+    if origin:
+        headers["Origin"] = origin
     try:
         r = await http.client().request(
             method, f"{settings.DECANE_API_BASE.rstrip('/')}{path}", json=body,
-            headers={"X-API-Key": settings.DECANE_API_KEY, "X-App-Id": settings.DECANE_APP_ID},
+            headers=headers,
             timeout=settings.DECANE_AUTH_TIMEOUT)
     except httpx.HTTPError as e:
         raise DecaneError("unreachable", f"Sign-in is unavailable right now ({e.__class__.__name__}).")
@@ -105,10 +124,15 @@ async def verify_email(email: str, code: str) -> dict:
     return await _call("POST", "/auth/email/verify", {"email": email, "code": code})
 
 
-async def google_consent_url() -> str:
+async def google_consent_url(origin: str | None = None) -> str:
     """Decane's hosted Google flow: the browser goes here and comes back to
-    the callback registered against the key, with `decane_jwt`."""
-    url = (await _call("GET", "/auth/google/init")).get("url")
+    the callback registered against the key, with `decane_jwt`.
+
+    Pass the browser's Origin so Decane returns the user to the host they
+    started from; see `_call`. Omitting it is not an error — the user just
+    lands on the key's first callback URL.
+    """
+    url = (await _call("GET", "/auth/google/init", origin=origin)).get("url")
     if not url:
         raise DecaneError("not_configured", "Google sign-in is not set up for this Decane key. "
                           "Add a callback URL in the Decane dashboard.", 503)
