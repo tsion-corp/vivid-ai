@@ -1,6 +1,10 @@
+import hashlib
+import json
+import time
+
 import jwt as pyjwt
 from app.core.errors import APIError
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, HTTPException, Request
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -98,15 +102,58 @@ def _decane_error(e: decane.DecaneError) -> APIError:
     return APIError(502, "sign_in_unavailable", "Sign-in is unavailable right now. Try again shortly.")
 
 
-@router.post("/email/start", status_code=202)
-async def email_start(body: EmailStartRequest):
-    """Emails a sign-in code. Always 202 for a well-formed address: whether
-    an account exists is never revealed."""
+#: Decane sends at most three codes per address an hour, and a fourth
+#: request "succeeds" without sending. Counting here, per address (never per
+#: IP: every sign-in comes from this one server), lets us say so instead.
+CODES_PER_HOUR = 3
+RESEND_SECONDS = 60
+
+
+def _codes_key(email: str) -> str:
+    return "auth:codes:" + hashlib.sha256(email.encode()).hexdigest()[:32]
+
+
+async def _codes_sent(redis, email: str, now: float) -> list[float]:
+    if redis is None:
+        return []
     try:
-        await decane.start_email(body.email.strip().lower())
+        raw = await redis.get(_codes_key(email))
+        return [t for t in json.loads(raw or "[]") if now - t < 3600]
+    except Exception:
+        return []
+
+
+@router.post("/email/start", status_code=202)
+async def email_start(body: EmailStartRequest, request: Request):
+    """Emails a sign-in code. Always 202 for a well-formed address (whether
+    an account exists is never revealed), unless this address has had a code
+    too recently or too often, which is true of any address alike."""
+    email = body.email.strip().lower()
+    redis = getattr(request.app.state, "redis", None)
+    now = time.time()
+    sent = await _codes_sent(redis, email, now)
+    if sent and now - sent[-1] < RESEND_SECONDS:
+        wait = int(RESEND_SECONDS - (now - sent[-1])) + 1
+        raise APIError(429, "code_just_sent",
+                       f"A code was just sent. Check your inbox (and spam); you can ask for another in {wait}s.",
+                       details={"retry_after": wait, "codes_left": max(CODES_PER_HOUR - len(sent), 0)})
+    if len(sent) >= CODES_PER_HOUR:
+        wait = int(3600 - (now - sent[0])) + 1
+        raise APIError(429, "too_many_codes",
+                       f"{CODES_PER_HOUR} codes have gone to this address in the last hour. Use the newest one "
+                       f"in your inbox (check spam), or ask for another in {max(wait // 60, 1)} min.",
+                       details={"retry_after": wait, "codes_left": 0})
+    try:
+        await decane.start_email(email)
     except decane.DecaneError as e:
         raise _decane_error(e)
-    return {"ok": True}
+    sent.append(now)
+    if redis is not None:
+        try:
+            await redis.set(_codes_key(email), json.dumps(sent), ex=3600)
+        except Exception:
+            pass
+    return {"ok": True, "resend_in": RESEND_SECONDS, "codes_left": CODES_PER_HOUR - len(sent)}
 
 
 @router.post("/email/verify", response_model=TokenPairOut)

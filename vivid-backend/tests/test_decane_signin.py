@@ -12,6 +12,7 @@ from app.core import errors
 from app.core.config import settings
 from app.db.models import User
 from app.services import decane
+from tests.conftest import FakeRedis
 from tests.test_builder_routes import maker  # noqa: F401
 
 REAL_CALL = decane._call
@@ -56,6 +57,7 @@ def api(maker):  # noqa: F811
     app = FastAPI()
     errors.install(app)
     app.include_router(auth_router, prefix="/v1")
+    app.state.redis = FakeRedis()
 
     async def db():
         async with maker() as session:
@@ -109,3 +111,24 @@ def test_google_starts_from_the_server(api, fake):
     out = api.get("/v1/auth/google/start")
     assert out.json()["url"].startswith("https://accounts.google.com/")
     assert fake.calls[-1][:2] == ("GET", "/auth/google/init")
+
+
+def test_codes_per_address_are_counted_so_nobody_hammers_a_silent_button(api, fake, monkeypatch):
+    from app.api.routes import auth
+    clock = [1_000_000.0]
+    monkeypatch.setattr(auth.time, "time", lambda: clock[0])
+    first = api.post("/v1/auth/email/start", json={"email": "ada@example.com"})
+    assert first.status_code == 202 and first.json()["codes_left"] == 2
+    again = api.post("/v1/auth/email/start", json={"email": "ADA@example.com"})
+    assert again.status_code == 429 and again.json()["error"]["code"] == "code_just_sent"
+    # Another address has its own budget: nothing is shared across people.
+    assert api.post("/v1/auth/email/start", json={"email": "tunde@example.com"}).status_code == 202
+    for _ in range(2):
+        clock[0] += 61
+        assert api.post("/v1/auth/email/start", json={"email": "ada@example.com"}).status_code == 202
+    clock[0] += 61
+    out = api.post("/v1/auth/email/start", json={"email": "ada@example.com"})
+    assert out.status_code == 429 and out.json()["error"]["code"] == "too_many_codes"
+    assert sum(1 for c in fake.calls if c[2] == {"email": "ada@example.com"}) == 3
+    clock[0] += 3600
+    assert api.post("/v1/auth/email/start", json={"email": "ada@example.com"}).status_code == 202

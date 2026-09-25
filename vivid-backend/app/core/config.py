@@ -33,8 +33,8 @@ class Settings(BaseSettings):
     DECANE_API_BASE: str = "https://backend.decane.app"
     # The publishable key (dck_live_...) that signs Vivid's own users in from
     # this server: email codes and Google go through here, so the browser and
-    # the frontend's server never hold it. Decane limits sign-in calls per
-    # IP, and this server is one IP for everyone.
+    # the frontend's server never hold it. Decane's sign-in limits are per
+    # address, not per IP, so one server for everyone shares nothing.
     DECANE_API_KEY: str = ""
     DECANE_AUTH_TIMEOUT: float = 15.0
     # Decane sign-in for the apps the builder makes: the organization token
