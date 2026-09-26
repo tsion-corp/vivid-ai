@@ -19,6 +19,8 @@ bad_asset (400), not_found (404).
 
 Auth        POST /auth/email/start · POST /auth/email/verify · GET /auth/google/start · POST /auth/decane
             POST /auth/refresh · GET /auth/me · PATCH /auth/me
+            GET /auth/me/deletion · POST /auth/me/deletion-code · DELETE /auth/me {code}
+            POST /auth/handoff {next?} · POST /auth/handoff/exchange {token}
 API keys    POST /keys {name} -> {id, name, prefix, key, created_at} (the key only here) · GET /keys · DELETE /keys/{id}
 Projects    POST /builder/projects · GET /builder/projects · GET /builder/projects/{id}
             PATCH /builder/projects/{id} {name?, spec_md?, fullstack?, recipe?} · DELETE /builder/projects/{id}
@@ -120,6 +122,35 @@ Developers and scripts: a `vivid_` API key (Settings, Developer in the web
 app, or POST /keys with a session) works in the same header on every
 /v1 route, including the builder. A key is its own account: projects it
 creates belong to the key, not to the person who made it.
+
+Deleting an account (the stores require it in-app):
+  GET /auth/me/deletion -> DeletionPreviewOut {blockers, projects,
+    wallet_balance_micro, wallet_outcome, forfeit_below_micro,
+    records_kept_days, confirm_email}. Show it on the confirmation screen.
+  POST /auth/me/deletion-code -> 202 {sent_to, resend_in, codes_left}: a code
+    to the account's own address (same budget as sign-in codes). 409
+    no_email when the account has none: point at support.
+  DELETE /auth/me {code} -> {deleted, projects_deleted, wallet_outcome}.
+    409 cannot_delete with details.blockers [{code: pending_withdrawal |
+    earnings_unwithdrawn, message, amount_kobo?}] while money is owed to the
+    person: they wait for the withdrawal, or withdraw the earnings, first.
+    400 invalid_code for a wrong or expired code.
+  What happens: projects, files, keys, phones, connectors and chats go at
+  once; a wallet balance under forfeit_below_micro ($5) is forfeited, a
+  larger one is kept for support to refund by hand; money and KYC records
+  (wallet ledger, Vivid Pay checkouts, entries, payouts, the KYC name and
+  encrypted BVN) are kept records_kept_days (7 years) on an anonymised
+  row, then removed; every token of the account stops working at once.
+  The public page for deletion requests is WEB_BASE_URL/delete-account.
+
+Handoff to the web (a store app may not sell plans or credits itself):
+  POST /auth/handoff {next?: "/settings/billing"} -> {url, token,
+  expires_in: 120}. Open `url` in the system browser: the web app signs the
+  person in and lands on `next`. The link is single-use and lasts two
+  minutes; open it again from the app if it expired (401 handoff_expired
+  or handoff_used on the exchange). Where a store allows a link out for
+  payments (iOS in the US today), this is that link; elsewhere, show plans
+  and credits read-only.
 
 Dev only: POST /auth/signup and POST /auth/login with email and password
 exist behind ALLOW_PASSWORD_AUTH=true for tests; they are off in production.
@@ -686,7 +717,12 @@ Refusals a client must handle:
     outside the store).
   402 plan_limit on POST /builder/projects (too many apps) or on a turn for
     an app beyond the plan's most recent ones: error.details {plan, max_apps,
-    apps | read_only: true, options: ["upgrade"]}.
+    apps | read_only: true, options: ["upgrade"]}. A project answers
+    read_only: true (GET /builder/projects, GET .../projects/{id}) when that
+    is the case, so a client can show it before the person types; reading,
+    preview and publish still work on it.
+  Plan changes (POST /me/plan) apply at once, up or down: the unused part
+    of the current plan is credited to the wallet.
   402 insufficient_funds on anything paid from the wallet (plans, credit
     packs, app builds on Vivid's account).
 

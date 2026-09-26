@@ -160,5 +160,13 @@ async def renewer(redis, interval: float = 3600) -> None:
                 await db.commit()
             if any(result.values()):
                 log.info("plan renewals: %s", result)
+            # The same hourly pass removes the money records of accounts
+            # deleted more than seven years ago (app/services/account.py).
+            from app.services import account
+            async with async_session() as db:
+                purged = await account.purge_expired(db)
+                await db.commit()
+            if purged:
+                log.info("purged the records of %d accounts deleted over seven years ago", purged)
         except Exception as e:
             log.warning("plan renewal pass failed: %s", e)
