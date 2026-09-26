@@ -36,6 +36,10 @@ class User(Base):
     avatar_url: Mapped[str | None] = mapped_column(String(1024), default=None)
     profile_email: Mapped[str | None] = mapped_column(String(320), default=None)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_now)
+    #: Set when the person deleted their account. The row stays, anonymised,
+    #: because the money records keyed to it are kept for seven years
+    #: (app/services/account.py); every credential is refused from then on.
+    deleted_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), default=None)
 
 
 class Client(Base):
@@ -654,8 +658,9 @@ class VividPayCheckout(Base):
                                        name="uq_vivid_pay_checkout_reference"),)
 
     id: Mapped[str] = mapped_column(String(36), primary_key=True, default=_uuid)
-    project_id: Mapped[str] = mapped_column(
-        ForeignKey("builder_projects.id", ondelete="CASCADE"), index=True)
+    #: A payment record outlives its app: deleting the project leaves it, unlinked.
+    project_id: Mapped[str | None] = mapped_column(
+        ForeignKey("builder_projects.id", ondelete="SET NULL"), index=True, default=None)
     owner_id: Mapped[str] = mapped_column(ForeignKey("users.id", ondelete="CASCADE"), index=True)
     #: The app's own order id.
     reference: Mapped[str] = mapped_column(String(128))

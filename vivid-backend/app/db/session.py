@@ -102,6 +102,25 @@ async def init_db() -> None:
                     "crypto_rate DOUBLE PRECISION"):
             await conn.execute(text(
                 f"ALTER TABLE vivid_pay_checkouts ADD COLUMN IF NOT EXISTS {col}"))
+        await conn.execute(text(
+            "ALTER TABLE users ADD COLUMN IF NOT EXISTS deleted_at TIMESTAMPTZ"))
+        # A payment record outlives its app: the checkout's project link is
+        # cleared when the project goes, instead of the row going with it.
+        await conn.execute(text(
+            "ALTER TABLE vivid_pay_checkouts ALTER COLUMN project_id DROP NOT NULL"))
+        await conn.execute(text("""
+            DO $$
+            DECLARE con text;
+            BEGIN
+              SELECT c.conname INTO con FROM pg_constraint c
+               WHERE c.conrelid = 'vivid_pay_checkouts'::regclass AND c.contype = 'f'
+                 AND c.confrelid = 'builder_projects'::regclass AND c.confdeltype <> 'n';
+              IF con IS NOT NULL THEN
+                EXECUTE format('ALTER TABLE vivid_pay_checkouts DROP CONSTRAINT %I', con);
+                EXECUTE 'ALTER TABLE vivid_pay_checkouts ADD CONSTRAINT vivid_pay_checkouts_project_id_fkey '
+                        'FOREIGN KEY (project_id) REFERENCES builder_projects(id) ON DELETE SET NULL';
+              END IF;
+            END $$"""))
         # Model calls metered before cached input was discounted: re-meter
         # them from the raw counts kept in meta, once (the weight is stamped
         # on the row), so the plan meters stop charging cache hits in full.

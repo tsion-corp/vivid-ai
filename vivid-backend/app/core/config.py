@@ -416,6 +416,13 @@ class Settings(BaseSettings):
     SUPABASE_API_TIMEOUT: int = 60
     # This backend's public origin, for OAuth redirect URIs.
     PUBLIC_BASE_URL: str = "http://localhost:8000"
+    # Where the web app lives, for links the API hands out (the sign-in
+    # handoff a phone opens to pay on the web).
+    WEB_BASE_URL: str = "https://vividbuild.ai"
+    # A wallet balance below this is forfeited when an account is deleted;
+    # at or above it the balance stays on the anonymised row for support to
+    # refund. Micro-USD.
+    ACCOUNT_DELETE_FORFEIT_MICRO: int = 5_000_000
 
     # --- Publishing (Cloudflare Pages) -----------------------------------
     # One Pages project holds every published app, one branch alias each:

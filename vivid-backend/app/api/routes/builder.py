@@ -57,7 +57,7 @@ from datetime import datetime, timezone
 from fastapi import APIRouter, Depends, File, Form, Request, UploadFile
 from fastapi.responses import Response, StreamingResponse
 from pydantic import BaseModel, Field
-from sqlalchemy import select
+from sqlalchemy import select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.deps import get_current_user, get_db
@@ -71,10 +71,10 @@ from app.builder.sandbox.base import PathError, SandboxError, safe_path
 from app.builder.sandbox.manager import manager
 from app.core.config import settings
 from app.core.errors import APIError
-from app.db.models import (BuilderAppBuild, BuilderAsset, BuilderMessage, BuilderProject,
-                           BuilderPublish, BuilderSnapshot, Connector, User, VividPayProject)
+from app.db.models import (BuilderAppBuild, BuilderAsset, BuilderMessage, BuilderProject, BuilderPublish, BuilderSnapshot, Connector, User, VividPayCheckout, VividPayProject)
 from app.services.connectors import supabase as supabase_connector
 from app.services.plans import gate as plan_gate
+from app.services.plans import usage as usage_svc
 from app.services.wallet import ledger
 from app.services.connectors import tokens as connector_tokens
 from app.db.session import async_session
@@ -136,9 +136,12 @@ def _require_integration(project: BuilderProject, name: str) -> None:
                        f"{name.capitalize()} is not available for {target.name} projects yet.")
 
 
-def _present(project: BuilderProject) -> BuilderProject:
+def _present(project: BuilderProject, writable: set[str] | None = None) -> BuilderProject:
     """Per-process state the row does not carry: whether a turn is running
-    here, and a time-limited URL for the latest screenshot."""
+    here, a time-limited URL for the latest screenshot, and whether the
+    plan lets this project take turns (`writable`: the ones that may; None
+    when all do)."""
+    project.read_only = writable is not None and project.id not in writable
     running = turns.running(project.id)
     project.turn_status = "running" if running else "idle"
     project.turn_started_at = turns.started_at(project.id) if running else None
@@ -147,19 +150,29 @@ def _present(project: BuilderProject) -> BuilderProject:
     return project
 
 
+async def _writable(db: AsyncSession, user_id: str) -> set[str] | None:
+    """On a plan with an app limit, the projects that may still run turns
+    (the most recently updated ones); None when every project may."""
+    account = await usage_svc.account_for(db, user_id)
+    if account.plan.max_apps is None:
+        return None
+    return set(await plan_gate.active_projects(db, user_id, account.plan.max_apps))
+
+
 @router.get("/projects", response_model=list[ProjectOut])
 async def list_projects(user: User = Depends(get_current_user),
                         db: AsyncSession = Depends(get_db)):
     rows = await db.execute(select(BuilderProject)
                             .where(BuilderProject.owner_id == user.id)
                             .order_by(BuilderProject.updated_at.desc()))
-    return [_present(p) for p in rows.scalars()]
+    writable = await _writable(db, user.id)
+    return [_present(p, writable) for p in rows.scalars()]
 
 
 @router.get("/projects/{project_id}", response_model=ProjectOut)
 async def get_project(project_id: str, user: User = Depends(get_current_user),
                       db: AsyncSession = Depends(get_db)):
-    return _present(await _owned(project_id, user, db))
+    return _present(await _owned(project_id, user, db), await _writable(db, user.id))
 
 
 @router.patch("/projects/{project_id}", response_model=ProjectOut)
@@ -184,8 +197,19 @@ async def delete_project(project_id: str, request: Request,
                          user: User = Depends(get_current_user),
                          db: AsyncSession = Depends(get_db)):
     project = await _owned(project_id, user, db)
+    await delete_project_row(db, project, request.app.state.redis)
+    await db.commit()
+    await snapshots.delete_all(project_id)
+
+
+async def delete_project_row(db: AsyncSession, project: BuilderProject, redis) -> None:
+    """Everything a project's deletion does besides the commit and the
+    snapshot tarballs: stop its turn, kill its sandbox, retire its Decane
+    client, drop the row (cascades take the rest). Account deletion uses
+    it too."""
+    project_id = project.id
     turns.cancel(project_id)
-    await manager.kill(project_id, request.app.state.redis)
+    await manager.kill(project_id, redis)
     if project.decane_app_id and decane_connect.configured():
         # Archive the Decane client and revoke its keys. Best effort: an
         # outage there must not keep a project from being deleted.
@@ -194,9 +218,11 @@ async def delete_project(project_id: str, request: Request,
         except decane_connect.ConnectError as e:
             log.warning("decane deprovision for %s failed: %s", project_id, e)
     _auth_synced.pop(project_id, None)
+    # Payment records outlive the app: unlink them rather than lose them
+    # (the FK does the same on Postgres; this makes it explicit everywhere).
+    await db.execute(update(VividPayCheckout).where(VividPayCheckout.project_id == project_id)
+                     .values(project_id=None))
     await db.delete(project)
-    await db.commit()
-    await snapshots.delete_all(project_id)
 
 
 # ------------------------------------------------------------- messages

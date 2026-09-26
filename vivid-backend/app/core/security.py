@@ -73,6 +73,12 @@ def create_token_pair(user_id: str) -> dict:
     }
 
 
+def create_handoff_token(user_id: str) -> str:
+    """Carries a signed-in phone's session to the web for two minutes; the
+    exchange route makes it single-use."""
+    return _create_token(user_id, "handoff", timedelta(minutes=2))
+
+
 def decode_token(token: str, expected_type: str = "access") -> str:
     """Return the user id, raising jwt.InvalidTokenError on any problem."""
     payload = jwt.decode(token, settings.JWT_SECRET, algorithms=[settings.JWT_ALGORITHM])

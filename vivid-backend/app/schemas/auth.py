@@ -28,6 +28,53 @@ class EmailVerifyRequest(EmailStartRequest):
     code: str = Field(min_length=4, max_length=12)
 
 
+class DeleteMeRequest(BaseModel):
+    #: The code POST /auth/me/deletion-code emailed.
+    code: str = Field(min_length=4, max_length=12)
+
+
+class DeletionBlocker(BaseModel):
+    #: pending_withdrawal | earnings_unwithdrawn
+    code: str
+    message: str
+    amount_kobo: int | None = None
+
+
+class DeletionPreviewOut(BaseModel):
+    """What deleting the account would do."""
+    blockers: list[DeletionBlocker]
+    projects: int
+    wallet_balance_micro: int
+    #: none | forfeited (below forfeit_below_micro) | refund_by_support
+    wallet_outcome: str
+    forfeit_below_micro: int
+    #: How long money and KYC records are kept afterwards.
+    records_kept_days: int
+    #: The masked address the code goes to; null when the account has none.
+    confirm_email: str | None = None
+
+
+class DeletionOut(BaseModel):
+    deleted: bool
+    projects_deleted: int
+    wallet_outcome: str
+
+
+class HandoffRequest(BaseModel):
+    #: A path on the web app to land on, e.g. /settings/billing.
+    next: str | None = Field(default=None, max_length=200)
+
+
+class HandoffOut(BaseModel):
+    url: str
+    token: str
+    expires_in: int
+
+
+class HandoffExchangeRequest(BaseModel):
+    token: str = Field(max_length=2048)
+
+
 class DecaneLoginRequest(BaseModel):
     # The Decane access token from the sign-in callback.
     access_token: str

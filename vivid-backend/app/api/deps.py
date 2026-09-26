@@ -91,7 +91,7 @@ async def _from_access_token(credential: str, db: AsyncSession) -> Principal:
     except pyjwt.InvalidTokenError:
         raise APIError(401, "unauthorized", "Invalid or expired token")
     user = await db.get(User, user_id)
-    if user is None:
+    if user is None or user.deleted_at is not None:
         raise APIError(401, "unauthorized", "Unknown user")
     return Principal(user=user, client_id=settings.DEFAULT_CLIENT_ID)
 

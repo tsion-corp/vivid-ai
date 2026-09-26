@@ -1,5 +1,6 @@
 import hashlib
 import json
+import logging
 import time
 
 import jwt as pyjwt
@@ -8,21 +9,23 @@ from fastapi import APIRouter, Depends, HTTPException, Request
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.api.deps import get_current_user, get_db
+from app.api.deps import get_current_user, get_db, get_session_user
 from app.core.config import settings
-from app.core.security import (create_token_pair, decode_token, hash_password,
+from app.core.security import (create_handoff_token, create_token_pair, decode_token, hash_password,
                                verify_password)
 from app.db.models import User
-from app.schemas.auth import (DecaneLoginRequest, EmailStartRequest, EmailVerifyRequest,
-                              LoginRequest, ProfileUpdate, RefreshRequest,
-                              SignupRequest, TokenPairOut, UserOut)
-from app.services import decane
+from app.schemas.auth import (DecaneLoginRequest, DeleteMeRequest, DeletionOut,
+                              DeletionPreviewOut, EmailStartRequest, EmailVerifyRequest,
+                              HandoffExchangeRequest, HandoffOut, HandoffRequest, LoginRequest,
+                              ProfileUpdate, RefreshRequest, SignupRequest, TokenPairOut, UserOut)
+from app.services import account, decane
 
 # Sentinel password hash for social-login accounts — it can never verify, so
 # password login on these accounts always fails cleanly.
 OAUTH_SENTINEL = "!oauth"
 
 router = APIRouter(prefix="/auth", tags=["auth"])
+log = logging.getLogger("vivid.auth")
 
 
 def _pair(user: User) -> TokenPairOut:
@@ -123,13 +126,8 @@ async def _codes_sent(redis, email: str, now: float) -> list[float]:
         return []
 
 
-@router.post("/email/start", status_code=202)
-async def email_start(body: EmailStartRequest, request: Request):
-    """Emails a sign-in code. Always 202 for a well-formed address (whether
-    an account exists is never revealed), unless this address has had a code
-    too recently or too often, which is true of any address alike."""
-    email = body.email.strip().lower()
-    redis = getattr(request.app.state, "redis", None)
+async def _send_code(email: str, redis) -> dict:
+    """One code to this address, within its per-address budget."""
     now = time.time()
     sent = await _codes_sent(redis, email, now)
     if sent and now - sent[-1] < RESEND_SECONDS:
@@ -154,6 +152,14 @@ async def email_start(body: EmailStartRequest, request: Request):
         except Exception:
             pass
     return {"ok": True, "resend_in": RESEND_SECONDS, "codes_left": CODES_PER_HOUR - len(sent)}
+
+
+@router.post("/email/start", status_code=202)
+async def email_start(body: EmailStartRequest, request: Request):
+    """Emails a sign-in code. Always 202 for a well-formed address (whether
+    an account exists is never revealed), unless this address has had a code
+    too recently or too often, which is true of any address alike."""
+    return await _send_code(body.email.strip().lower(), getattr(request.app.state, "redis", None))
 
 
 @router.post("/email/verify", response_model=TokenPairOut)
@@ -195,6 +201,110 @@ async def decane_login(body: DecaneLoginRequest,
 @router.get("/me", response_model=UserOut)
 async def me(user: User = Depends(get_current_user)):
     return user
+
+
+# ------------------------------------------------------------ deleting
+def _masked(email: str) -> str:
+    name, _, domain = email.partition("@")
+    return f"{name[:2]}{'*' * max(len(name) - 2, 1)}@{domain}"
+
+
+def _deletion_email(user: User) -> str:
+    if not user.profile_email:
+        raise APIError(409, "no_email",
+                       "This account has no email address to confirm with. Write to support to delete it.")
+    return user.profile_email.strip().lower()
+
+
+@router.get("/me/deletion", response_model=DeletionPreviewOut)
+async def deletion_preview(user: User = Depends(get_session_user), db: AsyncSession = Depends(get_db)):
+    """What deleting this account would do, for the confirmation screen."""
+    out = await account.preview(db, user)
+    return {**out, "confirm_email": _masked(user.profile_email.strip().lower()) if user.profile_email else None}
+
+
+@router.post("/me/deletion-code", status_code=202)
+async def deletion_code(request: Request, user: User = Depends(get_session_user)):
+    """Emails a code to the account's own address; DELETE /auth/me takes it.
+    Same budget as sign-in codes (a minute apart, three an hour)."""
+    email = _deletion_email(user)
+    out = await _send_code(email, getattr(request.app.state, "redis", None))
+    return {**out, "sent_to": _masked(email)}
+
+
+@router.delete("/me", response_model=DeletionOut)
+async def delete_me(body: DeleteMeRequest, request: Request, user: User = Depends(get_session_user),
+                    db: AsyncSession = Depends(get_db)):
+    """Delete the account: refused (409 cannot_delete, details.blockers)
+    while money is owed to the person; otherwise projects, files, keys and
+    phones go now, money records are kept seven years, and every token stops
+    working. The code is the one POST /auth/me/deletion-code emailed."""
+    from app.api.routes.builder import delete_project_row
+    from app.builder import snapshots
+    email = _deletion_email(user)
+    stuck = await account.blockers(db, user)
+    if stuck:
+        raise APIError(409, "cannot_delete", stuck[0]["message"], details={"blockers": stuck})
+    try:
+        await decane.verify_email(email, body.code.strip())
+    except decane.DecaneError as e:
+        raise _decane_error(e)
+    redis = getattr(request.app.state, "redis", None)
+    project_ids: list[str] = []
+
+    async def drop(project):
+        project_ids.append(project.id)
+        await delete_project_row(db, project, redis)
+    try:
+        out = await account.delete_account(db, user, drop)
+    except ValueError as e:
+        raise APIError(409, "cannot_delete", e.args[0][0]["message"], details={"blockers": e.args[0]})
+    await db.commit()
+    for pid in project_ids:
+        try:
+            await snapshots.delete_all(pid)
+        except Exception as ex:                          # storage only; the account is gone
+            log.warning("snapshots of %s not removed after account deletion: %s", pid, ex)
+    return {"deleted": True, **out}
+
+
+# ------------------------------------------------------- web handoff
+def _handoff_key(token: str) -> str:
+    return "auth:handoff:" + hashlib.sha256(token.encode()).hexdigest()[:32]
+
+
+@router.post("/handoff", response_model=HandoffOut)
+async def handoff(body: HandoffRequest, user: User = Depends(get_session_user)):
+    """A link that opens the web app signed in as this user, for what a
+    store app may not sell itself (plans, credits, top-ups). Two minutes,
+    one use."""
+    token = create_handoff_token(user.id)
+    nxt = body.next if body.next and body.next.startswith("/") and not body.next.startswith("//") else "/settings/billing"
+    url = (f"{settings.WEB_BASE_URL.rstrip('/')}/auth/handoff?token={token}"
+           f"&next={nxt}")
+    return {"url": url, "token": token, "expires_in": 120}
+
+
+@router.post("/handoff/exchange", response_model=TokenPairOut)
+async def handoff_exchange(body: HandoffExchangeRequest, request: Request,
+                           db: AsyncSession = Depends(get_db)):
+    """The web app trades the handoff token for a session, once."""
+    try:
+        user_id = decode_token(body.token, "handoff")
+    except pyjwt.InvalidTokenError:
+        raise APIError(401, "handoff_expired", "That link has expired. Open it again from the app.")
+    redis = getattr(request.app.state, "redis", None)
+    if redis is not None:
+        try:
+            fresh = await redis.set(_handoff_key(body.token), "1", nx=True, ex=180)
+        except Exception:
+            fresh = True
+        if not fresh:
+            raise APIError(401, "handoff_used", "That link was already used. Open it again from the app.")
+    user = await db.get(User, user_id)
+    if user is None or user.deleted_at is not None:
+        raise APIError(401, "unauthorized", "Unknown user")
+    return _pair(user)
 
 
 @router.patch("/me", response_model=UserOut)
