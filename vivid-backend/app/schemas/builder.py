@@ -190,10 +190,11 @@ class AppBuildOut(BaseModel):
 class BuildAccountOut(BaseModel):
     id: Literal["vivid", "user"]
     available: bool
-    #: vivid: the price per platform; user: 0, the builds use their quota.
+    #: vivid: the price per platform, in micro-USD; user: 0, the builds use
+    #: their quota.
     price_android: int = 0
     price_ios: int = 0
-    currency: str = "NGN"
+    currency: str = "USD"
     #: vivid: builds left this month under the cap, None when uncapped.
     remaining: int | None = None
     #: vivid: the user's wallet balance, in micro-USD (prices are too).
