@@ -651,6 +651,14 @@ async def _paystack_connector(user_id: str, db: AsyncSession) -> Connector | Non
                                 Connector.provider == "paystack"))).scalar_one_or_none()
 
 
+def _not_vividpay(project: BuilderProject) -> None:
+    """The Paystack routes never touch a project that takes Vivid Pay:
+    switching providers is turning Vivid Pay off first, on purpose."""
+    if project.payments_provider == "vividpay":
+        raise APIError(409, "vividpay_enabled",
+                       "This app takes payments with Vivid Pay. Turn Vivid Pay off first to use Paystack.")
+
+
 @router.post("/projects/{project_id}/payments", response_model=ProjectOut)
 async def enable_payments(project_id: str, user: User = Depends(get_current_user),
                           db: AsyncSession = Depends(get_db)):
@@ -659,6 +667,7 @@ async def enable_payments(project_id: str, user: User = Depends(get_current_user
     goes into that project's edge-function secrets, never into the app."""
     project = await _owned(project_id, user, db)
     _require_integration(project, "payments")
+    _not_vividpay(project)
     if not secrets.configured():
         raise APIError(503, "not_configured", "Secrets storage is not configured.")
     connector = await _paystack_connector(user.id, db)
@@ -689,6 +698,7 @@ async def enable_payments(project_id: str, user: User = Depends(get_current_user
 async def disable_payments(project_id: str, user: User = Depends(get_current_user),
                            db: AsyncSession = Depends(get_db)):
     project = await _owned(project_id, user, db)
+    _not_vividpay(project)
     project.payments_provider = "none"
     await secrets.delete_secret(db, project_id, "PAYSTACK_PUBLIC_KEY")
     await db.commit()

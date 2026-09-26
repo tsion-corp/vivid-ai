@@ -668,3 +668,41 @@ def test_the_crypto_route_in_test_mode_never_calls_pouch(api, maker, fake, monke
     again = api.post(f"/v1/pay/checkouts/{cid}/crypto",
                      content=json.dumps({"key": "vpk_test", "network": "evm", "payer": PAYER}))
     assert again.status_code == 409                                 # already paid
+
+
+def test_paystack_routes_leave_a_vivid_pay_project_alone(maker, fake, monkeypatch):
+    """POST or DELETE /payments on a Vivid Pay project is refused, never a
+    silent switch to Paystack or to no payments at all."""
+    from app.api.routes import builder as builder_routes
+    from app.api.routes.builder import router as builder_router
+    from app.api.deps import get_current_user
+
+    async def setup():
+        async with maker() as db:
+            p = BuilderProject(owner_id="u1", name="Shop", mode="build", payments_provider="vividpay")
+            db.add(p)
+            await db.commit()
+            return p.id
+    pid = asyncio.run(setup())
+    app = FastAPI()
+    errors.install(app)
+    app.include_router(builder_router, prefix="/v1")
+
+    async def db():
+        async with maker() as session:
+            yield session
+
+    async def user():
+        async with maker() as session:
+            return await session.get(User, "u1")
+    app.dependency_overrides[get_db] = db
+    app.dependency_overrides[get_current_user] = user
+    with TestClient(app, raise_server_exceptions=False) as tc:
+        for method in ("post", "delete"):
+            r = getattr(tc, method)(f"/v1/builder/projects/{pid}/payments")
+            assert r.status_code == 409 and r.json()["error"]["code"] == "vividpay_enabled", r.json()
+
+    async def provider():
+        async with maker() as db:
+            return (await db.get(BuilderProject, pid)).payments_provider
+    assert asyncio.run(provider()) == "vividpay"
