@@ -17,7 +17,8 @@ bad_asset (400), not_found (404).
 ------------------------------------------------------------------------
 ## Endpoint index (diff your client against this list)
 
-Auth        POST /auth/decane · POST /auth/refresh · GET /auth/me · PATCH /auth/me
+Auth        POST /auth/email/start · POST /auth/email/verify · GET /auth/google/start · POST /auth/decane
+            POST /auth/refresh · GET /auth/me · PATCH /auth/me
 API keys    POST /keys {name} -> {id, name, prefix, key, created_at} (the key only here) · GET /keys · DELETE /keys/{id}
 Projects    POST /builder/projects · GET /builder/projects · GET /builder/projects/{id}
             PATCH /builder/projects/{id} {name?, spec_md?, fullstack?, recipe?} · DELETE /builder/projects/{id}
@@ -35,6 +36,18 @@ Per project POST/DELETE /builder/projects/{id}/supabase · POST/DELETE .../payme
             POST/DELETE /builder/projects/{id}/auth (the app's own sign-in, Decane)
 Publish     POST /builder/projects/{id}/publish · GET .../publishes · GET .../publishes/{publish_id}
 Usage       GET /builder/projects/{id}/usage · GET /builder/projects/{id}/analytics?days=30
+Plans       GET /plans · GET/POST/DELETE /me/plan (MyPlanOut)
+Wallet      GET /wallet?currency=NGN · GET /wallet/entries · GET /wallet/rates · POST /wallet/bank-account
+            GET /wallet/crypto/chains · GET /wallet/crypto/tokens?chain_id= · POST /wallet/crypto/address
+            GET /wallet/crypto/options (the older fixed list) · POST /wallet/credit-packs {credits}
+App builds  GET /builder/app-builds/options · POST/GET /builder/projects/{id}/builds
+            GET /builder/projects/{id}/builds/{build_id} · POST .../builds/{build_id}/cancel
+Vivid Pay   GET/POST/DELETE /builder/projects/{id}/vivid-pay (the owner turns it on)
+            POST /pay/checkouts · GET /pay/checkouts/{id}?key= · POST /pay/checkouts/{id}/simulate
+            POST /pay/checkouts/{id}/crypto · GET /pay/checkouts?reference= (secret key) (called by the apps)
+Earnings    GET /earnings · GET /earnings/entries · GET /earnings/checkouts · POST /earnings/kyc
+            GET /earnings/banks · GET/POST /earnings/bank-accounts
+            POST /earnings/withdrawals/quote · POST/GET /earnings/withdrawals
 Public      POST /a/{project_id} (pageview reporter used by published sites; no auth)
 Health      GET /health (builder block: models, sandbox, storage, secrets, images, publish, supabase_oauth, skills, recipes, chain, decane_connect)
 
@@ -51,23 +64,30 @@ for access-control-allow-origin.
 ------------------------------------------------------------------------
 ## 0. Authentication (Decane sign-in, then Vivid tokens)
 
-Identity is Decane's: "Continue with Google" and emailed codes are handled
-by Decane Connect, so this backend never sees a password. The client signs
-the user in with Decane, then exchanges Decane's access token for Vivid's
-own token pair, and uses the Vivid access token on every /v1 request.
+Identity is Decane's, and this backend talks to Decane for you: it holds the
+Decane key, so no client (web, phone, script) ever does. Sign someone in with
+an emailed code or Google, and you get Vivid's own token pair back.
 
-Step 1, Decane. In the browser use Decane Connect with the public app id
-(NEXT_PUBLIC_DECANE_APP_ID / the app's Decane app id). It returns a Decane
-access token plus the Google profile when Google was used. The Vivid web
-app's existing code for this lives in vivid-frontend/lib/backend/decane.ts;
-the mobile app does the same with the emailed-code flow. Decane has no SDK;
-it is a small HTTP flow.
+Emailed code (web and mobile alike, called directly):
+  POST /auth/email/start {email} -> 202 {ok, resend_in, codes_left}
+    Always 202 for a well-formed address: whether an account exists is never
+    revealed. The address is trimmed and lowercased here. Decane sends at
+    most three codes per address an hour, so this answers 429
+    code_just_sent (asked again within a minute) or too_many_codes (the
+    hour's three are used), each with error.details {retry_after, codes_left}.
+    Show a resend countdown rather than a button that seems to work.
+  POST /auth/email/verify {email, code}
+    -> {access_token, refresh_token, token_type, user} (the pair below)
+    400 invalid_code: wrong or expired (codes last 10 minutes).
 
-Step 2, exchange:
-  POST /auth/decane {access_token, name?, email?, picture?}
-  -> {access_token, refresh_token, token_type: "bearer", user: {id, email, name, avatar_url, profile_email, created_at}}
-The profile fields are display-only and optional (the token itself carries
-no email); pass what Decane gave you so the account gets a name.
+Google: GET /auth/google/start -> {url}. Send the browser there; Google and
+Decane bring it back to the callback URL registered for the calling host
+(Decane picks it by the request's Origin, then Referer, falling back to its
+first entry), with ?decane_jwt=...&name=&email=&picture=. Exchange that:
+  POST /auth/decane {access_token: <decane_jwt>, name?, email?, picture?}
+  -> the same pair. The profile fields are display-only.
+
+Accounts are keyed on Decane's user id, never on an email a client sends.
 
 Step 3, use and refresh:
   Authorization: Bearer <access_token> on every request.
@@ -632,3 +652,81 @@ editable text area, the raw activity log, the usage panel.
 
 Never show: vendor names from errors (the backend scrubs them), secret
 values (never sent), the sandbox id.
+
+------------------------------------------------------------------------
+## 13. Plans, credits and limits
+
+GET /plans -> {plans: [{id, name, price_usd, yearly_price_usd, max_apps,
+window_credits, window_hours, month_credits}], tokens_per_credit,
+credit_price_usd, credit_packs: [{credits, price_usd}], ...}.
+GET /me/plan -> MyPlanOut (see the OpenAPI): plan, status (active | grace |
+canceled), yearly, period_end, grace_until, apps {used, limit}, window {used,
+limit, resets_at, hours}, month {used, limit, resets_at}, extra_credits.
+Amounts are credits. POST /me/plan {plan, yearly?} changes plan (paid from the
+wallet); DELETE /me/plan cancels at period_end.
+
+Refusals a client must handle:
+  429 limit_reached on POST .../chat: the plan's credits are used for now.
+    error.message says what happened and when it frees up, nothing more.
+    error.details {plan, window_used, window_limit, window_hours,
+    window_resets_at, month_used, month_limit, month_resets_at,
+    extra_credits, options: ["wait", "buy_credits", "upgrade"]}. Offer only
+    the options your client may offer (a store app may not point at payments
+    outside the store).
+  402 plan_limit on POST /builder/projects (too many apps) or on a turn for
+    an app beyond the plan's most recent ones: error.details {plan, max_apps,
+    apps | read_only: true, options: ["upgrade"]}.
+  402 insufficient_funds on anything paid from the wallet (plans, credit
+    packs, app builds on Vivid's account).
+
+## 14. The wallet (USD, topped up in naira or crypto)
+
+GET /wallet?currency=NGN -> {balance_micro (micro-USD), display {amount,
+currency, rate}, currencies, bank_available, crypto_available, ...}.
+GET /wallet/entries -> history. Money in:
+  Bank: POST /wallet/bank-account [{bvn?}] -> the user's own naira account
+    {account_number, bank_name, account_name}; made once. 400 bvn_required
+    when the bank needs a BVN (it goes to the bank; Vivid keeps no copy).
+  Crypto, any token on almost any network (the Add funds flow):
+    GET /wallet/crypto/chains -> {chains: [{chain_id, name, logo_url,
+      native_symbol}], recommended: [chain_id...], min_usd, settles_as}
+    GET /wallet/crypto/tokens?chain_id= -> {tokens: [{asset, symbol, name,
+      logo_url}], min_usd} (stablecoins first)
+    POST /wallet/crypto/address {chain_id, asset} -> {address, symbol,
+      chain, network_note, min_usd}; the user's reusable address for that
+      pair, made once. Deposits settle as USDC and land in the wallet.
+
+## 15. App builds (mobile projects)
+
+GET /builder/app-builds/options -> {default, accounts: [{id: vivid|user,
+available, price_android, price_ios, currency: "USD", remaining, balance}],
+ios_production_needs_user_account}. Prices and balance are micro-USD.
+POST /builder/projects/{id}/builds {platform: android|ios, profile:
+preview|production, account: auto|vivid|user} -> 202 AppBuildOut; poll GET
+.../builds/{build_id} until status is finished (artifact_url), failed or
+canceled. A failed build's charge is refunded. POST /publish on a mobile
+project answers 400 not_supported: mobile apps are built, not published.
+
+## 16. Vivid Pay and earnings
+
+The owner turns Vivid Pay on per project: POST /builder/projects/{id}/
+vivid-pay -> {enabled, publishable_key, test_key, api, fee_bps, min_fee_kobo,
+fixed_fee_kobo, fee_cap_kobo, crypto, secret_key (shown once)}. The app's
+.env gets the key and API; the agent builds the checkout. A Vivid Pay project
+answers 409 vividpay_enabled on POST/DELETE .../payments (Paystack): turn
+Vivid Pay off first to switch.
+
+Fee per payment: the larger of fee_bps and min_fee_kobo, plus
+fixed_fee_kobo, capped at fee_cap_kobo (1.5%, N25, N20, N2,000 today).
+
+The owner's money: GET /earnings -> {balance_kobo, pending_kobo, kyc,
+apps: [{project_id, name, net_kobo, orders, last_paid_at}], available}.
+Lists page with ?offset=&limit= and answer {items, has_more}:
+  GET /earnings/entries (?kind=payments|withdrawals&project=&since=&until=)
+    one row per payment (what the owner got, fee already out) or withdrawal
+    (fee included, with status and error)
+  GET /earnings/checkouts (?status=paid|pending|partial|expired&project=&q=)
+Withdrawing: POST /earnings/kyc {bvn, first_name, last_name, dob?} once,
+POST /earnings/bank-accounts {account_number, bank_uuid} (in the verified
+name), POST /earnings/withdrawals/quote {amount_kobo}, then POST
+/earnings/withdrawals {amount_kobo, bank_account_id}.
