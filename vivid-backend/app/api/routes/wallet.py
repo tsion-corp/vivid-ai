@@ -282,9 +282,14 @@ async def buy_credit_pack(body: PackIn, user: User = Depends(get_session_user),
 
 
 def _insufficient(e: ledger.InsufficientFunds) -> APIError:
+    # What happened, in the message; how to fix it only in details.options,
+    # so a store app can leave "top up" unsaid.
     return APIError(402, "insufficient_funds",
                     f"Your wallet has ${_usd(e.balance_micro):,.2f}; this needs "
-                    f"${_usd(e.needed_micro):,.2f}. Top up by bank transfer or crypto.")
+                    f"${_usd(e.needed_micro):,.2f}.",
+                    details={"balance_micro": e.balance_micro, "needed_micro": e.needed_micro,
+                             "short_micro": max(e.needed_micro - e.balance_micro, 0),
+                             "options": ["top_up"]})
 
 
 # ------------------------------------------------------------------- plans

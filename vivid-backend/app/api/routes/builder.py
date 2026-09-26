@@ -1232,7 +1232,7 @@ async def start_app_build(project_id: str, body: AppBuildIn,
     decision = await billing.can_start_build(db, user.id, body.platform, account)
     if not decision.ok:
         raise APIError(503 if decision.code == "not_configured" else 402,
-                       decision.code, decision.message)
+                       decision.code, decision.message, details=decision.details)
     build = BuilderAppBuild(project_id=project_id, snapshot_id=snapshot.id,
                             platform=body.platform, profile=body.profile, account=account)
     db.add(build)
@@ -1241,7 +1241,8 @@ async def start_app_build(project_id: str, body: AppBuildIn,
         await billing.charge(db, build, user.id)
     except ledger.InsufficientFunds:
         await db.rollback()
-        raise APIError(402, "insufficient_funds", "Your wallet no longer covers this build.")
+        raise APIError(402, "insufficient_funds", "Your wallet no longer covers this build.",
+                       details={"options": ["top_up", "own_expo_account"]})
     await db.commit()
     task = asyncio.create_task(app_build.start(build.id))
     _app_builds[build.id] = task

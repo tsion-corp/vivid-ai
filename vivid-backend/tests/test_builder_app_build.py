@@ -278,9 +278,13 @@ def test_build_routes(client, maker, eas, monkeypatch):
     r = client.post(f"/v1/builder/projects/{pid}/builds", json={"platform": "android", "account": "user"})
     assert r.status_code == 400 and r.json()["error"]["code"] == "not_connected"
 
-    # An empty wallet: the price and a way to pay.
+    # An empty wallet: the price in the message, the ways to pay only in details.
     r = client.post(f"/v1/builder/projects/{pid}/builds", json={"platform": "android"})
     assert r.status_code == 402 and r.json()["error"]["code"] == "insufficient_funds"
+    err = r.json()["error"]
+    assert "Top" not in err["message"] and "$2.00" in err["message"]
+    assert err["details"]["options"] == ["top_up", "own_expo_account"]
+    assert err["details"]["price_micro"] == 2_000_000 and err["details"]["short_micro"] == 2_000_000
     asyncio.run(_fund(maker, 6))                      # exactly one android and one iOS
 
     opts = client.get("/v1/builder/app-builds/options").json()

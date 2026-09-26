@@ -724,7 +724,12 @@ Refusals a client must handle:
   Plan changes (POST /me/plan) apply at once, up or down: the unused part
     of the current plan is credited to the wallet.
   402 insufficient_funds on anything paid from the wallet (plans, credit
-    packs, app builds on Vivid's account).
+    packs, app builds on Vivid's account): error.message says the balance
+    and the price; error.details {balance_micro, needed_micro | price_micro,
+    short_micro, options: ["top_up"] (app builds add "own_expo_account")}.
+    App builds also answer 402 payment_required when the month's Vivid
+    builds are used up: details {cap, options: ["own_expo_account", "wait"]}.
+    As with limit_reached, offer only the options your client may.
 
 ## 14. The wallet (USD, topped up in naira or crypto)
 

@@ -25,9 +25,12 @@ APP_BUILD = "app_build"
 @dataclass
 class Decision:
     ok: bool
-    #: insufficient_funds | payment_required | not_configured, when not ok
+    #: insufficient_funds | payment_required | not_configured, when not ok.
+    #: `details` carries the numbers and `options` (top_up, own_expo_account,
+    #: wait); the message says only what happened.
     code: str = ""
     message: str = ""
+    details: dict | None = None
 
 
 def price_for(platform: str, account: str) -> int:
@@ -59,15 +62,16 @@ async def can_start_build(db: AsyncSession, user_id: str, platform: str,
     cap = settings.EAS_VIVID_BUILDS_PER_MONTH
     if cap > 0 and await vivid_builds_this_month(db, user_id) >= cap:
         return Decision(False, "payment_required",
-                        f"You have used this month's {cap} app builds on Vivid. Connect your "
-                        "own Expo account to keep building, or wait for next month.")
+                        f"You have used this month's {cap} app builds on Vivid.",
+                        {"cap": cap, "options": ["own_expo_account", "wait"]})
     price = price_for(platform, account)
     have = await ledger.balance(db, user_id)
     if have < price:
         return Decision(False, "insufficient_funds",
                         f"A {platform} build costs ${price / 1e6:,.2f} and your wallet has "
-                        f"${have / 1e6:,.2f}. Top it up by bank transfer or crypto, or connect "
-                        "your own Expo account to build for free here.")
+                        f"${have / 1e6:,.2f}.",
+                        {"price_micro": price, "balance_micro": have, "short_micro": price - have,
+                         "options": ["top_up", "own_expo_account"]})
     return Decision(True)
 
 
