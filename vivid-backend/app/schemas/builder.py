@@ -42,6 +42,11 @@ class ProjectOut(BaseModel):
     recipe: str | None = None
     published_url: str | None
     published_at: datetime | None = None
+    #: True when the plan's app limit leaves this project without turns
+    #: (it is not one of the user's most recently updated apps): a turn
+    #: answers 402 plan_limit with details.read_only. Reading, preview and
+    #: publish still work.
+    read_only: bool = False
     #: "running" while a turn is in flight in the backend, else "idle".
     turn_status: str = "idle"
     turn_started_at: datetime | None = None

@@ -303,3 +303,19 @@ async def test_recorded_calls_are_metered_with_the_discount_and_keep_the_raw_cou
         assert row.meta["cached_weight"] == 0.1
         account = await usage.account_for(db, "u1")
         assert (await usage.meter(db, account)).window_used == 240
+
+
+def test_projects_say_when_the_plan_leaves_them_read_only(client, monkeypatch):
+    """A Free account that ends up over its app limit (a downgrade) keeps
+    its most recent apps writable; the rest read read_only: true, which is
+    the same rule the turn gate applies."""
+    first = client.post("/v1/builder/projects", json={"skip_plan": True}).json()["id"]
+    second = client.post("/v1/builder/projects", json={"skip_plan": True}).json()["id"]
+    assert all(p["read_only"] is False for p in client.get("/v1/builder/projects").json())
+    monkeypatch.setattr(settings, "PLAN_FREE_APPS", 1)
+    from app.services.plans import catalog
+    if hasattr(catalog, "plans") and hasattr(catalog.plans, "cache_clear"):
+        catalog.plans.cache_clear()
+    by_id = {p["id"]: p["read_only"] for p in client.get("/v1/builder/projects").json()}
+    assert by_id[second] is False and by_id[first] is True
+    assert client.get(f"/v1/builder/projects/{first}").json()["read_only"] is True
