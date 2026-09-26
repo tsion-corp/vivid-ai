@@ -166,19 +166,27 @@ async def test_a_build_that_cannot_start_fails_and_is_refunded(eas, maker):
 
 
 # --------------------------------------------------------------- following
-async def test_the_poller_follows_a_build_to_its_artifact(eas, maker):
+async def test_the_poller_follows_a_build_to_its_artifact(eas, maker, monkeypatch):
+    from app.services import push
+    pushed = []
+    monkeypatch.setattr(push, "app_build_finished", lambda *a, **k: pushed.append((a, k)))
     pid, sid = await _project(maker)
     bid = await _build(maker, pid, sid)
     await app_build.start(bid)
     await app_build.poll_once()
     async with maker() as db:
         assert (await db.get(BuilderAppBuild, bid)).status == app_build.BUILDING
+    assert pushed == []                                     # still building: nothing to say
     eas["remote"].update(status=expo.FINISHED, artifact="https://expo.dev/artifacts/app.apk")
     await app_build.poll_once()
     async with maker() as db:
         b = await db.get(BuilderAppBuild, bid)
         assert b.status == app_build.FINISHED and b.artifact_url.endswith("app.apk")
         assert b.finished_at is not None and b.charge == billing.CHARGED
+    # The owner's phones hear it is ready, once.
+    await app_build.poll_once()
+    assert len(pushed) == 1 and pushed[0][1]["build_id"] == bid
+    assert pushed[0][1]["status"] == "finished" and pushed[0][1]["artifact_url"].endswith("app.apk")
 
 
 async def test_a_build_that_fails_on_expo_is_refunded(eas, maker):

@@ -16,6 +16,8 @@ def _no_closing_summary(monkeypatch):
     the closing summary is one more call, so it is on only where tested."""
     from app.core.config import settings
     monkeypatch.setattr(settings, "BUILDER_CLOSING_SUMMARY", False)
+    # Pushes reach a real Expo service and database; on only where tested.
+    monkeypatch.setattr(settings, "PUSH_ENABLED", False)
 
 
 class FakeRedis:

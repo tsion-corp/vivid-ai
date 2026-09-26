@@ -50,6 +50,22 @@ class Client(Base):
     config_json: Mapped[dict | None] = mapped_column(JSONB, default=None)
 
 
+class PushDevice(Base):
+    """A phone that gets push notifications for its user: an Expo push
+    token, registered by the app after sign-in and removed at sign-out. A
+    token belongs to one user at a time (the last to register it)."""
+    __tablename__ = "push_devices"
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=_uuid)
+    user_id: Mapped[str] = mapped_column(ForeignKey("users.id", ondelete="CASCADE"), index=True)
+    token: Mapped[str] = mapped_column(String(255), unique=True)
+    #: ios | android
+    platform: Mapped[str | None] = mapped_column(String(16), default=None)
+    app_version: Mapped[str | None] = mapped_column(String(32), default=None)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_now)
+    last_seen_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_now)
+
+
 class ApiKey(Base):
     """A partner credential. Belongs to a client (which supplies the system
     prompt and tool allowlist) and to a service-account user (which owns the

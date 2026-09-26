@@ -65,7 +65,7 @@ from app.builder import (analytics, app_build, assets, billing, blob, chain as c
                          decane_connect, expo, images, pgdirect, planning, publish, routing,
                          secrets, skills, snapshots, stream, supabase, targets, tools, usage,
                          visual)
-from app.builder.loop import FEED_DONE, ModelCall, TurnRunner, turns
+from app.builder.loop import FEED_DONE, OK_REASONS, ModelCall, TurnRunner, turns
 from app.builder.planning import PlanRunner
 from app.builder.sandbox.base import PathError, SandboxError, safe_path
 from app.builder.sandbox.manager import manager
@@ -83,7 +83,7 @@ from app.schemas.builder import (AnalyticsOut, AppBuildIn, AppBuildOut, AssetOut
                                  FilesOut, ImageReplaceOut, MessageOut, PreviewOut, ProjectCreate,
                                  ProjectOut, ProjectUpdate, PublishOut, SnapshotOut, SupabaseLinkIn,
                                  TextEditOut, UsageOut)
-from app.services import rate_limit
+from app.services import push, rate_limit
 from app.services.vividpay import VividPayError, key_hash, new_key
 from app.services.vividpay import payouts as vp_payouts
 from app.services.models_gateway import provider
@@ -317,6 +317,10 @@ async def chat(project_id: str, body: ChatIn, request: Request,
                 await _persist_plan_turn(project_id, collector, runner)
                 turns.finish(project_id)
                 await feed.push(FEED_DONE)
+                push.turn_finished(user.id, project_id, project.name,
+                                   ok=runner.result.reason in ("spec_written", "asked"),
+                                   reason=runner.result.reason, summary=None,
+                                   message_id=runner.message_id, planning=True)
                 return
             try:
                 sandbox = await _start_sandbox(project_id, redis, targets.of(project))
@@ -360,6 +364,13 @@ async def chat(project_id: str, body: ChatIn, request: Request,
                         "id": snapshot.id, "seq": snapshot.seq}))
                 turns.finish(project_id)
                 await feed.push(FEED_DONE)
+                # The phone learns the turn ended even when the app is closed.
+                result = runner.result if isinstance(runner, TurnRunner) else None
+                push.turn_finished(user.id, project_id, project.name,
+                                   ok=bool(result and result.reason in OK_REASONS),
+                                   reason=result.reason if result else "error",
+                                   summary=result.summary if result else None,
+                                   message_id=runner.message_id if runner else None)
             else:
                 turns.finish(project_id)
                 if not feed.done:

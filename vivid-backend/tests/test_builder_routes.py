@@ -204,6 +204,9 @@ def test_chat_streams_and_stores_the_turn(client, maker, monkeypatch, fake_manag
                          "arguments": {"path": "src/Page.tsx", "content": "export {}"}}]),
         ("There is a page now.", []),
     ])
+    from app.services import push
+    pushed = []
+    monkeypatch.setattr(push, "turn_finished", lambda *a, **k: pushed.append((a, k)))
     pid = client.post("/v1/builder/projects", json={"skip_plan": True}).json()["id"]
     with client.stream("POST", f"/v1/builder/projects/{pid}/chat",
                        json={"text": "add a page"}) as r:
@@ -219,6 +222,9 @@ def test_chat_streams_and_stores_the_turn(client, maker, monkeypatch, fake_manag
     assert "tool-input-available" in kinds and "tool-output-available" in kinds
     assert fake_manager.sandbox.files["src/Page.tsx"] == "export {}"
     assert pid in fake_manager.touched
+    # The owner's phones hear the turn ended, and how.
+    assert len(pushed) == 1 and pushed[0][0][:2] == ("u1", pid)
+    assert pushed[0][1]["ok"] is True and pushed[0][1]["reason"] == "answered"
 
     msgs = client.get(f"/v1/builder/projects/{pid}/messages").json()
     assert [m["role"] for m in msgs] == ["user", "assistant"]

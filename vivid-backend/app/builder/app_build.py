@@ -28,6 +28,7 @@ from app.builder.sandbox.manager import manager
 from app.core.config import settings
 from app.db.models import BuilderAppBuild, BuilderProject, BuilderSnapshot, Connector
 from app.db.session import async_session
+from app.services import push
 from app.services.connectors import tokens as connector_tokens
 
 log = logging.getLogger("vivid.builder.app_build")
@@ -231,6 +232,18 @@ async def _fail(build_id: str, message: str) -> None:
         row.finished_at = datetime.now(timezone.utc)
         await billing.refund(db, row)
         await db.commit()
+        project = await db.get(BuilderProject, row.project_id)
+        if project is not None:
+            await _notify(db, row, project.owner_id)
+
+
+async def _notify(db: AsyncSession, build: BuilderAppBuild, owner_id: str) -> None:
+    """Tell the owner's phones a build ended (a build takes 10 to 20 minutes;
+    nobody watches it)."""
+    project = await db.get(BuilderProject, build.project_id)
+    push.app_build_finished(owner_id, build.project_id, project.name if project else "",
+                            build_id=build.id, platform=build.platform, status=build.status,
+                            artifact_url=build.artifact_url)
 
 
 # ------------------------------------------------------------ following
@@ -252,6 +265,7 @@ async def refresh(db: AsyncSession, build: BuilderAppBuild, owner_id: str) -> No
             build.error = info.error or "The build failed on Expo. Open the logs for details."
         if status in (FAILED, CANCELED):
             await billing.refund(db, build)
+        await _notify(db, build, owner_id)
 
 
 async def poll_once() -> int:
@@ -271,6 +285,7 @@ async def poll_once() -> int:
                     build.status, build.error = FAILED, "The build never started. Try again."
                     build.finished_at = datetime.now(timezone.utc)
                     await billing.refund(db, build)
+                    await _notify(db, build, owner_id)
                 continue
             try:
                 await refresh(db, build, owner_id)

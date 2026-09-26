@@ -491,6 +491,12 @@ class Settings(BaseSettings):
     # It never enters a project's sandbox: builds start in a throwaway one.
     EXPO_TOKEN: str = ""
     EXPO_OWNER: str = ""
+    # Push notifications to the mobile app through Expo's push service: when
+    # a build turn or an app build ends. The access token is only needed if
+    # "enhanced push security" is on for the app's Expo project.
+    PUSH_ENABLED: bool = True
+    EXPO_PUSH_URL: str = "https://exp.host/--/api/v2/push/send"
+    EXPO_PUSH_ACCESS_TOKEN: str = ""
     EXPO_API_TIMEOUT: int = 20
     # What a build on Vivid's account costs the user, in USD, debited from
     # their wallet. Launch price while payments are being tested, below what

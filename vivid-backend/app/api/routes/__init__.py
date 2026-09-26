@@ -14,6 +14,7 @@ from app.api.routes.health import router as health_router
 from app.api.routes.keys import router as keys_router
 from app.api.routes.media import router as media_router
 from app.api.routes.pay import router as pay_router
+from app.api.routes.push import router as push_router
 from app.api.routes.search import router as search_router
 from app.api.routes.tools import router as tools_router
 from app.api.routes.waitlist import router as waitlist_router
@@ -41,4 +42,5 @@ api_router.include_router(wallet_router)
 api_router.include_router(webhooks_router)
 api_router.include_router(pay_router)
 api_router.include_router(earnings_router)
+api_router.include_router(push_router)
 api_router.include_router(admin_router)
