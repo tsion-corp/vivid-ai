@@ -409,3 +409,24 @@ async def test_turn_feed_replays_and_follows():
     await asyncio.gather(t1, t2)
     assert seen.count((0, "start")) == 1 and (2, "start") not in seen
     assert (0, "finish") in seen and (2, "finish") in seen and (2, "DONE") in seen
+
+
+async def test_a_turn_that_changed_files_ends_with_a_summary(monkeypatch):
+    """However the turn ended, the thread closes with what was built, and
+    that line is the version's label."""
+    monkeypatch.setattr(settings, "BUILDER_CLOSING_SUMMARY", True)
+    model = install(monkeypatch, [
+        ("", [call("write_file", {"path": "src/A.tsx", "content": "export {}"})]),
+        ("Checked the spacing on the menu cards.", []),
+        ("Built a one-page bakery site with a menu and an order form.", []),
+    ])
+    sb = FakeSandbox({"src/App.tsx": "x", "src/main.tsx": "y", "package.json": "{}"})
+    runner = TurnRunner(sb, routing.EDIT, [], "make a bakery site")
+    parts, c = await collect(runner)
+    assert c.text().rstrip().endswith("Built a one-page bakery site with a menu and an order form.")
+    assert runner.result.summary == "Built a one-page bakery site with a menu and an order form."
+    ask = model.requests[-1]
+    assert ask["tools"] == []
+    prompt_text = ask["messages"][0]["content"]
+    assert "make a bakery site" in prompt_text and "src/A.tsx" in prompt_text
+    assert "spacing on the menu cards" in prompt_text

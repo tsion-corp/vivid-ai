@@ -10,6 +10,14 @@ import fnmatch
 import pytest
 
 
+@pytest.fixture(autouse=True)
+def _no_closing_summary(monkeypatch):
+    """Scripted-model tests count every model call and compare whole texts;
+    the closing summary is one more call, so it is on only where tested."""
+    from app.core.config import settings
+    monkeypatch.setattr(settings, "BUILDER_CLOSING_SUMMARY", False)
+
+
 class FakeRedis:
     """Enough of redis.asyncio for the browser session registry.
 

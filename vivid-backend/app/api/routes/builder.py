@@ -447,8 +447,10 @@ async def _persist_turn(project_id: str, collector: stream.PartsCollector,
                     # A turn that changed nothing gets no version: "saved as
                     # version 1" of an untouched template misleads.
                     try:
+                        # The closing summary labels the version; the turn's
+                        # first words ("I'll start by reading...") do not.
                         snapshot = await snapshots.take(db, runner.sandbox, project,
-                                                        collector.text())
+                                                        runner.result.summary or collector.text())
                     except (snapshots.SnapshotError, SandboxError, Exception) as e:
                         # The message and usage still land; the next turn that
                         # changes a file snapshots this one's work too.

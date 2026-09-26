@@ -69,6 +69,9 @@ class TurnResult:
     completion_rounds: int = 0
     #: Stored screenshot keys, newest round last.
     screenshots: list[str] = field(default_factory=list)
+    #: The closing summary of a turn that changed files: what was built, in
+    #: two or three sentences. It ends the thread and labels the version.
+    summary: str | None = None
 
     @property
     def tokens_in(self) -> int:
@@ -305,7 +308,10 @@ class TurnRunner:
         fallback = routing.endpoint_for(routing.FALLBACK)
 
         outcome = ERROR
+        said: list[str] = []                        # what the thread showed, for the summary
         async for part in self._attempt(primary, self.stage):
+            if part.get("type") == "text-delta":
+                said.append(part.get("delta", ""))
             yield part
         outcome = self.result.reason
 
@@ -319,6 +325,8 @@ class TurnRunner:
             yield stream.text_delta(text_id, RETRY_NOTICE)
             yield stream.text_end(text_id)
             async for part in self._attempt(fallback, routing.FALLBACK):
+                if part.get("type") == "text-delta":
+                    said.append(part.get("delta", ""))
                 yield part
             outcome = self.result.reason
 
@@ -330,6 +338,18 @@ class TurnRunner:
             yield stream.text_delta(text_id, _exhausted_message(outcome))
             yield stream.text_end(text_id)
 
+        if outcome in OK_REASONS and self.result.touched and settings.BUILDER_CLOSING_SUMMARY:
+            # A turn can end on a half-thought ("Let me measure the pixels.")
+            # when its review phases run out of steps. Close it with what
+            # was built; that line is also the version's label.
+            summary = await self._closing_summary("".join(said))
+            if summary:
+                self.result.summary = summary
+                text_id = stream.new_id("txt")
+                yield stream.text_start(text_id)
+                yield stream.text_delta(text_id, "\n\n" + summary)
+                yield stream.text_end(text_id)
+
         yield stream.data("usage", {
             "model": self.result.model, "steps": self.result.steps,
             "tokens_in": self.result.tokens_in, "tokens_out": self.result.tokens_out,
@@ -337,6 +357,37 @@ class TurnRunner:
             "failed_tools": list(self.result.failed_tools),
         })
         yield stream.finish()
+
+    async def _closing_summary(self, said: str) -> str | None:
+        """Two or three plain sentences on what this turn built or changed,
+        from the request, the files it touched and the tail of what it said.
+        One short call on the planning model; None if it fails (the turn
+        stands without it)."""
+        files = ", ".join(self.result.touched[:40])
+        prompt = (
+            "You just finished a turn in an app builder. Tell the user, in two or three short "
+            "sentences, what you built or changed and anything they should try or know. Plain "
+            "words, no lists, no code, no file paths, no preamble; start with what was done "
+            "(e.g. \"Built a one-page bakery site with ...\").\n\n"
+            f"Their request:\n{self.user_text[:1500]}\n\n"
+            f"Files changed: {files}\n\n"
+            f"The end of what you said during the turn:\n{said[-2500:]}")
+        try:
+            out: list[str] = []
+            async for ev in code_llm.stream_chat([{"role": "user", "content": prompt}], [],
+                                                 endpoint=routing.endpoint_for(routing.PLAN),
+                                                 max_tokens=160, temperature=0.2):
+                if ev.get("type") == "token":
+                    out.append(ev["text"])
+                elif ev.get("type") == "done":
+                    self.result.calls.append(ModelCall(
+                        model=routing.endpoint_for(routing.PLAN).model, stage="summary",
+                        usage=ev.get("usage")))
+            text = " ".join("".join(out).split()).strip()
+        except Exception as e:                              # a missing summary is not a failed turn
+            log.warning("closing summary failed: %s", e)
+            return None
+        return text[:600] or None
 
     @property
     def _mobile(self) -> bool:
