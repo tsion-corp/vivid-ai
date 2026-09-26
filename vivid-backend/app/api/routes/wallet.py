@@ -308,6 +308,47 @@ async def list_plans():
             "credit_packs": packs, "usd_ngn": ngn}
 
 
+class PlanOut(BaseModel):
+    id: str
+    name: str
+    price_usd: float
+    yearly_price_usd: float | None = None
+    #: None: unlimited.
+    max_apps: int | None = None
+    window_credits: float
+    window_hours: int
+    month_credits: float
+
+
+class AppsMeter(BaseModel):
+    used: int
+    #: None: unlimited.
+    limit: int | None = None
+
+
+class CreditMeter(BaseModel):
+    used: float
+    limit: float
+    resets_at: datetime
+    #: The rolling window's length (window meter only).
+    hours: int | None = None
+
+
+class MyPlanOut(BaseModel):
+    """The user's plan and what is left of it; amounts in credits."""
+    plan: PlanOut
+    #: active | grace (a renewal could not be paid; Free after grace_until) |
+    #: canceled (keeps the plan until period_end)
+    status: str
+    yearly: bool
+    period_end: datetime | None = None
+    grace_until: datetime | None = None
+    apps: AppsMeter
+    window: CreditMeter
+    month: CreditMeter
+    extra_credits: float
+
+
 async def _me_plan(db: AsyncSession, user: User) -> dict:
     account = await usage.account_for(db, user.id)
     m = await usage.meter(db, account)
@@ -329,7 +370,7 @@ async def _me_plan(db: AsyncSession, user: User) -> dict:
             "extra_credits": catalog.to_credits(wallet.extra_tokens)}
 
 
-@router.get("/me/plan")
+@router.get("/me/plan", response_model=MyPlanOut)
 async def my_plan(user: User = Depends(get_session_user), db: AsyncSession = Depends(get_db)):
     out = await _me_plan(db, user)
     await db.commit()
@@ -341,7 +382,7 @@ class PlanIn(BaseModel):
     yearly: bool = False
 
 
-@router.post("/me/plan")
+@router.post("/me/plan", response_model=MyPlanOut)
 async def change_plan(body: PlanIn, user: User = Depends(get_session_user),
                       db: AsyncSession = Depends(get_db)):
     try:
@@ -355,7 +396,7 @@ async def change_plan(body: PlanIn, user: User = Depends(get_session_user),
     return await _me_plan(db, user)
 
 
-@router.delete("/me/plan")
+@router.delete("/me/plan", response_model=MyPlanOut)
 async def cancel_plan(user: User = Depends(get_session_user), db: AsyncSession = Depends(get_db)):
     await subscriptions.cancel(db, user.id)
     await db.commit()
