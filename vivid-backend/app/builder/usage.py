@@ -10,6 +10,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.builder import pricing
 from app.builder.loop import ModelCall
+from app.core.config import settings
 from app.db.models import BuilderProject, BuilderUsageEvent
 from app.db.session import async_session
 
@@ -18,18 +19,31 @@ log = logging.getLogger("vivid.builder.usage")
 MODEL, SANDBOX, STORAGE, SUPABASE = "model", "sandbox", "storage", "supabase"
 
 
+def billable_tokens(usage: dict) -> int:
+    """What a model call counts against the plan: uncached input and output
+    in full, cached input at PLAN_CACHED_TOKEN_WEIGHT. Every step of a turn
+    resends the whole context, and the model serves nearly all of it from
+    its cache at a fraction of the price; charging it in full made one small
+    build cost eight credits."""
+    prompt = int(usage.get("prompt_tokens") or 0)
+    completion = int(usage.get("completion_tokens") or 0)
+    cached = min(int((usage.get("prompt_tokens_details") or {}).get("cached_tokens") or 0), prompt)
+    return int(round((prompt - cached) + cached * settings.PLAN_CACHED_TOKEN_WEIGHT + completion))
+
+
 async def record_model(db: AsyncSession, project_id: str, calls: list[ModelCall]) -> None:
     for call in calls:
         usage = call.usage or {}
-        tokens = int(usage.get("total_tokens") or
-                     (usage.get("prompt_tokens") or 0) + (usage.get("completion_tokens") or 0))
         db.add(BuilderUsageEvent(
-            project_id=project_id, kind=MODEL, quantity=tokens, unit="tokens",
+            project_id=project_id, kind=MODEL, quantity=billable_tokens(usage), unit="tokens",
             cost_usd=await pricing.cost_of(call.model, usage), model=call.model,
             meta={"stage": call.stage,
                   "prompt_tokens": usage.get("prompt_tokens"),
                   "completion_tokens": usage.get("completion_tokens"),
-                  "cached_tokens": (usage.get("prompt_tokens_details") or {}).get("cached_tokens")}))
+                  "cached_tokens": (usage.get("prompt_tokens_details") or {}).get("cached_tokens"),
+                  # The weight the quantity was metered with (the backfill
+                  # in db/session.py skips rows that have it).
+                  "cached_weight": settings.PLAN_CACHED_TOKEN_WEIGHT}))
 
 
 async def record_storage(db: AsyncSession, project_id: str, nbytes: int, seq: int) -> None:

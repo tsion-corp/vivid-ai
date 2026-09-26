@@ -304,6 +304,9 @@ async def list_plans():
         ngn = None
     return {"plans": [_plan_out(p) for p in catalog.plans().values()],
             "tokens_per_credit": catalog.tokens_per_credit(),
+            # Cached input counts at this weight of a token (see section 13
+            # of llms.txt); uncached input and output count in full.
+            "cached_token_weight": settings.PLAN_CACHED_TOKEN_WEIGHT,
             "credit_price_usd": settings.PLAN_CREDIT_PRICE_USD,
             "credit_packs": packs, "usd_ngn": ngn}
 

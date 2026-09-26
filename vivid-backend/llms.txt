@@ -628,8 +628,10 @@ then the lists. Empty until the site is published and visited.
 ## 11. Usage
 
 GET /builder/projects/{id}/usage -> {since, model_calls, tokens, sandbox_seconds, storage_bytes, cost_usd, by_kind}
-Per-project totals for a usage panel. Per-user monthly rollups and plan
-limits arrive with phase 6.
+Per-project totals for a usage panel. `tokens` are billable tokens, as the
+plan meters count them (section 13): cached input at a tenth. The stream's
+`data-usage` part carries the raw counts (tokens_in, tokens_out) for one
+turn; the two are not the same number.
 
 ------------------------------------------------------------------------
 ## 12. Recommended screens
@@ -660,7 +662,14 @@ values (never sent), the sandbox id.
 
 GET /plans -> {plans: [{id, name, price_usd, yearly_price_usd, max_apps,
 window_credits, window_hours, month_credits}], tokens_per_credit,
-credit_price_usd, credit_packs: [{credits, price_usd}], ...}.
+credit_price_usd, cached_token_weight, credit_packs: [{credits, price_usd}], ...}.
+
+What a credit buys: tokens_per_credit (500,000) billable tokens. Every step
+of a turn resends the whole context and the model serves nearly all of it
+from its prompt cache, so a cached input token counts at cached_token_weight
+(0.1) of a token; uncached input and output count in full. A first build of
+a small app is about one credit; a small edit a fraction of one. The Free
+plan's 4 credits per 5 hours cover a build and a few edits.
 GET /me/plan -> MyPlanOut (see the OpenAPI): plan, status (active | grace |
 canceled), yearly, period_end, grace_until, apps {used, limit}, window {used,
 limit, resets_at, hours}, month {used, limit, resets_at}, extra_credits.

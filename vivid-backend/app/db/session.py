@@ -102,6 +102,19 @@ async def init_db() -> None:
                     "crypto_rate DOUBLE PRECISION"):
             await conn.execute(text(
                 f"ALTER TABLE vivid_pay_checkouts ADD COLUMN IF NOT EXISTS {col}"))
+        # Model calls metered before cached input was discounted: re-meter
+        # them from the raw counts kept in meta, once (the weight is stamped
+        # on the row), so the plan meters stop charging cache hits in full.
+        await conn.execute(text(
+            "UPDATE builder_usage_events SET "
+            " quantity = ROUND((meta->>'prompt_tokens')::numeric"
+            "   - LEAST((meta->>'cached_tokens')::numeric, (meta->>'prompt_tokens')::numeric)"
+            "   + LEAST((meta->>'cached_tokens')::numeric, (meta->>'prompt_tokens')::numeric) * :w"
+            "   + COALESCE((meta->>'completion_tokens')::numeric, 0)),"
+            " meta = meta || jsonb_build_object('cached_weight', :w)"
+            " WHERE kind = 'model' AND unit = 'tokens' AND NOT (meta ? 'cached_weight')"
+            " AND (meta->>'prompt_tokens') IS NOT NULL AND (meta->>'cached_tokens') IS NOT NULL"),
+            {"w": settings.PLAN_CACHED_TOKEN_WEIGHT})
 
     async with async_session() as db:
         # Prompts are product config and deploy with the backend: upsert so a

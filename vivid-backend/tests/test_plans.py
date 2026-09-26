@@ -8,6 +8,8 @@ from datetime import datetime, timedelta, timezone
 import pytest
 
 from app.core.config import settings
+from sqlalchemy import select
+
 from app.db.models import BuilderProject, BuilderUsageEvent, Subscription
 from app.services import economics
 from app.services.plans import catalog, gate, subscriptions, usage
@@ -262,3 +264,42 @@ def test_routes_enforce_the_plan(client, maker):
     assert "Buy" not in err["message"] and "upgrade" not in err["message"]
     assert err["details"]["options"] == ["wait", "buy_credits", "upgrade"]
     assert err["details"]["window_resets_at"]
+
+
+# ------------------------------------------------------------ cached input
+def test_cached_input_counts_at_a_tenth(monkeypatch):
+    """A step resends its whole context and the model serves it from cache;
+    the plan counts those tokens at PLAN_CACHED_TOKEN_WEIGHT, the rest in full."""
+    from app.builder import usage as builder_usage
+    monkeypatch.setattr(settings, "PLAN_CACHED_TOKEN_WEIGHT", 0.1)
+    step = {"prompt_tokens": 73_921, "completion_tokens": 1_817,
+            "prompt_tokens_details": {"cached_tokens": 72_832}}
+    # 1,089 uncached + 7,283 cached-at-a-tenth + 1,817 out
+    assert builder_usage.billable_tokens(step) == 1_089 + 7_283 + 1_817
+    assert builder_usage.billable_tokens({"prompt_tokens": 100, "completion_tokens": 10}) == 110
+    # A cache count larger than the prompt (a provider quirk) never goes negative.
+    assert builder_usage.billable_tokens({"prompt_tokens": 100, "completion_tokens": 0,
+                                          "prompt_tokens_details": {"cached_tokens": 500}}) == 10
+    assert builder_usage.billable_tokens({}) == 0
+
+
+async def test_recorded_calls_are_metered_with_the_discount_and_keep_the_raw_counts(maker, monkeypatch):
+    from app.builder import pricing, usage as builder_usage
+    from app.builder.loop import ModelCall
+    monkeypatch.setattr(settings, "PLAN_CACHED_TOKEN_WEIGHT", 0.1)
+
+    async def no_price(model, usage):
+        return None
+    monkeypatch.setattr(pricing, "cost_of", no_price)
+    pid = await _project(maker)
+    async with maker() as db:
+        await builder_usage.record_model(db, pid, [ModelCall("m", "build", {
+            "prompt_tokens": 1_000, "completion_tokens": 50,
+            "prompt_tokens_details": {"cached_tokens": 900}})])
+        await db.commit()
+        row = (await db.execute(select(BuilderUsageEvent))).scalar_one()
+        assert int(row.quantity) == 100 + 90 + 50
+        assert row.meta["prompt_tokens"] == 1_000 and row.meta["cached_tokens"] == 900
+        assert row.meta["cached_weight"] == 0.1
+        account = await usage.account_for(db, "u1")
+        assert (await usage.meter(db, account)).window_used == 240

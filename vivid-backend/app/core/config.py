@@ -588,6 +588,11 @@ class Settings(BaseSettings):
     # per rolling PLAN_WINDOW_HOURS window. At ~$0.20 of cost per 1M tokens a
     # credit costs us ~$0.10; re-tune from `python -m app.scripts.token_economics`.
     PLAN_TOKENS_PER_CREDIT: int = 500_000
+    # A turn resends its whole context on every step and the model serves
+    # nearly all of it from its prompt cache (98% on a typical build), at
+    # about a tenth of the input price. Credits count a cached input token
+    # at this weight; uncached input and output count in full.
+    PLAN_CACHED_TOKEN_WEIGHT: float = 0.1
     PLAN_WINDOW_HOURS: int = 5
     PLAN_FREE_APPS: int = 2
     PLAN_FREE_WINDOW_CREDITS: float = 4
