@@ -45,6 +45,8 @@ App builds  GET /builder/app-builds/options · POST/GET /builder/projects/{id}/b
 Vivid Pay   GET/POST/DELETE /builder/projects/{id}/vivid-pay (the owner turns it on)
             POST /pay/checkouts · GET /pay/checkouts/{id}?key= · POST /pay/checkouts/{id}/simulate
             POST /pay/checkouts/{id}/crypto · GET /pay/checkouts?reference= (secret key) (called by the apps)
+Push        POST /me/push-tokens {token, platform?, app_version?} · GET /me/push-tokens
+            DELETE /me/push-tokens/{token} (URL-encoded, at sign-out)
 Earnings    GET /earnings · GET /earnings/entries · GET /earnings/checkouts · POST /earnings/kyc
             GET /earnings/banks · GET/POST /earnings/bank-accounts
             POST /earnings/withdrawals/quote · POST/GET /earnings/withdrawals
@@ -730,3 +732,34 @@ Withdrawing: POST /earnings/kyc {bvn, first_name, last_name, dob?} once,
 POST /earnings/bank-accounts {account_number, bank_uuid} (in the verified
 name), POST /earnings/withdrawals/quote {amount_kobo}, then POST
 /earnings/withdrawals {amount_kobo, bank_account_id}.
+
+------------------------------------------------------------------------
+## 17. Push notifications (the mobile app)
+
+A build turn takes 15 to 25 minutes and an app build 10 to 20, so the phone
+is told when they end, even when the app is closed.
+
+Register after sign-in, and again whenever Expo gives the app a new token
+(calling on every launch is fine):
+  POST /me/push-tokens {token: "ExponentPushToken[...]", platform?: ios|android,
+    app_version?} -> 201 PushDeviceOut {id, token, platform, app_version,
+    created_at, last_seen_at}. 422 invalid_token for anything that is not an
+    Expo push token. A token belongs to one user: when someone else signs in
+    on the same phone and registers it, it moves to them.
+  DELETE /me/push-tokens/{token} at sign-out -> 204 (also when it was not
+    registered). GET /me/push-tokens lists the user's devices.
+
+What is sent (title is the project's name; body one line):
+  A build or edit turn ended: body is the turn's closing summary ("Built a
+    one-page bakery site with ..."), or "The build didn't finish. Open the
+    app to see what happened." Cancelled turns send nothing.
+    data {type: "turn", project_id, message_id, ok}
+  A plan turn ended: "The plan is ready to review." or "A question about
+    your app is waiting for you." data {type: "turn", project_id,
+    message_id, ok}
+  An app build finished or failed: "Your Android build is ready to
+    install." / "Your iOS build failed. Open the app for the logs."
+    data {type: "app_build", project_id, build_id, status, artifact_url}
+Messages use channelId "default" on Android (create that channel) and
+sound "default". The app decides whether to show one while it is open.
+Tokens Expo reports as DeviceNotRegistered are deleted server-side.
