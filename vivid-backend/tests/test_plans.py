@@ -248,6 +248,9 @@ def test_routes_enforce_the_plan(client, maker):
     client.post("/v1/builder/projects", json={"skip_plan": True})
     third = client.post("/v1/builder/projects", json={"skip_plan": True})
     assert third.status_code == 402 and third.json()["error"]["code"] == "plan_limit"
+    # What happened, not where to pay: purchase options are details, for each client to show or not.
+    assert third.json()["error"]["details"]["options"] == ["upgrade"]
+    assert "pgrade" not in third.json()["error"]["message"]
 
     asyncio.run(_use(maker, first, tokens=1500))
     r = client.post(f"/v1/builder/projects/{first}/chat", json={"text": "add a page"})
@@ -256,4 +259,6 @@ def test_routes_enforce_the_plan(client, maker):
     assert err["code"] == "limit_reached" and "Free" in err["message"]
     assert err["details"]["window_used"] == 15 and err["details"]["window_limit"] == 10
     assert "credits" in err["message"]
+    assert "Buy" not in err["message"] and "upgrade" not in err["message"]
+    assert err["details"]["options"] == ["wait", "buy_credits", "upgrade"]
     assert err["details"]["window_resets_at"]

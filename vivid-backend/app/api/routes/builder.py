@@ -117,7 +117,9 @@ async def create_project(body: ProjectCreate, user: User = Depends(get_current_u
     if not allowed:
         raise APIError(402, "plan_limit",
                        f"The {account.plan.name} plan includes {account.plan.max_apps} apps and you "
-                       f"have {owned}. Upgrade to Pro for unlimited apps.")
+                       f"have {owned}.",
+                       details={"plan": account.plan.id, "max_apps": account.plan.max_apps,
+                                "apps": owned, "options": ["upgrade"]})
     project = BuilderProject(owner_id=user.id, name=body.name.strip() or "Untitled app",
                              mode="build" if body.skip_plan else "plan",
                              target=body.target)
@@ -250,7 +252,10 @@ async def chat(project_id: str, body: ChatIn, request: Request,
             raise APIError(402, "plan_limit",
                            f"Your {plan_check.account.plan.name} plan runs "
                            f"{plan_check.account.plan.max_apps} apps at a time, and this is not "
-                           "one of your most recent. Upgrade to keep building it.")
+                           "one of your most recent.",
+                           details={"plan": plan_check.account.plan.id,
+                                    "max_apps": plan_check.account.plan.max_apps,
+                                    "read_only": True, "options": ["upgrade"]})
         raise APIError(429, "limit_reached", _limit_message(plan_check),
                        details=plan_check.body())
 
@@ -374,8 +379,10 @@ def _limit_message(check) -> str:
     else:
         minutes = max(int((m.window_resets_at - datetime.now(timezone.utc)).total_seconds() // 60), 1)
         when = f"more credits free up in {minutes // 60}h {minutes % 60:02d}m"
-    return (f"You've used your {check.account.plan.name} plan's credits for now: {when}. "
-            "Buy extra credits from your wallet or upgrade to keep going.")
+    # What happened and when it frees up, nothing more: ways to get more are
+    # `details.options`, which each client shows or not (a store app may not
+    # point at payments outside the store).
+    return f"You've used your {check.account.plan.name} plan's credits for now: {when}."
 
 
 async def _settle_plan(check) -> None:
