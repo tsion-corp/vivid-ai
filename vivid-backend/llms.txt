@@ -29,6 +29,8 @@ Turns       POST /builder/projects/{id}/chat (SSE) · GET /builder/projects/{id}
 Thread      GET /builder/projects/{id}/messages
 Preview     GET /builder/projects/{id}/preview · GET /builder/projects/{id}/files · GET /builder/projects/{id}/files/{path}[?raw=1]
             GET /builder/projects/{id}/logs?lines=100
+People      GET/POST /builder/projects/{id}/members · PATCH/DELETE .../members/{user_id} · DELETE .../invites/{invite_id}
+            GET /builder/invites/{token} (public) · POST /builder/invites/{token}/accept
 Share link  GET/POST/DELETE /builder/projects/{id}/share · public: GET /s/{token} · POST /s/{token}/ping
 Copy        POST /builder/projects/{id}/duplicate {seq?, name?}
 Hand edits  PUT /builder/projects/{id}/files/{path} (replace an image) · POST .../images/replace · POST .../edits
@@ -227,7 +229,29 @@ Project:
 
 Roles: a route a role may not use answers 403 forbidden; a project the
 caller has no part in answers 404. Turns on a shared project use the
-owner's plan and credits, whoever sends them.
+owner's plan and credits, whoever sends them; when the owner's plan has no
+room a member's turn answers 429 (or 402) owner_limit, which only the owner
+can fix. GET /builder/projects lists shared projects too, with role and
+owner_name. A user message carries user_id (who wrote it).
+
+### Sharing with people
+
+GET    /builder/projects/{id}/members  -> {owner: Person, members: Member[], invites: Invite[]}
+       Person {user_id, name, avatar_url}; Member = Person + {role, created_at};
+       invites (pending) are listed to the owner only.
+POST   /builder/projects/{id}/members {email, role: "editor"|"viewer"} -> Invite (201)   owner
+       Invite {id, email, role, created_at, expires_at, url, emailed}. The invite
+       is a single-use link (`url`, https://vividbuild.ai/invite/<token>), emailed
+       when email is set up (`emailed`) and always shown to the owner to pass on
+       (WhatsApp...). Inviting the same email again replaces the link. 400
+       bad_email; 409 too_many_members (20 people a project).
+PATCH  /builder/projects/{id}/members/{user_id} {role} -> Member                          owner
+DELETE /builder/projects/{id}/members/{user_id}        -> 204   owner, or the member leaving
+DELETE /builder/projects/{id}/invites/{invite_id}      -> 204   owner
+GET    /builder/invites/{token}  (no auth) -> {project_name, inviter, role, status: ok|used|expired}
+POST   /builder/invites/{token}/accept -> Project (with role)   the signed-in user joins;
+       410 invite_gone once used or expired (14 days). Emails are never matched
+       to accounts: opening the link is the proof.
 
 `skip_plan: true` creates the project in build mode (for developers who
 know what they want). Non-technical users should always go through plan

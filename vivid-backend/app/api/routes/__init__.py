@@ -15,6 +15,7 @@ from app.api.routes.keys import router as keys_router
 from app.api.routes.media import router as media_router
 from app.api.routes.pay import router as pay_router
 from app.api.routes.push import router as push_router
+from app.api.routes.members import router as members_router
 from app.api.routes.search import router as search_router
 from app.api.routes.share import router as share_router
 from app.api.routes.tools import router as tools_router
@@ -38,6 +39,7 @@ api_router.include_router(search_router)
 api_router.include_router(media_router)
 api_router.include_router(tools_router)
 api_router.include_router(builder_router)
+api_router.include_router(members_router)
 api_router.include_router(share_router)
 api_router.include_router(waitlist_router)
 api_router.include_router(wallet_router)

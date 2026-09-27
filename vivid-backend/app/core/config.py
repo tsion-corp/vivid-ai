@@ -661,6 +661,11 @@ class Settings(BaseSettings):
     BUILDER_SHARE_PER_MINUTE: int = 30
     BUILDER_SHARE_IP_PER_MINUTE: int = 20
 
+    # Project invites: how long the emailed link works, and how many people
+    # a project may have (members plus pending invites).
+    BUILDER_INVITE_DAYS: int = 14
+    BUILDER_MAX_MEMBERS: int = 20
+
     # Outgoing email (app/services/mail.py): invites, gifts, and the forms
     # generated sites send. Any SMTP provider; empty host = no email is sent
     # (forms still store what they receive).

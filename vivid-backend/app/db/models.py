@@ -389,13 +389,16 @@ class BuilderMember(Base):
 
 
 class BuilderInvite(Base):
-    """An invitation to someone with no account yet: it becomes a membership
-    when an account with this email signs in."""
+    """An invitation to a project, sent as a link to an email address. The
+    link is the proof: whoever opens it signed in becomes a member (account
+    emails are not verified for every sign-in, so they are never matched).
+    Used once; expires after BUILDER_INVITE_DAYS."""
     __tablename__ = "builder_invites"
 
     id: Mapped[str] = mapped_column(String(36), primary_key=True, default=_uuid)
     project_id: Mapped[str] = mapped_column(
         ForeignKey("builder_projects.id", ondelete="CASCADE"), index=True)
+    token: Mapped[str] = mapped_column(String(64), unique=True, index=True)
     email: Mapped[str] = mapped_column(String(320), index=True)
     role: Mapped[str] = mapped_column(String(8), default="editor")
     invited_by: Mapped[str | None] = mapped_column(String(36), default=None)

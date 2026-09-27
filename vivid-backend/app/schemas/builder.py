@@ -55,6 +55,8 @@ class ProjectOut(BaseModel):
     #: The caller's role: owner | editor (builds, hand-edits, publishes) |
     #: viewer (reads). Shared projects list with the other two.
     role: str = "owner"
+    #: On a project shared with the caller: the owner's name.
+    owner_name: str | None = None
     created_at: datetime
     updated_at: datetime
 
@@ -77,6 +79,8 @@ class MessageOut(BaseModel):
 
     id: str
     role: str
+    #: Who wrote a user message (match it against GET .../members).
+    user_id: str | None = None
     parts: list
     model: str | None
     created_at: datetime
@@ -338,3 +342,52 @@ class SharedPreviewOut(BaseModel):
     url: str
     #: Mobile projects: the URL Expo Go opens (a QR code on the page).
     device_url: str | None = None
+
+
+class PersonOut(BaseModel):
+    user_id: str
+    name: str | None = None
+    avatar_url: str | None = None
+
+
+class MemberOut(PersonOut):
+    role: str                       # editor | viewer
+    created_at: datetime
+
+
+class InviteOut(BaseModel):
+    id: str
+    email: str
+    role: str
+    created_at: datetime
+    expires_at: datetime
+    #: The invite link (owner only): send it yourself when email is not
+    #: delivered, e.g. over WhatsApp. Whoever opens it signed in joins.
+    url: str | None = None
+    #: This time only: whether the invite email went out.
+    emailed: bool | None = None
+
+
+class MembersOut(BaseModel):
+    owner: PersonOut
+    members: list[MemberOut]
+    #: Pending invites; shown to the owner only (empty for others).
+    invites: list[InviteOut]
+
+
+class MemberInviteIn(BaseModel):
+    email: str = Field(max_length=320)
+    role: Literal["editor", "viewer"] = "editor"
+
+
+class MemberRoleIn(BaseModel):
+    role: Literal["editor", "viewer"]
+
+
+class InvitePreviewOut(BaseModel):
+    """What an invite link shows before it is accepted."""
+    project_name: str
+    inviter: str | None = None
+    role: str
+    #: expired | used | ok
+    status: str

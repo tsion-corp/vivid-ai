@@ -220,17 +220,39 @@ async def _writable(db: AsyncSession, user_id: str) -> set[str] | None:
 @router.get("/projects", response_model=list[ProjectOut])
 async def list_projects(user: User = Depends(get_current_user),
                         db: AsyncSession = Depends(get_db)):
+    """The caller's projects and the ones shared with them (role editor or
+    viewer, with the owner's name), most recently updated first."""
     rows = await db.execute(select(BuilderProject)
                             .where(BuilderProject.owner_id == user.id)
                             .order_by(BuilderProject.updated_at.desc()))
     writable = await _writable(db, user.id)
-    return [_present(p, writable) for p in rows.scalars()]
+    out = []
+    for p in rows.scalars():
+        p.role = "owner"
+        out.append(_present(p, writable))
+    shared = (await db.execute(
+        select(BuilderProject, BuilderMember.role, User.name)
+        .join(BuilderMember, BuilderMember.project_id == BuilderProject.id)
+        .join(User, User.id == BuilderProject.owner_id)
+        .where(BuilderMember.user_id == user.id, User.deleted_at.is_(None)))).all()
+    owners: dict[str, set[str] | None] = {}
+    for p, role, owner_name in shared:
+        if p.owner_id not in owners:
+            owners[p.owner_id] = await _writable(db, p.owner_id)
+        p.role, p.owner_name = role, owner_name
+        out.append(_present(p, owners[p.owner_id]))
+    out.sort(key=lambda p: p.updated_at, reverse=True)
+    return out
 
 
 @router.get("/projects/{project_id}", response_model=ProjectOut)
 async def get_project(project_id: str, user: User = Depends(get_current_user),
                       db: AsyncSession = Depends(get_db)):
-    return _present(await _owned(project_id, user, db, "viewer"), await _writable(db, user.id))
+    project = await _owned(project_id, user, db, "viewer")
+    if project.role != "owner":
+        owner = await db.get(User, project.owner_id)
+        project.owner_name = owner.name if owner else None
+    return _present(project, await _writable(db, project.owner_id))
 
 
 @router.patch("/projects/{project_id}", response_model=ProjectOut)
@@ -332,6 +354,12 @@ async def chat(project_id: str, body: ChatIn, request: Request,
         raise APIError(503, "not_configured", "The app builder is not configured.")
     # The owner's plan pays for every turn on a project, whoever sends it.
     plan_check = await plan_gate.can_start_turn(db, project.owner_id, project_id)
+    if not plan_check.ok and project.role != "owner":
+        # A member cannot fix the owner's plan; say whose it is.
+        raise APIError(429 if not plan_check.read_only else 402, "owner_limit",
+                       "This project runs on its owner's plan, which has no room for more turns "
+                       "right now. Ask the owner to top up or upgrade.",
+                       details={"owner_limit": True})
     if not plan_check.ok:
         if plan_check.read_only:
             raise APIError(402, "plan_limit",
