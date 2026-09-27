@@ -656,6 +656,18 @@ class Settings(BaseSettings):
     # detail. Empty = the detail is never shown. Generate: openssl rand -hex 24
     HEALTH_TOKEN: str = ""
 
+    # Outgoing email (app/services/mail.py): invites, gifts, and the forms
+    # generated sites send. Any SMTP provider; empty host = no email is sent
+    # (forms still store what they receive).
+    SMTP_HOST: str = ""
+    SMTP_PORT: int = 587
+    SMTP_USER: str = ""
+    SMTP_PASSWORD: str = ""
+    SMTP_FROM: str = "Vivid <no-reply@vividbuild.ai>"
+    # STARTTLS on the plain port (587); False with port 465 uses implicit TLS.
+    SMTP_STARTTLS: bool = True
+    SMTP_TIMEOUT: float = 20.0
+
     # Reads the waitlist (GET /v1/waitlist): Authorization: Bearer <ADMIN_TOKEN>.
     # Separate from HEALTH_TOKEN because the list is people's names and
     # emails. Empty = nobody can read it. Generate: openssl rand -hex 24
