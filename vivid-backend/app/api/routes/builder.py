@@ -66,7 +66,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.deps import get_current_user, get_db
 from app.builder import (analytics, app_build, assets, billing, blob, chain as chain_mod,
-                         decane_connect, duplicate, expo, images, jsx_remove, memory, seo as seo_mod, pgdirect, planning, publish, routing,
+                         decane_connect, duplicate, expo, images, jsx_remove, memory, seo as seo_mod, theme, pgdirect, planning, publish, routing,
                          secrets, skills, snapshots, stream, supabase, targets, tools, usage,
                          visual)
 from app.builder.loop import FEED_DONE, OK_REASONS, ModelCall, TurnRunner, turns
@@ -86,7 +86,7 @@ from app.schemas.builder import (AnalyticsOut, AppBuildIn, AppBuildOut, AssetOut
                                  BuildOptionsOut, CancelOut, ChatIn, DeleteIn, DeleteOut, StructureIn, DuplicateIn, DuplicateOut, EditsIn, EditsOut, FileOut,
                                  FilesOut, ImageReplaceOut, MessageOut, PreviewOut, ProjectCreate, SeoIn, SeoOut, SeoPage, ShareOut,
                                  UserSecretIn, UserSecretOut, UserSecretSaved, FormsIn, FormsOut,
-                                 FormSubmissionOut,
+                                 FormSubmissionOut, ThemeIn, ThemeOut,
                                  ProjectOut, ProjectUpdate, PublishOut, SnapshotOut, SupabaseLinkIn,
                                  TextEditOut, UsageOut)
 from app.services import mail, push, rate_limit
@@ -793,6 +793,61 @@ async def link_supabase(project_id: str, body: SupabaseLinkIn, request: Request,
         await _sync_env(sandbox, _prefixed({"VITE_SUPABASE_URL": url, "VITE_SUPABASE_ANON_KEY": anon},
                                            targets.of(project)))
     return project
+
+
+# ----------------------------------------------------------------- theme
+def _theme_out(css: str, html: str, row=None) -> ThemeOut:
+    current = theme.read(css, html)
+    palettes = {name: [theme.oklch_to_hex(*theme.parse_oklch(light)), theme.oklch_to_hex(*theme.parse_oklch(dark))]
+                for name, (light, dark) in theme.PALETTES.items()}
+    return ThemeOut(supported=current["supported"], primary=current["primary"], radius=current["radius"],
+                    font_heading=current["font_heading"], font_body=current["font_body"],
+                    palettes=palettes, fonts={k: list(v) for k, v in theme.FONTS.items()}, snapshot=row)
+
+
+async def _theme_files(sandbox) -> tuple[str, str]:
+    try:
+        return await sandbox.read_file("src/index.css"), await sandbox.read_file("index.html")
+    except FileNotFoundError:
+        return "", ""
+
+
+@router.get("/projects/{project_id}/theme", response_model=ThemeOut)
+async def get_theme(project_id: str, request: Request, user: User = Depends(get_current_user),
+                    db: AsyncSession = Depends(get_db)):
+    """The site's main colour, roundness and fonts, and the choices."""
+    project = await _owned(project_id, user, db, "viewer")
+    if targets.of(project).is_mobile:
+        return _theme_out("", "")
+    return _theme_out(*await _theme_files(await _sandbox(project_id, request)))
+
+
+@router.put("/projects/{project_id}/theme", response_model=ThemeOut)
+async def put_theme(project_id: str, body: ThemeIn, request: Request,
+                    user: User = Depends(get_current_user), db: AsyncSession = Depends(get_db)):
+    """Change it (only what is sent) and save a version. 409 not_supported
+    when the app keeps its look elsewhere."""
+    project = await _hand_edit_target(project_id, user, db)
+    if targets.of(project).is_mobile:
+        raise APIError(409, "not_supported", "Changing the theme by hand works on websites for now.")
+    async with _editing.setdefault(project_id, asyncio.Lock()):
+        sandbox = await _sandbox(project_id, request)
+        css, html = await _theme_files(sandbox)
+        try:
+            new_css, new_html = theme.write(css, html, body.model_dump())
+        except theme.ThemeError as e:
+            raise APIError(409 if "doesn't keep" in str(e) else 400,
+                           "not_supported" if "doesn't keep" in str(e) else "bad_theme", str(e))
+        if new_css != css:
+            await sandbox.write_file("src/index.css", new_css)
+        if new_html != html:
+            await sandbox.write_file("index.html", new_html)
+        row = None
+        if (new_css, new_html) != (css, html):
+            row = await _save_hand_edit(db, sandbox, project, "Changed the theme",
+                                        [p for p, a, b in (("src/index.css", css, new_css),
+                                                           ("index.html", html, new_html)) if a != b])
+    return _theme_out(new_css, new_html, row)
 
 
 # ----------------------------------------------------------------- forms

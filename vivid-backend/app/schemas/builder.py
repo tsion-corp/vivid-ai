@@ -474,3 +474,29 @@ class FormSubmissionOut(BaseModel):
     test: bool
     emailed: bool
     created_at: datetime
+
+
+class ThemeIn(BaseModel):
+    """One change to the site's look: a palette or a colour, roundness,
+    a font pairing. Fields left out stay as they are."""
+    palette: str | None = Field(default=None, max_length=32)
+    #: A hex colour for the main colour, e.g. #1f6feb (instead of a palette).
+    primary: str | None = Field(default=None, pattern=r"^#?[0-9a-fA-F]{3}([0-9a-fA-F]{3})?$")
+    #: Corner roundness in rem, 0 (square) to 2.
+    radius: float | None = Field(default=None, ge=0, le=2)
+    fonts: str | None = Field(default=None, max_length=32)
+
+
+class ThemeOut(BaseModel):
+    #: False: the app does not keep its theme where it can be changed by
+    #: hand; offer a chat turn instead.
+    supported: bool
+    primary: str | None = None
+    radius: float | None = None
+    font_heading: str | None = None
+    font_body: str | None = None
+    #: The choices: palette name -> [light, dark] as hex; pairing -> [heading, body].
+    palettes: dict[str, list[str]]
+    fonts: dict[str, list[str]]
+    #: After a change: the version it was saved as.
+    snapshot: SnapshotOut | None = None

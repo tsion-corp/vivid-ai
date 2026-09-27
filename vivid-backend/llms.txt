@@ -35,6 +35,7 @@ Share link  GET/POST/DELETE /builder/projects/{id}/share · public: GET /s/{toke
 Copy        POST /builder/projects/{id}/duplicate {seq?, name?}
 Hand edits  PUT /builder/projects/{id}/files/{path} (replace an image) · POST .../images/replace · POST .../edits
             POST .../edits/delete · POST .../edits/structure (duplicate, move)
+            GET/PUT /builder/projects/{id}/theme (colour, roundness, fonts)
 Uploads     POST/GET /builder/projects/{id}/assets · DELETE /builder/projects/{id}/assets/{asset_id}
 Versions    GET/POST /builder/projects/{id}/snapshots · POST .../snapshots/{seq}/restore · POST /builder/projects/{id}/undo
 Connectors  GET /connectors · POST /connectors · DELETE /connectors/{id} · GET /connectors/supabase/authorize
@@ -572,6 +573,16 @@ POST /builder/projects/{id}/edits/structure  {op, ...DeleteIn} -> DeleteOut
      fields get "-copy"); `forget` then works as for delete. Moving the first
      up or the last down is not_simple ("it is already at the top"). The
      version reads "Duplicated the "X" card", "Moved up the "X" section".
+
+GET /builder/projects/{id}/theme -> {supported, primary, radius, font_heading, font_body,
+                                     palettes: {name: [light hex, dark hex]}, fonts: {name: [heading, body]}, snapshot}
+PUT /builder/projects/{id}/theme {palette? | primary? ("#1f6feb"), radius? (rem, 0-2), fonts?} -> same   editor
+     The site's main colour (light and dark mode, and the text on it),
+     corner roundness and font pairing, rewritten exactly in src/index.css
+     and index.html; saved as a version ("Changed the theme"); Vite shows it
+     at once. Only what is sent changes. supported false (or 409
+     not_supported on PUT): the app keeps its look elsewhere, so offer a chat
+     turn. 400 bad_theme for an unknown palette or pairing. Websites only.
 
 Click-to-edit in the preview. The preview's index.html carries a small
 editor (placed on every GET .../preview, stripped from published sites). It
