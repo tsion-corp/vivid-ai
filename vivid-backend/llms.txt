@@ -472,21 +472,31 @@ POST /builder/projects/{id}/edits  {edits: [{old, new, all?}]}  -> {results, sna
      ambiguous (count places, files listed: resend with all=true or ask the
      model). The applied ones are one version; snapshot is null when none
      applied or storing it failed (the change is still in the preview).
-POST /builder/projects/{id}/edits/delete  DeleteIn -> DeleteOut {status, reason, files, count, snapshot}
+POST /builder/projects/{id}/edits/delete  DeleteIn -> DeleteOut {status, reason, files, count, data_file, forget, snapshot}
      Remove an element or a section clicked in the preview. Send what the
      editor's vivid:delete gave you: {tag, id, classes, texts, src, scope:
      element|section, label}. It is found in the source by its text (JSX
      text, string literals, constants it shows such as {HUB_ADDRESS} or
-     {SITE.phone}, and text passed as props like <FeatureCard title="...">)
-     or an image's src, then resolved to what rendered it: the element with
+     {SITE.phone}, text passed as props like <FeatureCard title="...">, and
+     data fields: {s.tracking_code} holds every tracking_code value in the
+     code's objects and arrays, e.g. seed data) or an image's src; text
+     loaded while running (an API) falls back to the element of that tag
+     showing data with the clicked classes. It is then resolved to what rendered it: the element with
      the clicked tag, or the component that renders it (<Card>, <Button>,
      <FeatureCard>). It is cut exactly; a wrapper left empty (<Reveal>,
      <Button asChild>) goes with it, and a section that is a whole component
-     (a Hero.tsx) removes the places that render it. The result is
+     (a Hero.tsx) removes the places that render it. One item of a list
+     built from data (a .map(), or a component every use of which is in
+     one) is removed from its data instead: its entry in the array (seed
+     data, a list in the page) that holds the shown text. Then data_file
+     names that file and forget lists the entry's texts: post
+     {type: "vivid:forget", texts: forget} to the preview so a page that
+     saved its data in the browser drops it and reloads. The result is
      typechecked: status would_break means nothing changed. Otherwise status
      is applied (saved as a version; POST .../undo puts it back) |
      not_found (its text is computed, or it has none) | ambiguous (count
-     elements match) | not_simple (one item of a list built from data, a part
+     elements or list items match) | not_simple (one item of a list the page
+     loads while running, a part
      of a component's own layout shared by every use, or the whole page) |
      not_supported (mobile apps, for now). Offer the ones that
      did not apply as a chat turn ("Remove the section with "Our menu"").
@@ -511,6 +521,9 @@ Messages from the preview (check e.origin as for vivid:error):
                                             with `target` as the body
 After replacing a picture in public/, post {type: "vivid:image-updated", src}
 to the preview so it reloads that image (Vite does not hot-reload public/).
+After a delete that removed an item from data (forget not empty), post
+{type: "vivid:forget", texts: forget}: the preview removes the entries of
+its localStorage/sessionStorage holding those texts and reloads.
 
 ------------------------------------------------------------------------
 ## 7. Uploads (logo, product photos, fonts)
