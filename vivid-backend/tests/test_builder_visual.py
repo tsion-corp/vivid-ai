@@ -159,3 +159,15 @@ def test_generated_picture_is_replaced_in_the_store_too(client, fake_manager, fa
                     files={"file": ("red.png", image("PNG"), "image/png")})
     assert r.status_code == 200 and r.json()["path"] == "public/uploads/hero-shot.jpg", r.json()
     assert Image.open(io.BytesIO(fake_blob[stored_key])).getpixel((4, 4))[0] > 150
+
+
+def test_the_editor_edits_text_beside_icons_and_offers_delete():
+    """Text next to an icon is edited through a span around just that text
+    node (the icon is never touched); any click shows the delete toolbar."""
+    script = visual.EDITOR_SCRIPT
+    assert "caretPositionFromPoint" in script and "caretRangeFromPoint" in script
+    assert 'setAttribute("data-vivid-text"' in script and "node.nodeValue" in script
+    assert '"vivid:delete"' in script and "Delete section" in script
+    # The toolbar never leaks into a published site: it lives in the editor block.
+    html = visual.with_editor("<html><body></body></html>")
+    assert publish is not None and "data-vivid-bar" not in visual.strip_editor(html.encode()).decode()

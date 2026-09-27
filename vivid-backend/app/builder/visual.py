@@ -319,10 +319,21 @@ EDITOR_SCRIPT = r"""<script>
   if (window.parent === window || window.__vividEditor) return;
   window.__vividEditor = true;
   var on = false, owner = null, hovered = null, editing = null, original = "";
+  // Text beside an icon is edited through a span wrapped around just that
+  // text node, so the icon is never touched; `node` is the React-owned text.
+  var wrapped = null, node = null;
+  var selected = null, block = null, section = null;
+  var ACCENT = "#7c5cff";
   var style = document.createElement("style");
   style.textContent =
-    "[data-vivid-hover]{outline:2px dashed #7c5cff !important;outline-offset:2px;cursor:pointer !important}" +
-    "[data-vivid-editing]{outline:2px solid #7c5cff !important;outline-offset:2px;cursor:text !important}";
+    "[data-vivid-hover]{outline:2px dashed " + ACCENT + " !important;outline-offset:2px;cursor:pointer !important}" +
+    "[data-vivid-editing]{outline:2px solid " + ACCENT + " !important;outline-offset:2px;cursor:text !important}" +
+    "[data-vivid-picked]{outline:2px solid " + ACCENT + " !important;outline-offset:2px}" +
+    "[data-vivid-doomed]{outline:3px solid #ef4444 !important;outline-offset:-3px;background-color:rgba(239,68,68,.08) !important}" +
+    "[data-vivid-bar]{position:fixed;z-index:2147483647;display:flex;gap:4px;padding:4px;border-radius:10px;" +
+    "background:#17141f;box-shadow:0 8px 24px rgba(0,0,0,.35);font:600 12px/1 system-ui,sans-serif}" +
+    "[data-vivid-bar] button{all:unset;cursor:pointer;padding:7px 10px;border-radius:7px;color:#fff;white-space:nowrap}" +
+    "[data-vivid-bar] button:hover{background:#ef4444}";
   function send(msg) { if (owner) window.parent.postMessage(msg, owner); }
   function bgUrl(el) {
     for (var i = 0; el && i < 4; i++, el = el.parentElement) {
@@ -343,10 +354,25 @@ EDITOR_SCRIPT = r"""<script>
     for (var i = 0; i < el.children.length; i++) if (el.children[i].tagName !== "BR") return false;
     return (el.textContent || "").trim().length > 0;
   }
+  // The text node under the pointer, if the click really was on its glyphs.
+  function textNodeAt(x, y) {
+    var n = null, r;
+    if (document.caretPositionFromPoint) { r = document.caretPositionFromPoint(x, y); n = r && r.offsetNode; }
+    else if (document.caretRangeFromPoint) { r = document.caretRangeFromPoint(x, y); n = r && r.startContainer; }
+    if (!n || n.nodeType !== 3 || !(n.nodeValue || "").trim()) return null;
+    if (bar.contains(n)) return null;
+    var range = document.createRange(); range.selectNodeContents(n);
+    var rects = range.getClientRects();
+    for (var i = 0; i < rects.length; i++) {
+      var b = rects[i];
+      if (x >= b.left - 2 && x <= b.right + 2 && y >= b.top - 2 && y <= b.bottom + 2) return n;
+    }
+    return null;
+  }
   function mark(el) {
     if (hovered && hovered !== el) hovered.removeAttribute("data-vivid-hover");
     hovered = el;
-    if (el && el !== editing) el.setAttribute("data-vivid-hover", "");
+    if (el && el !== editing && !bar.contains(el)) el.setAttribute("data-vivid-hover", "");
   }
   function finish(keep) {
     var el = editing;
@@ -355,21 +381,19 @@ EDITOR_SCRIPT = r"""<script>
     el.removeAttribute("data-vivid-editing");
     el.removeAttribute("contenteditable");
     var now = el.textContent || "";
-    if (!keep) { el.textContent = original; return; }
-    if (now.trim() && now.trim() !== original.trim()) send({ type: "vivid:text-edit", old: original, new: now });
-    else el.textContent = original;
+    var changed = keep && now.trim() && now.trim() !== original.trim();
+    if (changed) send({ type: "vivid:text-edit", old: original, new: now });
+    if (wrapped) {
+      // Put React's own text node back, showing the new words until the
+      // source change reloads the component.
+      while (wrapped.firstChild) wrapped.removeChild(wrapped.firstChild);
+      node.nodeValue = changed ? now : original;
+      if (wrapped.parentNode) { wrapped.parentNode.insertBefore(node, wrapped); wrapped.remove(); }
+      wrapped = null; node = null;
+    } else if (!changed) el.textContent = original;
   }
-  function onOver(e) { if (on) mark(e.target); }
-  function onClick(e) {
-    if (!on) return;
-    var el = e.target;
-    if (editing && editing.contains(el)) return;
-    e.preventDefault(); e.stopPropagation();
-    finish(true);
-    var src = imageOf(el) || (textOnly(el) ? null : bgUrl(el));
-    if (src) { send({ type: "vivid:image-pick", src: src }); return; }
-    if (!textOnly(el)) { send({ type: "vivid:edit-hint", reason: "not_text" }); return; }
-    editing = el; original = el.textContent || "";
+  function startEdit(el) {
+    editing = el;
     el.removeAttribute("data-vivid-hover");
     el.setAttribute("data-vivid-editing", "");
     try { el.contentEditable = "plaintext-only"; } catch (_) {}
@@ -378,13 +402,143 @@ EDITOR_SCRIPT = r"""<script>
     var range = document.createRange(); range.selectNodeContents(el);
     var sel = window.getSelection(); sel.removeAllRanges(); sel.addRange(range);
   }
+  function editText(n) {
+    var parent = n.parentElement;
+    if (textOnly(parent)) { original = parent.textContent || ""; startEdit(parent); return; }
+    node = n; original = n.nodeValue || "";
+    wrapped = document.createElement("span");
+    wrapped.setAttribute("data-vivid-text", "");
+    n.parentNode.insertBefore(wrapped, n);
+    wrapped.appendChild(n);
+    startEdit(wrapped);
+  }
+
+  // ---------------------------------------------------------- deleting
+  var bar = document.createElement("div");
+  bar.setAttribute("data-vivid-bar", "");
+  var delBlock = document.createElement("button"), delSection = document.createElement("button");
+  delBlock.type = delSection.type = "button";
+  delBlock.textContent = "Delete"; delSection.textContent = "Delete section";
+  bar.appendChild(delBlock); bar.appendChild(delSection);
+  var INLINE = /^(SPAN|STRONG|EM|B|I|U|SMALL|SUP|SUB|MARK|CODE|SVG|PATH|G|CIRCLE|RECT|LINE|POLYLINE|POLYGON|USE|BR|LABEL|ABBR|TIME)$/i;
+  var LANDMARK = /^(SECTION|HEADER|FOOTER|NAV|ASIDE|ARTICLE)$/i;
+  function isRoot(el) {
+    var root = document.getElementById("root");
+    return !el || el === document.body || el === document.documentElement || el === root ||
+      (root && el.parentElement === root && root.children.length === 1);
+  }
+  function blockOf(el) {
+    while (el && el.parentElement && INLINE.test(el.tagName) && !isRoot(el.parentElement)) el = el.parentElement;
+    return isRoot(el) ? null : el;
+  }
+  function sectionOf(el) {
+    for (var e = el; e && !isRoot(e); e = e.parentElement) if (LANDMARK.test(e.tagName)) return e;
+    for (e = el; e && !isRoot(e); e = e.parentElement) {
+      var p = e.parentElement;
+      if (!p || p.tagName === "MAIN" || isRoot(p)) return e;
+    }
+    return null;
+  }
+  function snippets(el) {
+    var seen = {}, out = [];
+    function take(text) {
+      var t = (text || "").replace(/\s+/g, " ").trim();
+      if (t.length < 3 || t.length > 120 || seen[t]) return;
+      seen[t] = 1; out.push(t);
+    }
+    var heads = /^H[1-6]$/.test(el.tagName) ? [el] : el.querySelectorAll("h1,h2,h3,h4,h5,h6");
+    for (var i = 0; i < heads.length && out.length < 2; i++) take(heads[i].textContent);
+    var walker = document.createTreeWalker(el, NodeFilter.SHOW_TEXT, null);
+    var n; while (out.length < 4 && (n = walker.nextNode())) take(n.nodeValue);
+    return out;
+  }
+  function describe(el) {
+    var texts = snippets(el);
+    var img = el.tagName === "IMG" ? el : (!texts.length && el.querySelector("img"));
+    return {
+      tag: el.tagName.toLowerCase(), id: el.id || null,
+      classes: String(el.getAttribute("class") || "").split(/\s+/).filter(Boolean).slice(0, 12),
+      texts: texts, src: img ? img.getAttribute("src") : null,
+      label: texts[0] || null,
+    };
+  }
+  function place() {
+    if (!selected || !bar.parentNode) return;
+    var r = (block || section).getBoundingClientRect();
+    var w = bar.offsetWidth || 180, h = bar.offsetHeight || 32;
+    var top = r.top - h - 6; if (top < 6) top = Math.min(r.top + 6, window.innerHeight - h - 6);
+    var left = Math.min(Math.max(r.right - w, 6), window.innerWidth - w - 6);
+    bar.style.top = top + "px"; bar.style.left = left + "px";
+  }
+  function select(el) {
+    unselect();
+    block = blockOf(el); section = sectionOf(el);
+    if (!block && !section) return;
+    if (block === section) block = null;
+    selected = block || section;
+    selected.setAttribute("data-vivid-picked", "");
+    delBlock.style.display = block ? "" : "none";
+    delSection.style.display = section ? "" : "none";
+    document.body.appendChild(bar);
+    place();
+  }
+  function unselect() {
+    if (selected) selected.removeAttribute("data-vivid-picked");
+    doom(null);
+    selected = block = section = null;
+    if (bar.parentNode) bar.remove();
+  }
+  var doomed = null;
+  function doom(el) {
+    if (doomed) doomed.removeAttribute("data-vivid-doomed");
+    doomed = el;
+    if (el) el.setAttribute("data-vivid-doomed", "");
+  }
+  function remove(el, scope) {
+    if (!el) return;
+    var d = describe(el); d.scope = scope;
+    finish(false);
+    send({ type: "vivid:delete", target: d });
+    unselect();
+  }
+  delBlock.addEventListener("mouseenter", function () { doom(block); });
+  delSection.addEventListener("mouseenter", function () { doom(section); });
+  bar.addEventListener("mouseleave", function () { doom(null); });
+  delBlock.addEventListener("click", function (e) { e.preventDefault(); e.stopPropagation(); remove(block, "element"); });
+  delSection.addEventListener("click", function (e) { e.preventDefault(); e.stopPropagation(); remove(section, "section"); });
+
+  function onOver(e) { if (on) mark(e.target); }
+  function onClick(e) {
+    if (!on) return;
+    var el = e.target;
+    if (bar.contains(el)) return;
+    if (editing && editing.contains(el)) return;
+    e.preventDefault(); e.stopPropagation();
+    finish(true);
+    select(el);
+    var n = textNodeAt(e.clientX, e.clientY);
+    if (n) { editText(n); return; }
+    // A background picture is picked only by clicking where there is no
+    // text of its own (a hero's padding, an overlay), never a card or button
+    // that happens to sit on it: those are for editing and deleting.
+    var own = "";
+    for (var c = el.firstChild; c; c = c.nextSibling) if (c.nodeType === 3) own += c.nodeValue;
+    var bare = !own.trim() && (!el.querySelector("h1,h2,h3,h4,h5,h6,p,button,a") ||
+      getComputedStyle(el).backgroundImage.indexOf("url(") >= 0);
+    var src = imageOf(el) || (bare ? bgUrl(el) : null);
+    if (src) send({ type: "vivid:image-pick", src: src });
+  }
   function onKey(e) {
+    if (e.key === "Escape" && !editing) { unselect(); return; }
     if (!editing) return;
     if (e.key === "Escape") { e.preventDefault(); finish(false); }
     else if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); finish(true); }
   }
   function onBlur(e) { if (editing && e.target === editing) finish(true); }
-  function block(e) { if (on && !(editing && editing.contains(e.target))) { e.preventDefault(); e.stopPropagation(); } }
+  function block_(e) {
+    if (!on || bar.contains(e.target)) return;
+    if (!(editing && editing.contains(e.target))) { e.preventDefault(); e.stopPropagation(); }
+  }
   function setMode(next) {
     if (next === on) return;
     on = next;
@@ -393,10 +547,12 @@ EDITOR_SCRIPT = r"""<script>
     document[add]("click", onClick, true);
     document[add]("keydown", onKey, true);
     document[add]("blur", onBlur, true);
-    document[add]("submit", block, true);
-    document[add]("mousedown", block, true);
+    document[add]("submit", block_, true);
+    document[add]("mousedown", block_, true);
+    window[add]("scroll", place, true);
+    window[add]("resize", place);
     if (on) document.head.appendChild(style);
-    else { finish(false); mark(null); if (style.parentNode) style.remove(); }
+    else { finish(false); unselect(); mark(null); if (style.parentNode) style.remove(); }
   }
   function bust(src) {
     var base = String(src || "").split("?")[0], stamp = "vivid=" + Date.now();
