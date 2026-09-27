@@ -62,7 +62,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.deps import get_current_user, get_db
 from app.builder import (analytics, app_build, assets, billing, blob, chain as chain_mod,
-                         decane_connect, expo, images, pgdirect, planning, publish, routing,
+                         decane_connect, expo, images, jsx_remove, pgdirect, planning, publish, routing,
                          secrets, skills, snapshots, stream, supabase, targets, tools, usage,
                          visual)
 from app.builder.loop import FEED_DONE, OK_REASONS, ModelCall, TurnRunner, turns
@@ -79,7 +79,7 @@ from app.services.wallet import ledger
 from app.services.connectors import tokens as connector_tokens
 from app.db.session import async_session
 from app.schemas.builder import (AnalyticsOut, AppBuildIn, AppBuildOut, AssetOut, BuildAccountOut,
-                                 BuildOptionsOut, CancelOut, ChatIn, EditsIn, EditsOut, FileOut,
+                                 BuildOptionsOut, CancelOut, ChatIn, DeleteIn, DeleteOut, EditsIn, EditsOut, FileOut,
                                  FilesOut, ImageReplaceOut, MessageOut, PreviewOut, ProjectCreate,
                                  ProjectOut, ProjectUpdate, PublishOut, SnapshotOut, SupabaseLinkIn,
                                  TextEditOut, UsageOut)
@@ -1607,6 +1607,40 @@ async def replace_image(project_id: str, request: Request,
             await sandbox.write_file(path, sources[path])
         row = await _save_hand_edit(db, sandbox, project, f"Replaced an image with {new_path}")
     return ImageReplaceOut(path=new_path, relinked=changed, snapshot=row)
+
+
+@router.post("/projects/{project_id}/edits/delete", response_model=DeleteOut)
+async def delete_element(project_id: str, body: DeleteIn, request: Request,
+                         user: User = Depends(get_current_user),
+                         db: AsyncSession = Depends(get_db)):
+    """Remove an element or section clicked in the preview. It is found in
+    the source by what the page showed and cut exactly; a result that would
+    not compile is undone. Anything that cannot be done by hand comes back
+    with a status (the client can ask the agent instead), never a guess."""
+    project = await _hand_edit_target(project_id, user, db)
+    if targets.of(project).is_mobile:
+        return DeleteOut(status=jsx_remove.NOT_SUPPORTED,
+                         reason="Deleting by hand works on websites for now.")
+    target = body.model_dump(exclude={"scope", "label"})
+    target["texts"] = [t for t in (" ".join(x.split()) for x in body.texts) if t][:6]
+    async with _editing.setdefault(project_id, asyncio.Lock()):
+        sandbox = await _sandbox(project_id, request)
+        try:
+            removal = await jsx_remove.remove(sandbox, target)
+        except SandboxError as e:
+            log.warning("delete in %s failed: %s", project_id, e)
+            return DeleteOut(status=jsx_remove.ERROR, reason="The workspace did not answer. Try again.")
+        finally:
+            await jsx_remove.cleanup(sandbox)
+        row = None
+        if removal.status == jsx_remove.APPLIED:
+            name = " ".join((body.label or (body.texts[0] if body.texts else "")).split())
+            name = name if len(name) <= 50 else name[:47] + "..."
+            what = "section" if body.scope == "section" else "element"
+            summary = f'Deleted the "{name}" {what}' if name else f"Deleted a {what}"
+            row = await _save_hand_edit(db, sandbox, project, summary)
+    return DeleteOut(status=removal.status, reason=removal.reason, files=removal.files,
+                     count=removal.count, snapshot=row)
 
 
 @router.post("/projects/{project_id}/edits", response_model=EditsOut)

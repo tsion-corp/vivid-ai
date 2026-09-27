@@ -260,6 +260,37 @@ class EditsOut(BaseModel):
     snapshot: SnapshotOut | None = None
 
 
+class DeleteIn(BaseModel):
+    """An element clicked in the preview, named by what the page shows (the
+    editor sends it with `vivid:delete`)."""
+    #: The DOM tag, e.g. section, div, p, img.
+    tag: str = Field(min_length=1, max_length=32, pattern=r"^[a-zA-Z][a-zA-Z0-9-]*$")
+    id: str | None = Field(default=None, max_length=120)
+    classes: list[str] = Field(default_factory=list, max_length=20)
+    #: Up to a few distinctive pieces of its text, headings first.
+    texts: list[str] = Field(default_factory=list, max_length=6)
+    #: For a picture with no text: its src as written in the page.
+    src: str | None = Field(default=None, max_length=1000)
+    #: element | section: only changes the version label.
+    scope: Literal["element", "section"] = "element"
+    #: A short name for the version label, e.g. the section's heading.
+    label: str | None = Field(default=None, max_length=120)
+
+
+class DeleteOut(BaseModel):
+    #: applied | not_found (its text comes from data, or it has none) |
+    #: ambiguous (several elements match; count says how many) |
+    #: not_simple (an item of a list built from data, or the whole page) |
+    #: would_break (removing it would break the code; nothing changed) |
+    #: not_supported (mobile apps) | error
+    status: str
+    reason: str | None = None
+    files: list[str] = []
+    count: int = 0
+    #: The version the delete was saved as, when it applied.
+    snapshot: SnapshotOut | None = None
+
+
 class ImageReplaceOut(BaseModel):
     #: The file that now holds the picture.
     path: str
