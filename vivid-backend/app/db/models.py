@@ -444,6 +444,39 @@ class BuilderFormSubmission(Base):
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_now, index=True)
 
 
+class Gift(Base):
+    """Credits from someone's monthly allowance, or a Pro/Max plan paid from
+    their wallet, given to someone else by a single-use link (account emails
+    are not verified for every sign-in, so gifts are claimed, never matched).
+    Credits count as used in the giver's month when given; once claimed they
+    are the recipient's for GIFT_CREDIT_DAYS, spent before extra credits."""
+    __tablename__ = "gifts"
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=_uuid)
+    from_user: Mapped[str] = mapped_column(ForeignKey("users.id", ondelete="CASCADE"), index=True)
+    #: credits | plan
+    kind: Mapped[str] = mapped_column(String(8))
+    email: Mapped[str] = mapped_column(String(320))
+    token: Mapped[str] = mapped_column(String(64), unique=True, index=True)
+    message: Mapped[str | None] = mapped_column(String(280), default=None)
+    #: kind credits: the gift, in tokens; `remaining` once claimed.
+    tokens: Mapped[int] = mapped_column(BigInteger, default=0)
+    remaining: Mapped[int] = mapped_column(BigInteger, default=0)
+    #: kind plan: which, for how long, and what the giver paid.
+    plan: Mapped[str | None] = mapped_column(String(16), default=None)
+    yearly: Mapped[bool] = mapped_column(Boolean, default=False)
+    amount_micro: Mapped[int] = mapped_column(BigInteger, default=0)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_now)
+    #: Unclaimed by then: gone (a plan's price goes back to the giver).
+    claim_by: Mapped[datetime] = mapped_column(DateTime(timezone=True))
+    claimed_by: Mapped[str | None] = mapped_column(String(36), default=None, index=True)
+    claimed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), default=None)
+    #: Claimed credits can be used until then.
+    use_by: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), default=None)
+    #: Cancelled by the giver, or expired unclaimed (refunded for a plan).
+    cancelled_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), default=None)
+
+
 class BuilderSecret(Base):
     """A per-project secret (Supabase tokens, service keys), Fernet-encrypted
     at rest. Values never appear in a tool result or the stream."""

@@ -11,6 +11,7 @@ from app.api.routes.completions import router as completions_router
 from app.api.routes.connectors import router as connectors_router
 from app.api.routes.earnings import router as earnings_router
 from app.api.routes.forms import router as forms_router
+from app.api.routes.gifts import router as gifts_router
 from app.api.routes.health import router as health_router
 from app.api.routes.keys import router as keys_router
 from app.api.routes.media import router as media_router
@@ -45,6 +46,7 @@ api_router.include_router(members_router)
 api_router.include_router(share_router)
 api_router.include_router(waitlist_router)
 api_router.include_router(wallet_router)
+api_router.include_router(gifts_router)
 api_router.include_router(webhooks_router)
 api_router.include_router(pay_router)
 api_router.include_router(earnings_router)

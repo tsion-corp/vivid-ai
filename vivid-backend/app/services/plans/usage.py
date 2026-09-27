@@ -8,7 +8,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.builder import usage as builder_usage
 from app.core.config import settings
-from app.db.models import BuilderProject, BuilderUsageEvent, Subscription
+from app.db.models import BuilderProject, BuilderUsageEvent, Gift, Subscription
 from app.services.plans import catalog
 
 
@@ -62,6 +62,13 @@ async def tokens_since(db: AsyncSession, user_ids: list[str], since: datetime) -
     return int((await db.execute(q)).scalar_one() or 0)
 
 
+async def _given_since(db: AsyncSession, user_id: str, since: datetime) -> int:
+    q = select(func.coalesce(func.sum(Gift.tokens), 0)).where(
+        Gift.from_user == user_id, Gift.kind == "credits", Gift.created_at >= since,
+        Gift.cancelled_at.is_(None))
+    return int((await db.execute(q)).scalar_one() or 0)
+
+
 @dataclass
 class Meter:
     window_used: int
@@ -98,6 +105,8 @@ async def meter(db: AsyncSession, account: Account) -> Meter:
     # A rolling window: capacity comes back as the oldest usage in it ages out.
     resets = (_aware(oldest) + window) if oldest else now
     month_used = await tokens_since(db, account.user_ids, account.month_start)
+    # Credits given away this month count as used (gifts.py).
+    month_used += await _given_since(db, account.owner_id, account.month_start)
     month_resets = (_aware(account.subscription.period_end) if account.subscription
                     else _next_month(account.month_start))
     return Meter(window_used, account.plan.window_tokens, resets,

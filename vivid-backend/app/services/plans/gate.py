@@ -13,7 +13,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.config import settings
 from app.db.models import BuilderProject
-from app.services.plans import catalog, usage
+from app.services.plans import catalog, gifts, usage
 from app.services.wallet import ledger
 
 
@@ -26,6 +26,8 @@ class TurnCheck:
     extra_tokens: int
     #: The project is past the plan's app limit (after a downgrade).
     read_only: bool = False
+    #: Credits others gave, unexpired, in tokens; spent before extra ones.
+    gift_tokens: int = 0
 
     def body(self) -> dict:
         """What a client shows, in credits."""
@@ -37,6 +39,7 @@ class TurnCheck:
                 "month_used": c(self.meter.month_used), "month_limit": c(self.meter.month_limit),
                 "month_resets_at": _iso(self.meter.month_resets_at),
                 "extra_credits": c(self.extra_tokens),
+                "gift_credits": c(self.gift_tokens),
                 "options": ["wait", "buy_credits", "upgrade"]}
 
 
@@ -59,8 +62,9 @@ async def can_start_turn(db: AsyncSession, user_id: str, project_id: str) -> Tur
     read_only = False
     if account.plan.max_apps is not None:
         read_only = project_id not in await active_projects(db, user_id, account.plan.max_apps)
-    ok = not read_only and (not m.over or wallet.extra_tokens > 0)
-    return TurnCheck(ok, account, m, wallet.extra_tokens, read_only)
+    gift = await gifts.balance(db, account.owner_id)
+    ok = not read_only and (not m.over or wallet.extra_tokens > 0 or gift > 0)
+    return TurnCheck(ok, account, m, wallet.extra_tokens, read_only, gift)
 
 
 async def settle_turn(db: AsyncSession, check: TurnCheck) -> int:
@@ -75,10 +79,12 @@ async def settle_turn(db: AsyncSession, check: TurnCheck) -> int:
     beyond = max(over_after - over_before, 0)
     if beyond <= 0:
         return 0
+    # Gifted credits first: they expire, extra credits don't.
+    taken = await gifts.spend(db, check.account.owner_id, beyond)
     wallet = await ledger.wallet_for(db, check.account.owner_id, lock=True)
-    taken = min(beyond, wallet.extra_tokens)
-    wallet.extra_tokens -= taken
-    return taken
+    from_extra = min(beyond - taken, wallet.extra_tokens)
+    wallet.extra_tokens -= from_extra
+    return taken + from_extra
 
 
 async def can_create_project(db: AsyncSession, user_id: str) -> tuple[bool, usage.Account, int]:

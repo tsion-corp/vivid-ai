@@ -50,6 +50,7 @@ Forms       GET/PUT /builder/projects/{id}/forms · GET .../forms/submissions ·
             public (the built site posts): POST /forms/{project_id}
 Usage       GET /builder/projects/{id}/usage · GET /builder/projects/{id}/analytics?days=30
 Plans       GET /plans · GET/POST/DELETE /me/plan (MyPlanOut)
+Gifts       POST/GET /me/gifts · DELETE /me/gifts/{id} · GET /gifts/{token} (public) · POST /gifts/{token}/claim
 Wallet      GET /wallet?currency=NGN · GET /wallet/entries · GET /wallet/rates · POST /wallet/bank-account
             GET /wallet/crypto/chains · GET /wallet/crypto/tokens?chain_id= · POST /wallet/crypto/address
             GET /wallet/crypto/options (the older fixed list) · POST /wallet/credit-packs {credits}
@@ -912,6 +913,33 @@ Refusals a client must handle:
     App builds also answer 402 payment_required when the month's Vivid
     builds are used up: details {cap, options: ["own_expo_account", "wait"]}.
     As with limit_reached, offer only the options your client may.
+
+### Gifts (credits or a plan, for someone else)
+
+POST /me/gifts {kind: "credits", email, credits, message?}  -> Gift (201)
+POST /me/gifts {kind: "plan", email, plan: "pro"|"max", yearly?, message?} -> Gift (201)
+     Signed-in session only (not API keys). A gift is a single-use link
+     (url, https://vividbuild.ai/gift/<token>), emailed to `email` when email
+     is set up (emailed) and returned to pass on another way. Emails are
+     never matched to accounts: opening the link signed in is the claim.
+     Credits: Pro and Max only (402 plan_required), from what is left of
+     the month (409 not_enough_credits); they count as used at once. Plan:
+     paid now from the wallet (402 insufficient_funds, as for /me/plan).
+     409 too_many_gifts at 20 unclaimed. 400 bad_email.
+Gift {id, kind, email, credits, plan, yearly, amount_usd, message,
+      status: pending|claimed|cancelled|expired, created_at, claim_by, url, emailed,
+      remaining_credits, use_by, from_name}
+GET    /me/gifts -> {sent: Gift[], received: Gift[], gift_credits}
+DELETE /me/gifts/{id} -> 204   take back an unclaimed gift (a plan is refunded); 409 already_claimed
+GET    /gifts/{token} (no auth) -> {from_name, kind, credits, plan, yearly, message, status}
+POST   /gifts/{token}/claim -> {gift, plan, plan_until}
+       Credits: yours for 30 days, spent before extra credits (limit details
+       carry gift_credits). Plan: a Free account gets it for the period, not
+       renewing (Free after, unless they subscribe); the same plan is
+       extended; Pro to Max upgrades and refunds the unused Pro time to the
+       recipient's wallet; 409 already_higher when they are on a higher plan.
+       410 gift_gone (claimed, cancelled or expired, 30 days unclaimed:
+       a plan's price goes back to the giver); 409 own_gift.
 
 ## 14. The wallet (USD, topped up in naira or crypto)
 

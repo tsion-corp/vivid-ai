@@ -671,6 +671,13 @@ class Settings(BaseSettings):
     BUILDER_FORMS_PER_MINUTE: int = 5
     BUILDER_FORMS_PER_DAY: int = 200
 
+    # Gifts (app/services/plans/gifts.py): how long a gift link can be
+    # claimed, how long claimed credits last, and how many unclaimed gifts
+    # one person may have out at once.
+    GIFT_CLAIM_DAYS: int = 30
+    GIFT_CREDIT_DAYS: int = 30
+    GIFT_MAX_PENDING: int = 20
+
     # Outgoing email (app/services/mail.py): invites, gifts, and the forms
     # generated sites send. Any SMTP provider; empty host = no email is sent
     # (forms still store what they receive).

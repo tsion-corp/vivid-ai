@@ -157,6 +157,8 @@ async def renewer(redis, interval: float = 3600) -> None:
         try:
             async with async_session() as db:
                 result = await renew_due(db)
+                from app.services.plans import gifts            # gifts imports this module
+                result["gifts_expired"] = await gifts.expire_due(db)
                 await db.commit()
             if any(result.values()):
                 log.info("plan renewals: %s", result)
