@@ -1,9 +1,9 @@
-"""Deleting an element the person clicked in the preview.
+"""Deleting, duplicating or moving an element the person clicked in the preview.
 
 The preview carries no source locations (the editor names what it sees:
 tag, id, classes, text, image src), so the element is found in the source
 the way text edits are, by what it shows; the project's own TypeScript
-parses the TSX so the cut is exact (scripts/remove-jsx.mjs, run in the
+parses the TSX so the change is exact (scripts/edit-jsx.mjs, run in the
 sandbox). The backend then writes the files and typechecks; a delete that
 would break the build is undone and reported, never left half done.
 """
@@ -17,8 +17,8 @@ from app.builder.sandbox.base import Sandbox, SandboxError
 
 log = logging.getLogger("vivid.builder.jsx_remove")
 
-SCRIPT = (Path(__file__).parent / "scripts" / "remove-jsx.mjs").read_text()
-SCRIPT_PATH = ".vivid/remove-jsx.mjs"
+SCRIPT = (Path(__file__).parent / "scripts" / "edit-jsx.mjs").read_text()
+SCRIPT_PATH = ".vivid/edit-jsx.mjs"
 REQUEST_PATH = ".vivid/delete-request.json"
 #: Keeps the helper out of versions and published builds.
 IGNORE_PATH = ".vivid/.gitignore"
@@ -63,7 +63,7 @@ async def find(sandbox: Sandbox, target: dict) -> dict:
     try:
         return json.loads(line)
     except ValueError:
-        log.warning("remove-jsx gave no answer: %s", result.output[-500:])
+        log.warning("edit-jsx gave no answer: %s", result.output[-500:])
         return {"status": ERROR, "reason": "the code could not be read"}
 
 
@@ -72,7 +72,8 @@ def _errors(output: str) -> int:
 
 
 async def remove(sandbox: Sandbox, target: dict) -> Removal:
-    """Find it, cut it, typecheck. Files are written only when the result
+    """Find it, change it (target["op"]: remove, duplicate, move_up,
+    move_down; remove by default), typecheck. Files are written only when the result
     compiles as well as the project did before (a project that already had
     type errors is not held to a clean check, only to no new ones)."""
     answer = await find(sandbox, target)

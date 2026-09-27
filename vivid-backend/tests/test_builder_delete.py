@@ -13,7 +13,7 @@ from app.builder import jsx_remove
 from app.builder.sandbox.base import RunResult
 from tests.test_builder_routes import client, fake_blob, fake_manager, maker  # noqa: F401
 
-SCRIPT = Path(jsx_remove.__file__).parent / "scripts" / "remove-jsx.mjs"
+SCRIPT = Path(jsx_remove.__file__).parent / "scripts" / "edit-jsx.mjs"
 REPO = Path(__file__).resolve().parents[2]
 TYPESCRIPT = next((p for p in (REPO / "sandbox-templates/vivid-web/node_modules",
                                REPO / "sandbox-templates/vivid-expo/node_modules")

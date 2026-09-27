@@ -167,7 +167,8 @@ def test_the_editor_edits_text_beside_icons_and_offers_delete():
     script = visual.EDITOR_SCRIPT
     assert "caretPositionFromPoint" in script and "caretRangeFromPoint" in script
     assert 'setAttribute("data-vivid-text"' in script and "node.nodeValue" in script
-    assert '"vivid:delete"' in script and "Delete section" in script
+    assert '"vivid:delete"' in script and "Delete section" in script and '"vivid:structure"' in script
+    assert '"move_up"' in script and '"duplicate"' in script
     assert "\"vivid:forget\"" in script and "localStorage" in script
     # The toolbar never leaks into a published site: it lives in the editor block.
     html = visual.with_editor("<html><body></body></html>")

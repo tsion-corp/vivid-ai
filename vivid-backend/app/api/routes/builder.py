@@ -83,7 +83,7 @@ from app.services.wallet import ledger
 from app.services.connectors import tokens as connector_tokens
 from app.db.session import async_session
 from app.schemas.builder import (AnalyticsOut, AppBuildIn, AppBuildOut, AssetOut, BuildAccountOut,
-                                 BuildOptionsOut, CancelOut, ChatIn, DeleteIn, DeleteOut, DuplicateIn, DuplicateOut, EditsIn, EditsOut, FileOut,
+                                 BuildOptionsOut, CancelOut, ChatIn, DeleteIn, DeleteOut, StructureIn, DuplicateIn, DuplicateOut, EditsIn, EditsOut, FileOut,
                                  FilesOut, ImageReplaceOut, MessageOut, PreviewOut, ProjectCreate, SeoIn, SeoOut, SeoPage, ShareOut,
                                  UserSecretIn, UserSecretOut, UserSecretSaved, FormsIn, FormsOut,
                                  FormSubmissionOut,
@@ -2048,26 +2048,27 @@ async def replace_image(project_id: str, request: Request,
     return ImageReplaceOut(path=new_path, relinked=changed, snapshot=row)
 
 
-@router.post("/projects/{project_id}/edits/delete", response_model=DeleteOut)
-async def delete_element(project_id: str, body: DeleteIn, request: Request,
-                         user: User = Depends(get_current_user),
-                         db: AsyncSession = Depends(get_db)):
-    """Remove an element or section clicked in the preview. It is found in
-    the source by what the page showed and cut exactly; a result that would
-    not compile is undone. Anything that cannot be done by hand comes back
-    with a status (the client can ask the agent instead), never a guess."""
+#: Version labels per operation: (element or section, "the X"), then the
+#: words for a list item changed in its data file.
+_OP_WORDS = {"remove": ("Deleted", "Removed"), "duplicate": ("Duplicated", "Duplicated"),
+             "move_up": ("Moved up", "Moved up"), "move_down": ("Moved down", "Moved down")}
+
+
+async def _structure_edit(project_id: str, body: DeleteIn, op: str, request: Request,
+                          user: User, db: AsyncSession) -> DeleteOut:
     project = await _hand_edit_target(project_id, user, db)
     if targets.of(project).is_mobile:
         return DeleteOut(status=jsx_remove.NOT_SUPPORTED,
-                         reason="Deleting by hand works on websites for now.")
+                         reason="Editing the layout by hand works on websites for now.")
     target = body.model_dump(exclude={"scope", "label"})
     target["texts"] = [t for t in (" ".join(x.split()) for x in body.texts) if t][:6]
+    target["op"] = op
     async with _editing.setdefault(project_id, asyncio.Lock()):
         sandbox = await _sandbox(project_id, request)
         try:
             removal = await jsx_remove.remove(sandbox, target)
         except SandboxError as e:
-            log.warning("delete in %s failed: %s", project_id, e)
+            log.warning("%s in %s failed: %s", op, project_id, e)
             return DeleteOut(status=jsx_remove.ERROR, reason="The workspace did not answer. Try again.")
         finally:
             await jsx_remove.cleanup(sandbox)
@@ -2076,13 +2077,37 @@ async def delete_element(project_id: str, body: DeleteIn, request: Request,
             name = " ".join((body.label or (body.texts[0] if body.texts else "")).split())
             name = name if len(name) <= 50 else name[:47] + "..."
             what = "section" if body.scope == "section" else "element"
-            summary = f'Deleted the "{name}" {what}' if name else f"Deleted a {what}"
+            verb, data_verb = _OP_WORDS[op]
+            summary = f'{verb} the "{name}" {what}' if name else f"{verb} a {what}"
             if removal.data_file:
-                summary = f'Removed "{name}" from {removal.data_file}' if name else f"Removed an item from {removal.data_file}"
+                where = f"in {removal.data_file}" if op != "remove" else f"from {removal.data_file}"
+                summary = f'{data_verb} "{name}" {where}' if name else f"{data_verb} an item {where}"
             row = await _save_hand_edit(db, sandbox, project, summary, removal.files)
     return DeleteOut(status=removal.status, reason=removal.reason, files=removal.files,
                      count=removal.count, data_file=removal.data_file, forget=removal.forget,
                      snapshot=row)
+
+
+@router.post("/projects/{project_id}/edits/delete", response_model=DeleteOut)
+async def delete_element(project_id: str, body: DeleteIn, request: Request,
+                         user: User = Depends(get_current_user),
+                         db: AsyncSession = Depends(get_db)):
+    """Remove an element or section clicked in the preview. It is found in
+    the source by what the page showed and cut exactly; a result that would
+    not compile is undone. Anything that cannot be done by hand comes back
+    with a status (the client can ask the agent instead), never a guess."""
+    return await _structure_edit(project_id, body, "remove", request, user, db)
+
+
+@router.post("/projects/{project_id}/edits/structure", response_model=DeleteOut)
+async def structure_edit(project_id: str, body: StructureIn, request: Request,
+                         user: User = Depends(get_current_user),
+                         db: AsyncSession = Depends(get_db)):
+    """Duplicate, move up or move down an element or section clicked in the
+    preview (op), found the way delete finds it. A list item built from data
+    is duplicated or moved in its data. Same statuses as delete; moving the
+    first up or the last down is not_simple."""
+    return await _structure_edit(project_id, body, body.op, request, user, db)
 
 
 @router.post("/projects/{project_id}/edits", response_model=EditsOut)

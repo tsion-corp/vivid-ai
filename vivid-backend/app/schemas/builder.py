@@ -303,6 +303,11 @@ class DeleteIn(BaseModel):
     label: str | None = Field(default=None, max_length=120)
 
 
+class StructureIn(DeleteIn):
+    """The editor's `vivid:structure`: what to do with the clicked element."""
+    op: Literal["duplicate", "move_up", "move_down", "remove"]
+
+
 class DeleteOut(BaseModel):
     #: applied | not_found (its text comes from data, or it has none) |
     #: ambiguous (several elements match; count says how many) |

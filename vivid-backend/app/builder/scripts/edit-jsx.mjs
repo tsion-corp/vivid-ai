@@ -1,15 +1,17 @@
 // Finds the JSX that rendered an element the person clicked in the preview,
-// and returns the sources with it removed. Nothing is written here: the
-// backend writes the files, typechecks, and keeps or restores them.
+// and returns the sources with it removed, duplicated or moved. Nothing is
+// written here: the backend writes the files, typechecks, and keeps or
+// restores them.
 //
-//   node .vivid/remove-jsx.mjs <request.json>
+//   node .vivid/edit-jsx.mjs <request.json>
 //
 // The request names the element as the page shows it (the preview has no
-// source locations): {tag, id, classes, texts, src}. It is matched against
-// host JSX elements of the same tag whose text (or image src) contains what
-// the page showed. The project's own `typescript` parses the TSX, so ranges
-// are exact. Prints one line of JSON:
-//   {status: "applied", files: {path: content}, removed: {file, tag, component?}}
+// source locations): {tag, id, classes, texts, src, op}. `op` is remove
+// (the default) | duplicate | move_up | move_down. The element is matched
+// against JSX of the same tag whose text (or image src) contains what the
+// page showed. The project's own `typescript` parses the TSX, so ranges are
+// exact. Prints one line of JSON:
+//   {status: "applied", files: {path: content}, removed: {file, tag, op, component?, data?, values?}}
 //   {status: "not_found" | "ambiguous" | "not_simple", reason}
 
 import fs from "node:fs";
@@ -231,6 +233,9 @@ const skipParens = (n) => {
 };
 
 // ----------------------------------------------------------------- match
+const OPS = new Set(["remove", "duplicate", "move_up", "move_down"]);
+const op = OPS.has(request.op) ? request.op : "remove";
+
 const want = {
   tag: String(request.tag || "").toLowerCase(),
   id: request.id || null,
@@ -503,8 +508,8 @@ function stringsOf(node) {
 }
 
 /** The entry of a literal array (seed data, a list in the page) that holds
- *  what the page showed, removed from its array. */
-function removeEntry(call) {
+ *  what the page showed. */
+function findEntry(call) {
   const hint = hintOf(call);
   const entries = [];
   for (const [file, { sf, text }] of allSources) {
@@ -531,44 +536,149 @@ function removeEntry(call) {
   const top = Math.max(...entries.map(rank));
   const best = entries.filter((e) => rank(e) === top);
   if (best.length > 1) out({ status: "ambiguous", reason: `${best.length} items of the list match`, count: best.length });
-  const { file, text, array, i } = best[0];
+  return best[0];
+}
+
+/** Fields that must stay unique between list items (React keys, lookups). */
+const ID_KEYS = new Set(["id", "key", "slug", "uuid", "_id", "sku", "code", "tracking_code"]);
+
+/** An entry's text with its id-like string fields made unique ("-copy"). */
+function copyOfEntry(el, text) {
+  const e = literal(el);
+  const base = el.getStart();
+  let copy = text.slice(base, el.end);
+  if (!ts.isObjectLiteralExpression(e)) return copy;
+  const cuts = [];
+  for (const prop of e.properties) {
+    if (ts.isPropertyAssignment(prop) && (ts.isIdentifier(prop.name) || ts.isStringLiteral(prop.name)) &&
+        ID_KEYS.has(prop.name.text) && isText(literal(prop.initializer))) {
+      const lit = literal(prop.initializer);
+      cuts.push({ start: lit.getStart() - base, end: lit.end - base, with: JSON.stringify(`${lit.text}-copy`) });
+    }
+  }
+  return apply(copy, cuts);
+}
+
+/** One item of a data list: removed, duplicated or moved in its array. */
+function entryOp(call) {
+  const { file, text, array, i } = findEntry(call);
   const els = array.elements;
-  let cut;
-  if (i < els.length - 1) cut = { start: els[i].getFullStart(), end: els[i + 1].getFullStart() };
-  else if (i > 0) cut = { start: els[i - 1].end, end: els[i].end };
-  else {
-    let end = els[i].end;
-    while (/[\s,]/.test(text[end]) && end < array.end - 1) end++;
-    cut = { start: els[i].getFullStart(), end };
+  let cuts;
+  if (op === "remove") {
+    if (i < els.length - 1) cuts = [{ start: els[i].getFullStart(), end: els[i + 1].getFullStart() }];
+    else if (i > 0) cuts = [{ start: els[i - 1].end, end: els[i].end }];
+    else {
+      let end = els[i].end;
+      while (/[\s,]/.test(text[end]) && end < array.end - 1) end++;
+      cuts = [{ start: els[i].getFullStart(), end }];
+    }
+  } else if (op === "duplicate") {
+    const lineStart = text.lastIndexOf("\n", els[i].getStart() - 1) + 1;
+    const indent = text.slice(lineStart, els[i].getStart());
+    const sep = /^[ \t]*$/.test(indent) ? `\n${indent}` : " ";
+    cuts = [{ start: els[i].end, end: els[i].end, with: `,${sep}${copyOfEntry(els[i], text)}` }];
+  } else {
+    const j = op === "move_up" ? i - 1 : i + 1;
+    if (j < 0 || j >= els.length) {
+      out({ status: "not_simple", reason: op === "move_up" ? "it is already the first item" : "it is already the last item" });
+    }
+    cuts = swap(text, els[i], els[j]);
   }
   const rel = (f) => path.relative(root, f).split(path.sep).join("/");
   const values = (request.texts || []).filter((t) => stringsOf(els[i]).includes(norm(t)));
   out({
     status: "applied",
-    files: { [rel(file)]: apply(text, [cut]) },
-    removed: { file: rel(file), tag: want.tag, data: true, values },
+    files: { [rel(file)]: apply(text, cuts) },
+    removed: { file: rel(file), tag: want.tag, op, data: true, values },
   });
 }
 
+/** Two nodes' texts exchanged. */
+function swap(text, a, b) {
+  const ta = text.slice(a.getStart(), a.end);
+  const tb = text.slice(b.getStart(), b.end);
+  return [{ start: a.getStart(), end: a.end, with: tb }, { start: b.getStart(), end: b.end, with: ta }];
+}
+
 // One item of a list the page builds from data: the item is its entry in
-// the data, so that is what goes (the same element, removed from the JSX,
-// would leave every item). Text of the list's own layout, the same in
-// every item, is removed from the layout as any other element.
+// the data, so that is what changes (the same element changed in the JSX
+// would change every item). Text of the list's own layout, the same in
+// every item, is changed in the layout as any other element.
 {
   const call = listOf(target.node);
-  if (call && (target.data || target.loose || insideMap(target.node))) removeEntry(call);
+  if (call && (target.data || target.loose || insideMap(target.node))) entryOp(call);
+}
+
+// --------------------------------------------------------- move, duplicate
+/** What moves or is copied in the JSX: the element, or the whole
+ *  `{cond && ...}` around it; null where that is not simple. */
+function unitOf(node) {
+  const top = skipParens(node);
+  const parent = top.parent;
+  if (ts.isJsxElement(parent) || ts.isJsxFragment(parent)) return node;
+  if (ts.isBinaryExpression(parent) && parent.operatorToken.kind === ts.SyntaxKind.AmpersandAmpersandToken && parent.right === top) {
+    const holder = skipParens(parent).parent;
+    if (holder && ts.isJsxExpression(holder)) return holder;
+  }
+  return null;
+}
+
+function structural(file, text, node) {
+  const unit = unitOf(node);
+  if (!unit) out({ status: "not_simple", reason: "the element is passed as a value, not placed in the page" });
+  let cuts;
+  if (op === "duplicate") {
+    const range = lineRange(text, unit.getStart(), unit.end);
+    const ownLines = range.end > unit.end;
+    cuts = ownLines
+      ? [{ start: range.end, end: range.end, with: text.slice(range.start, range.end) }]
+      : [{ start: unit.end, end: unit.end, with: text.slice(unit.getStart(), unit.end) }];
+  } else {
+    const parent = unit.parent;
+    const siblings = parent.children.filter((ch) => !(ts.isJsxText(ch) && !ch.text.trim()));
+    const i = siblings.indexOf(unit);
+    const j = op === "move_up" ? i - 1 : i + 1;
+    if (j < 0 || j >= siblings.length) {
+      out({ status: "not_simple", reason: op === "move_up" ? "it is already at the top" : "it is already at the bottom" });
+    }
+    if (ts.isJsxText(siblings[j])) out({ status: "not_simple", reason: "text sits next to it" });
+    cuts = swap(text, unit, siblings[j]);
+  }
+  return apply(text, cuts);
 }
 
 const changed = {};
 const rel = (f) => path.relative(root, f).split(path.sep).join("/");
 const component = componentRootOf(target.node);
 
+if (op !== "remove") {
+  if (!component) {
+    const { text } = sources.get(target.file);
+    changed[rel(target.file)] = structural(target.file, text, target.node);
+    out({ status: "applied", files: changed, removed: { file: rel(target.file), tag: want.tag, op } });
+  }
+  // A section that is a component's whole output moves or copies where it
+  // is used, which must be one place.
+  if (component === "default" || component === "App") out({ status: "not_simple", reason: "that is the whole page" });
+  const uses = [];
+  for (const [file, { text, sf }] of sources) {
+    if (file === target.file) continue;
+    for (const use of jsxNodes(sf, (n) => tagOf(n) === component)) uses.push({ file, text, use });
+  }
+  if (!uses.length) out({ status: "not_found", reason: `nothing renders ${component}` });
+  if (uses.length > 1) out({ status: "not_simple", reason: `${component} is used in ${uses.length} places` });
+  const { file, text, use } = uses[0];
+  if (mapCallOf(use)) entryOp(mapCallOf(use));
+  changed[rel(file)] = structural(file, text, use);
+  out({ status: "applied", files: changed, removed: { file: rel(target.file), tag: want.tag, op, component } });
+}
+
 if (!component) {
   const { text } = sources.get(target.file);
   const cut = cutFor(target.node, text);
   if (!cut) out({ status: "not_simple", reason: "the element is passed as a value, not placed in the page" });
   changed[rel(target.file)] = apply(text, [cut]);
-  out({ status: "applied", files: changed, removed: { file: rel(target.file), tag: want.tag } });
+  out({ status: "applied", files: changed, removed: { file: rel(target.file), tag: want.tag, op } });
 }
 
 // The element is a component's whole output (a Hero.tsx returning <section>):
@@ -583,7 +693,7 @@ for (const [file, { text, sf }] of sources) {
   if (!uses.length) continue;
   const cuts = [];
   for (const use of uses) {
-    if (mapCallOf(use)) removeEntry(mapCallOf(use));
+    if (mapCallOf(use)) entryOp(mapCallOf(use));
     const cut = cutFor(use, text);
     if (!cut) out({ status: "not_simple", reason: `${component} is passed as a value` });
     cuts.push(cut);
@@ -603,4 +713,4 @@ for (const [file, { text, sf }] of sources) {
   changed[rel(file)] = next;
 }
 if (!usages) out({ status: "not_found", reason: `nothing renders ${component}` });
-out({ status: "applied", files: changed, removed: { file: rel(target.file), tag: want.tag, component } });
+out({ status: "applied", files: changed, removed: { file: rel(target.file), tag: want.tag, op, component } });

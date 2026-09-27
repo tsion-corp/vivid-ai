@@ -34,6 +34,7 @@ People      GET/POST /builder/projects/{id}/members · PATCH/DELETE .../members/
 Share link  GET/POST/DELETE /builder/projects/{id}/share · public: GET /s/{token} · POST /s/{token}/ping
 Copy        POST /builder/projects/{id}/duplicate {seq?, name?}
 Hand edits  PUT /builder/projects/{id}/files/{path} (replace an image) · POST .../images/replace · POST .../edits
+            POST .../edits/delete · POST .../edits/structure (duplicate, move)
 Uploads     POST/GET /builder/projects/{id}/assets · DELETE /builder/projects/{id}/assets/{asset_id}
 Versions    GET/POST /builder/projects/{id}/snapshots · POST .../snapshots/{seq}/restore · POST /builder/projects/{id}/undo
 Connectors  GET /connectors · POST /connectors · DELETE /connectors/{id} · GET /connectors/supabase/authorize
@@ -562,6 +563,15 @@ POST /builder/projects/{id}/edits/delete  DeleteIn -> DeleteOut {status, reason,
      of a component's own layout shared by every use, or the whole page) |
      not_supported (mobile apps, for now). Offer the ones that
      did not apply as a chat turn ("Remove the section with "Our menu"").
+POST /builder/projects/{id}/edits/structure  {op, ...DeleteIn} -> DeleteOut
+     op: duplicate | move_up | move_down (| remove, the same as /edits/delete).
+     Found the same way; the element (or the whole `{cond && ...}` around it,
+     or a component's single use for a section that is a whole component)
+     is copied right after itself or swapped with its neighbour. A list item
+     built from data is duplicated or moved in its data (a copy's id-like
+     fields get "-copy"); `forget` then works as for delete. Moving the first
+     up or the last down is not_simple ("it is already at the top"). The
+     version reads "Duplicated the "X" card", "Moved up the "X" section".
 
 Click-to-edit in the preview. The preview's index.html carries a small
 editor (placed on every GET .../preview, stripped from published sites). It
@@ -581,6 +591,10 @@ Messages from the preview (check e.origin as for vivid:error):
                                             on the toolbar the editor shows over the
                                             clicked element: POST .../edits/delete
                                             with `target` as the body
+  {type: "vivid:structure", op, target}    the person chose Move up, Move down or
+                                            Duplicate on that toolbar (for the element
+                                            or, switched, its section): POST
+                                            .../edits/structure with {op, ...target}
 After replacing a picture in public/, post {type: "vivid:image-updated", src}
 to the preview so it reloads that image (Vite does not hot-reload public/).
 After a delete that removed an item from data (forget not empty), post

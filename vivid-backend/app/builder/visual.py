@@ -333,7 +333,8 @@ EDITOR_SCRIPT = r"""<script>
     "[data-vivid-bar]{position:fixed;z-index:2147483647;display:flex;gap:4px;padding:4px;border-radius:10px;" +
     "background:#17141f;box-shadow:0 8px 24px rgba(0,0,0,.35);font:600 12px/1 system-ui,sans-serif}" +
     "[data-vivid-bar] button{all:unset;cursor:pointer;padding:7px 10px;border-radius:7px;color:#fff;white-space:nowrap}" +
-    "[data-vivid-bar] button:hover{background:#ef4444}";
+    "[data-vivid-bar] button:hover{background:#2e2a3d}[data-vivid-bar] button[data-danger]:hover{background:#ef4444}" +
+    "[data-vivid-bar] button[data-scope]{color:#c4b5fd;border-right:1px solid #2e2a3d;border-radius:7px 0 0 7px}";
   function send(msg) { if (owner) window.parent.postMessage(msg, owner); }
   function bgUrl(el) {
     for (var i = 0; el && i < 4; i++, el = el.parentElement) {
@@ -413,13 +414,25 @@ EDITOR_SCRIPT = r"""<script>
     startEdit(wrapped);
   }
 
-  // ---------------------------------------------------------- deleting
+  // ------------------------------------------- moving, copying, deleting
+  // One toolbar over the clicked thing: which it acts on (the element, or
+  // the section around it), then move up, move down, duplicate, delete.
   var bar = document.createElement("div");
   bar.setAttribute("data-vivid-bar", "");
-  var delBlock = document.createElement("button"), delSection = document.createElement("button");
-  delBlock.type = delSection.type = "button";
-  delBlock.textContent = "Delete"; delSection.textContent = "Delete section";
-  bar.appendChild(delBlock); bar.appendChild(delSection);
+  function button(label, title) {
+    var b = document.createElement("button");
+    b.type = "button"; b.textContent = label; b.title = title; b.setAttribute("aria-label", title);
+    bar.appendChild(b);
+    return b;
+  }
+  var scopeBtn = button("Element", "Switch between this element and its section");
+  scopeBtn.setAttribute("data-scope", "");
+  var upBtn = button("\u2191", "Move up"), downBtn = button("\u2193", "Move down");
+  var dupBtn = button("Duplicate", "Duplicate");
+  var delBtn = button("Delete", "Delete");
+  delBtn.setAttribute("data-danger", "");
+  var scope = "element";
+  function current() { return scope === "section" ? section : block; }
   var INLINE = /^(SPAN|STRONG|EM|B|I|U|SMALL|SUP|SUB|MARK|CODE|SVG|PATH|G|CIRCLE|RECT|LINE|POLYLINE|POLYGON|USE|BR|LABEL|ABBR|TIME)$/i;
   var LANDMARK = /^(SECTION|HEADER|FOOTER|NAV|ASIDE|ARTICLE)$/i;
   function isRoot(el) {
@@ -475,11 +488,18 @@ EDITOR_SCRIPT = r"""<script>
     block = blockOf(el); section = sectionOf(el);
     if (!block && !section) return;
     if (block === section) block = null;
-    selected = block || section;
-    selected.setAttribute("data-vivid-picked", "");
-    delBlock.style.display = block ? "" : "none";
-    delSection.style.display = section ? "" : "none";
+    scope = block ? "element" : "section";
+    showScope();
     document.body.appendChild(bar);
+    place();
+  }
+  function showScope() {
+    if (selected) selected.removeAttribute("data-vivid-picked");
+    selected = current();
+    if (selected) selected.setAttribute("data-vivid-picked", "");
+    scopeBtn.textContent = scope === "section" ? "Section" : "Element";
+    scopeBtn.style.display = block && section ? "" : "none";
+    delBtn.textContent = scope === "section" ? "Delete section" : "Delete";
     place();
   }
   function unselect() {
@@ -494,18 +514,25 @@ EDITOR_SCRIPT = r"""<script>
     doomed = el;
     if (el) el.setAttribute("data-vivid-doomed", "");
   }
-  function remove(el, scope) {
+  function act(op) {
+    var el = current();
     if (!el) return;
     var d = describe(el); d.scope = scope;
     finish(false);
-    send({ type: "vivid:delete", target: d });
+    if (op === "remove") send({ type: "vivid:delete", target: d });
+    else send({ type: "vivid:structure", op: op, target: d });
     unselect();
   }
-  delBlock.addEventListener("mouseenter", function () { doom(block); });
-  delSection.addEventListener("mouseenter", function () { doom(section); });
+  function on(b, fn) {
+    b.addEventListener("click", function (e) { e.preventDefault(); e.stopPropagation(); fn(); });
+  }
+  on(scopeBtn, function () { scope = scope === "section" ? "element" : "section"; showScope(); });
+  on(upBtn, function () { act("move_up"); });
+  on(downBtn, function () { act("move_down"); });
+  on(dupBtn, function () { act("duplicate"); });
+  on(delBtn, function () { act("remove"); });
+  delBtn.addEventListener("mouseenter", function () { doom(current()); });
   bar.addEventListener("mouseleave", function () { doom(null); });
-  delBlock.addEventListener("click", function (e) { e.preventDefault(); e.stopPropagation(); remove(block, "element"); });
-  delSection.addEventListener("click", function (e) { e.preventDefault(); e.stopPropagation(); remove(section, "section"); });
 
   function onOver(e) { if (on) mark(e.target); }
   function onClick(e) {
