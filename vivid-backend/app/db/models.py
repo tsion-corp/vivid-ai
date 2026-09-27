@@ -405,6 +405,19 @@ class BuilderInvite(Base):
     __table_args__ = (UniqueConstraint("project_id", "email", name="uq_builder_invites_project_email"),)
 
 
+class BuilderShare(Base):
+    """A public link to a project's live preview (vividbuild.ai/s/<token>).
+    One per project; revoking deletes it, and sharing again makes a new
+    token, so an old link never comes back."""
+    __tablename__ = "builder_shares"
+
+    project_id: Mapped[str] = mapped_column(
+        ForeignKey("builder_projects.id", ondelete="CASCADE"), primary_key=True)
+    token: Mapped[str] = mapped_column(String(64), unique=True, index=True)
+    created_by: Mapped[str | None] = mapped_column(String(36), default=None)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_now)
+
+
 class BuilderSecret(Base):
     """A per-project secret (Supabase tokens, service keys), Fernet-encrypted
     at rest. Values never appear in a tool result or the stream."""

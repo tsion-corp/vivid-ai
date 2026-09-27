@@ -29,6 +29,8 @@ Turns       POST /builder/projects/{id}/chat (SSE) · GET /builder/projects/{id}
 Thread      GET /builder/projects/{id}/messages
 Preview     GET /builder/projects/{id}/preview · GET /builder/projects/{id}/files · GET /builder/projects/{id}/files/{path}[?raw=1]
             GET /builder/projects/{id}/logs?lines=100
+Share link  GET/POST/DELETE /builder/projects/{id}/share · public: GET /s/{token} · POST /s/{token}/ping
+Copy        POST /builder/projects/{id}/duplicate {seq?, name?}
 Hand edits  PUT /builder/projects/{id}/files/{path} (replace an image) · POST .../images/replace · POST .../edits
 Uploads     POST/GET /builder/projects/{id}/assets · DELETE /builder/projects/{id}/assets/{asset_id}
 Versions    GET/POST /builder/projects/{id}/snapshots · POST .../snapshots/{seq}/restore · POST /builder/projects/{id}/undo
@@ -430,6 +432,24 @@ seconds, up to 60 with a snapshot restore); show "Starting your workspace".
 Call it again on a 503 sandbox_unavailable. Each call also keeps the sandbox
 alive; sandboxes die after 10 idle minutes and come back from the latest
 snapshot, so a stale iframe should be reloaded from a fresh preview call.
+
+### Share link (a public preview)
+
+GET    /builder/projects/{id}/share   -> {token, url, created_at} | null
+POST   /builder/projects/{id}/share   -> {token, url, created_at}   (editor; the same link if one exists)
+DELETE /builder/projects/{id}/share   -> 204                        (editor; the link stops working at once)
+`url` is https://vividbuild.ai/s/<token>: anyone with it sees the live
+preview without signing in, never the code, thread, versions or edit tools.
+Sharing again after a revoke makes a new token.
+
+The public page (no auth):
+GET  /s/{token}        -> {name, target, url, device_url}   put `url` in an iframe
+     Wakes the workspace like the owner's preview (5 to 60 s); 409
+     nothing_built before the first version; 404 for a revoked or unknown
+     link; 429 rate_limited per link and per address. Ask again rather than
+     keep `url`: it changes when the workspace restarts.
+POST /s/{token}/ping   -> 204   every 60 s while the page is open, so the
+     workspace does not sleep under a viewer.
 
 GET /builder/projects/{id}/files              -> {files: string[]}
 GET /builder/projects/{id}/files/{path}       -> {path, content, binary, content_base64, content_type}

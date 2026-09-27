@@ -656,6 +656,11 @@ class Settings(BaseSettings):
     # detail. Empty = the detail is never shown. Generate: openssl rand -hex 24
     HEALTH_TOKEN: str = ""
 
+    # Public preview links (routes/share.py): opens of one link per minute,
+    # and from one address across links; each open can wake a sandbox.
+    BUILDER_SHARE_PER_MINUTE: int = 30
+    BUILDER_SHARE_IP_PER_MINUTE: int = 20
+
     # Outgoing email (app/services/mail.py): invites, gifts, and the forms
     # generated sites send. Any SMTP provider; empty host = no email is sent
     # (forms still store what they receive).

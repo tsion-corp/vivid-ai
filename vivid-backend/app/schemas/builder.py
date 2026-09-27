@@ -320,3 +320,21 @@ class ImageReplaceOut(BaseModel):
     #: Source files repointed at it, when the picture got a new file.
     relinked: list[str] = []
     snapshot: SnapshotOut | None = None
+
+
+class ShareOut(BaseModel):
+    token: str
+    #: The page to send people: the live preview, no sign-in needed.
+    url: str
+    created_at: datetime
+
+
+class SharedPreviewOut(BaseModel):
+    """What the public share page shows."""
+    name: str
+    target: str = "web"
+    #: The live preview to put in an iframe. It changes when the workspace
+    #: restarts, so the page asks again rather than keeping it.
+    url: str
+    #: Mobile projects: the URL Expo Go opens (a QR code on the page).
+    device_url: str | None = None

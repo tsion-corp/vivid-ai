@@ -51,6 +51,7 @@ import json
 import pathlib
 import mimetypes
 import base64
+import secrets as secrets_mod
 import logging
 from datetime import datetime, timezone
 
@@ -71,7 +72,7 @@ from app.builder.sandbox.base import PathError, SandboxError, safe_path
 from app.builder.sandbox.manager import manager
 from app.core.config import settings
 from app.core.errors import APIError
-from app.db.models import (BuilderAppBuild, BuilderAsset, BuilderMember, BuilderMessage, BuilderProject, BuilderPublish, BuilderSnapshot, Connector, User, VividPayCheckout, VividPayProject)
+from app.db.models import (BuilderAppBuild, BuilderAsset, BuilderMember, BuilderMessage, BuilderShare, BuilderProject, BuilderPublish, BuilderSnapshot, Connector, User, VividPayCheckout, VividPayProject)
 from app.services.connectors import supabase as supabase_connector
 from app.services.plans import gate as plan_gate
 from app.services.plans import usage as usage_svc
@@ -80,7 +81,7 @@ from app.services.connectors import tokens as connector_tokens
 from app.db.session import async_session
 from app.schemas.builder import (AnalyticsOut, AppBuildIn, AppBuildOut, AssetOut, BuildAccountOut,
                                  BuildOptionsOut, CancelOut, ChatIn, DeleteIn, DeleteOut, DuplicateIn, DuplicateOut, EditsIn, EditsOut, FileOut,
-                                 FilesOut, ImageReplaceOut, MessageOut, PreviewOut, ProjectCreate,
+                                 FilesOut, ImageReplaceOut, MessageOut, PreviewOut, ProjectCreate, ShareOut,
                                  ProjectOut, ProjectUpdate, PublishOut, SnapshotOut, SupabaseLinkIn,
                                  TextEditOut, UsageOut)
 from app.services import push, rate_limit
@@ -1496,6 +1497,47 @@ async def preview(project_id: str, request: Request,
     return PreviewOut(url=sandbox.preview_url(), sandbox_id=sandbox.id,
                       driver=sandbox.driver, target=sandbox.target.name,
                       device_url=_device_url(sandbox))
+
+
+# ------------------------------------------------------------ share link
+def _share_out(row: BuilderShare) -> ShareOut:
+    return ShareOut(token=row.token, url=f"{settings.WEB_BASE_URL.rstrip('/')}/s/{row.token}",
+                    created_at=row.created_at)
+
+
+@router.get("/projects/{project_id}/share", response_model=ShareOut | None)
+async def get_share(project_id: str, user: User = Depends(get_current_user),
+                    db: AsyncSession = Depends(get_db)):
+    await _owned(project_id, user, db, "viewer")
+    row = await db.get(BuilderShare, project_id)
+    return _share_out(row) if row else None
+
+
+@router.post("/projects/{project_id}/share", response_model=ShareOut)
+async def create_share(project_id: str, user: User = Depends(get_current_user),
+                       db: AsyncSession = Depends(get_db)):
+    """The project's public preview link, made on first ask. Anyone with it
+    sees the live preview (not the code, the thread or the edit tools)."""
+    await _owned(project_id, user, db, "editor")
+    row = await db.get(BuilderShare, project_id)
+    if row is None:
+        row = BuilderShare(project_id=project_id, token=secrets_mod.token_urlsafe(24),
+                           created_by=user.id)
+        db.add(row)
+        await db.commit()
+    return _share_out(row)
+
+
+@router.delete("/projects/{project_id}/share", status_code=204)
+async def revoke_share(project_id: str, user: User = Depends(get_current_user),
+                       db: AsyncSession = Depends(get_db)):
+    """The link stops working at once; sharing again makes a new one."""
+    await _owned(project_id, user, db, "editor")
+    row = await db.get(BuilderShare, project_id)
+    if row is not None:
+        await db.delete(row)
+        await db.commit()
+    return Response(status_code=204)
 
 
 @router.get("/projects/{project_id}/files", response_model=FilesOut)

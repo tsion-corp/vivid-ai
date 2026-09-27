@@ -16,6 +16,7 @@ from app.api.routes.media import router as media_router
 from app.api.routes.pay import router as pay_router
 from app.api.routes.push import router as push_router
 from app.api.routes.search import router as search_router
+from app.api.routes.share import router as share_router
 from app.api.routes.tools import router as tools_router
 from app.api.routes.waitlist import router as waitlist_router
 from app.api.routes.admin import router as admin_router
@@ -37,6 +38,7 @@ api_router.include_router(search_router)
 api_router.include_router(media_router)
 api_router.include_router(tools_router)
 api_router.include_router(builder_router)
+api_router.include_router(share_router)
 api_router.include_router(waitlist_router)
 api_router.include_router(wallet_router)
 api_router.include_router(webhooks_router)
