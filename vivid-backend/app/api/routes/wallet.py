@@ -30,7 +30,7 @@ from app.api.deps import get_db, get_session_user
 from app.core.config import settings
 from app.core.errors import APIError
 from app.db.models import BuilderProject, User, WalletFunding
-from app.services.plans import gifts, catalog, subscriptions, usage
+from app.services.plans import catalog, gifts, subscriptions, usage
 from app.services.wallet import MICRO, crypto_options, dextopus, fx, ledger, pouch
 
 router = APIRouter(tags=["wallet"])
