@@ -14,6 +14,7 @@ A `_redirects` rule sends unknown paths to index.html for the SPA router.
 """
 import asyncio
 import base64
+import html as html_mod
 import io
 import json
 import logging
@@ -125,6 +126,44 @@ async def build_site(sandbox: Sandbox, project_id: str | None = None) -> BuiltSi
     if site.size > settings.BUILDER_PUBLISH_MAX_BYTES:
         raise PublishError(f"The built site is {site.size // 1_000_000} MB, over the limit.")
     return site
+
+
+def pack(site: BuiltSite) -> bytes:
+    """A built site as one tarball, kept so the publish can be put back."""
+    out = io.BytesIO()
+    with tarfile.open(fileobj=out, mode="w:gz") as tf:
+        for name, data in site.files.items():
+            info = tarfile.TarInfo(name)
+            info.size = len(data)
+            tf.addfile(info, io.BytesIO(data))
+    return out.getvalue()
+
+
+def unpack(data: bytes) -> BuiltSite:
+    return BuiltSite(_untar(data))
+
+
+OFFLINE_HTML = """<!doctype html><html lang="en"><head><meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1"><meta name="robots" content="noindex">
+<title>%(title)s</title><style>body{margin:0;min-height:100vh;display:grid;place-items:center;
+font-family:-apple-system,Segoe UI,Roboto,Helvetica,Arial,sans-serif;background:#f6f5fb;color:#1d1b26}
+main{text-align:center;padding:24px}h1{font-size:22px;margin:0 0 8px}p{margin:0;color:#6b6880}</style>
+</head><body><main><h1>%(title)s is offline</h1><p>This site isn't available right now.</p></main></body></html>"""
+
+
+def offline_site(name: str) -> BuiltSite:
+    """What an unpublished site shows at its address."""
+    title = html_mod.escape(name or "This site")
+    return BuiltSite({"index.html": (OFFLINE_HTML % {"title": title}).encode()})
+
+
+def alias_of(url: str | None) -> str | None:
+    """The branch alias a published URL was deployed to (its first label), so
+    a rollback lands on the same address even after a rename."""
+    if not url:
+        return None
+    host = url.split("://", 1)[-1].split("/", 1)[0]
+    return host.split(".", 1)[0] or None
 
 
 def _untar(data: bytes) -> dict[str, bytes]:

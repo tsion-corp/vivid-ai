@@ -463,6 +463,15 @@ class BuilderPublish(Base):
     #: pending | building | live | failed
     status: Mapped[str] = mapped_column(String(16), default="pending")
     error: Mapped[str | None] = mapped_column(Text, default=None)
+    #: publish (a build of the files) | rollback (an earlier build put back)
+    #: | unpublish (the offline page)
+    kind: Mapped[str] = mapped_column(String(16), default="publish")
+    #: The built site, kept so this publish can be put back later.
+    artifact_key: Mapped[str | None] = mapped_column(String(512), default=None)
+
+    @property
+    def can_rollback(self) -> bool:
+        return bool(self.artifact_key) and self.status == "live" and self.kind != "unpublish"
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_now)
     updated_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), default=_now, onupdate=_now)

@@ -71,6 +71,10 @@ def snapshot_key(project_id: str, seq: int) -> str:
     return f"{settings.R2_PREFIX}projects/{project_id}/snapshots/{seq}.tgz"
 
 
+def publish_key(project_id: str, publish_id: str) -> str:
+    return f"{settings.R2_PREFIX}projects/{project_id}/publishes/{publish_id}.tgz"
+
+
 def asset_key(project_id: str, asset_id: str, name: str) -> str:
     return f"{settings.R2_PREFIX}projects/{project_id}/assets/{asset_id}-{name}"
 

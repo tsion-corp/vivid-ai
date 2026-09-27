@@ -173,6 +173,12 @@ class PublishOut(BaseModel):
     #: pending | building | live | failed
     status: str
     error: str | None
+    #: publish | rollback (an earlier publish put back) | unpublish (the
+    #: site was taken offline)
+    kind: str = "publish"
+    #: This publish's build is kept: POST .../publishes/{id}/rollback can
+    #: put it back. False for publishes made before builds were kept.
+    can_rollback: bool = False
     created_at: datetime
     updated_at: datetime
 

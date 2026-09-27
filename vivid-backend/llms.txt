@@ -41,6 +41,7 @@ Per project POST/DELETE /builder/projects/{id}/supabase · POST/DELETE .../payme
             POST/DELETE /builder/projects/{id}/chain (dApp on Ark Constellation) · POST .../chain/faucet
             POST/DELETE /builder/projects/{id}/auth (the app's own sign-in, Decane)
 Publish     POST /builder/projects/{id}/publish · GET .../publishes · GET .../publishes/{publish_id}
+            POST .../publishes/{publish_id}/rollback · POST /builder/projects/{id}/unpublish
 Usage       GET /builder/projects/{id}/usage · GET /builder/projects/{id}/analytics?days=30
 Plans       GET /plans · GET/POST/DELETE /me/plan (MyPlanOut)
 Wallet      GET /wallet?currency=NGN · GET /wallet/entries · GET /wallet/rates · POST /wallet/bank-account
@@ -722,9 +723,21 @@ and, when on, the app id. Deleting the project archives the client.
 
 ## 10. Publish
 
-POST /builder/projects/{id}/publish                -> Publish (202) {id, snapshot_id, url, status: "pending", error, created_at, updated_at}
+POST /builder/projects/{id}/publish                -> Publish (202) {id, snapshot_id, url, status: "pending", error,
+                                                      kind, can_rollback, created_at, updated_at}
 GET  /builder/projects/{id}/publishes              -> Publish[] newest first
 GET  /builder/projects/{id}/publishes/{publish_id} -> Publish
+POST /builder/projects/{id}/publishes/{publish_id}/rollback -> Publish (202, kind "rollback")   editor
+     Puts that publish back on the live address exactly as it was built
+     (the project's files are untouched). Only rows with can_rollback
+     (live, and built since builds are kept); else 409 cannot_rollback.
+POST /builder/projects/{id}/unpublish              -> Publish (202, kind "unpublish")          owner
+     The address shows a short "<name> is offline" page (noindex). The
+     project keeps published_url; published_at becomes null ("not live").
+     Publishing again or rolling back brings the site back. 409
+     not_published if it never was.
+kind: publish | rollback | unpublish. A site keeps its address across
+renames: every publish goes to the address it already has.
 
 Poll the row every 3 to 5 seconds until status is "live" (url set; the
 project's published_url updates too) or "failed" (error holds the build

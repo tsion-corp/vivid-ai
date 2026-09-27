@@ -1420,13 +1420,32 @@ async def start_publish(project_id: str, request: Request,
     row = BuilderPublish(project_id=project_id, snapshot_id=snapshot.id, status="pending")
     db.add(row)
     await db.commit()
-    alias = publish.alias_for(project.name, project.id)
+    alias = publish.alias_of(project.published_url) or publish.alias_for(project.name, project.id)
     _publishing[project_id] = asyncio.create_task(
         _run_publish(project_id, row.id, alias, request.app.state.redis))
     return row
 
 
 async def _run_publish(project_id: str, publish_id: str, alias: str, redis) -> None:
+    """Build the sandbox's files and deploy them, keeping the build."""
+    async def build():
+        sandbox = await _start_sandbox(project_id, redis)
+        site = await publish.build_site(sandbox, project_id)
+        await manager.touch(project_id)
+        try:
+            key = blob.publish_key(project_id, publish_id)
+            await blob.put(key, publish.pack(site))
+            return site, key
+        except blob.BlobError as e:                 # the publish still goes out
+            log.warning("keeping the build of %s failed: %s", publish_id, e)
+            return site, None
+    await _run_deploy(project_id, publish_id, alias, build, live=True)
+
+
+async def _run_deploy(project_id: str, publish_id: str, alias: str, make_site, live: bool) -> None:
+    """Put a site on the project's address: a new build, a kept one (a
+    rollback) or the offline page (`live=False`). The row goes pending ->
+    building -> live | failed."""
     async def update(**fields):
         async with async_session() as db:
             row = await db.get(BuilderPublish, publish_id)
@@ -1438,34 +1457,94 @@ async def _run_publish(project_id: str, publish_id: str, alias: str, redis) -> N
                 project = await db.get(BuilderProject, project_id)
                 if project is not None:
                     project.published_url = fields.get("url")
-                    project.published_at = datetime.now(timezone.utc)
+                    project.published_at = datetime.now(timezone.utc) if live else None
             await db.commit()
 
     try:
         await update(status="building")
-        sandbox = await _start_sandbox(project_id, redis)
-        site = await publish.build_site(sandbox, project_id)
-        await manager.touch(project_id)
+        site, key = await make_site()
+        if key:
+            await update(artifact_key=key)
         pages = publish.Pages()
         await pages.deploy(site, alias, f"vivid publish {publish_id[:8]}")
         url = publish.public_url(alias)
         await publish.wait_until_live(url)
         await update(status="live", url=url)
-        log.info("project %s published at %s", project_id, url)
-        try:
-            async with async_session() as db:
-                project = await db.get(BuilderProject, project_id)
-                if project is not None:
-                    await _sync_auth_origins(db, project)   # the published host, and the callback
-        except Exception:
-            log.exception("decane origin sync after publish of %s failed", project_id)
-    except (publish.PublishError, SandboxError, snapshots.SnapshotError) as e:
+        log.info("project %s %s at %s", project_id, "published" if live else "taken offline", url)
+        if live:
+            try:
+                async with async_session() as db:
+                    project = await db.get(BuilderProject, project_id)
+                    if project is not None:
+                        await _sync_auth_origins(db, project)   # the published host, and the callback
+            except Exception:
+                log.exception("decane origin sync after publish of %s failed", project_id)
+    except (publish.PublishError, SandboxError, snapshots.SnapshotError, blob.BlobError) as e:
         await update(status="failed", error=str(e)[:2000])
     except Exception as e:                          # never a stuck "building"
         log.exception("publish %s failed", publish_id)
         await update(status="failed", error=provider.scrub(str(e))[:500])
     finally:
         _publishing.pop(project_id, None)
+
+
+def _publish_guard(project: BuilderProject, project_id: str) -> None:
+    if targets.of(project).is_mobile:
+        raise APIError(400, "not_supported", "Mobile apps are not published as websites.")
+    if not publish.configured():
+        raise APIError(503, "not_configured", "Publishing is not configured.")
+    if project_id in _publishing and not _publishing[project_id].done():
+        raise APIError(409, "busy", "A publish is already running for this project.")
+
+
+@router.post("/projects/{project_id}/publishes/{publish_id}/rollback", response_model=PublishOut,
+             status_code=202)
+async def rollback_publish(project_id: str, publish_id: str, user: User = Depends(get_current_user),
+                           db: AsyncSession = Depends(get_db)):
+    """Put an earlier publish back on the live address, exactly as it was
+    built then (the project's files are not touched). Poll the new row."""
+    project = await _owned(project_id, user, db, "editor")
+    _publish_guard(project, project_id)
+    source = await db.get(BuilderPublish, publish_id)
+    if source is None or source.project_id != project_id:
+        raise APIError(404, "not_found", "No such publish")
+    if not source.can_rollback:
+        raise APIError(409, "cannot_rollback",
+                       "That publish's build was not kept, so it can't be put back. Restore its "
+                       "version and publish instead.")
+    row = BuilderPublish(project_id=project_id, snapshot_id=source.snapshot_id, status="pending",
+                         kind="rollback", artifact_key=source.artifact_key)
+    db.add(row)
+    await db.commit()
+    alias = publish.alias_of(project.published_url) or publish.alias_for(project.name, project.id)
+    key = source.artifact_key
+
+    async def kept():
+        return publish.unpack(await blob.get(key)), None
+    _publishing[project_id] = asyncio.create_task(_run_deploy(project_id, row.id, alias, kept, live=True))
+    return row
+
+
+@router.post("/projects/{project_id}/unpublish", response_model=PublishOut, status_code=202)
+async def unpublish(project_id: str, user: User = Depends(get_current_user),
+                    db: AsyncSession = Depends(get_db)):
+    """Take the site offline: its address shows a short "offline" page
+    (and search engines are told not to index it). The address is kept;
+    publishing again, or rolling back, brings the site back."""
+    project = await _owned(project_id, user, db, "owner")
+    _publish_guard(project, project_id)
+    if not project.published_url:
+        raise APIError(409, "not_published", "This project has not been published.")
+    row = BuilderPublish(project_id=project_id, status="pending", kind="unpublish")
+    db.add(row)
+    await db.commit()
+    alias = publish.alias_of(project.published_url) or publish.alias_for(project.name, project.id)
+    name = project.name
+
+    async def offline():
+        return publish.offline_site(name), None
+    _publishing[project_id] = asyncio.create_task(_run_deploy(project_id, row.id, alias, offline, live=False))
+    return row
 
 
 @router.get("/projects/{project_id}/publishes", response_model=list[PublishOut])
