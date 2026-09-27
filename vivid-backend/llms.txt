@@ -442,11 +442,11 @@ server's own output (compile errors, Vite overlay text) is at
 GET /builder/projects/{id}/logs?lines=100 -> {lines: string[]}; show it the
 same way when the preview is blank.
 
-### Hand edits: replace a picture, change copy, click-to-edit
+### Hand edits: replace a picture, change copy, delete, click-to-edit
 
 Small changes a person makes without a chat turn. Each one writes the files
 (the preview hot-reloads) and is saved as a version, so undo covers it. All
-three answer 409 busy while a turn runs and 409 nothing_to_edit before the
+of them answer 409 busy while a turn runs and 409 nothing_to_edit before the
 first build.
 
 PUT  /builder/projects/{id}/files/{path}     multipart `file`   -> {path, relinked: [], snapshot}
@@ -472,6 +472,18 @@ POST /builder/projects/{id}/edits  {edits: [{old, new, all?}]}  -> {results, sna
      ambiguous (count places, files listed: resend with all=true or ask the
      model). The applied ones are one version; snapshot is null when none
      applied or storing it failed (the change is still in the preview).
+POST /builder/projects/{id}/edits/delete  DeleteIn -> DeleteOut {status, reason, files, count, snapshot}
+     Remove an element or a section clicked in the preview. Send what the
+     editor's vivid:delete gave you: {tag, id, classes, texts, src, scope:
+     element|section, label}. It is found in the source by its tag and text
+     (or an image's src) and cut exactly; a section that is a whole
+     component (a Hero.tsx) removes the places that render it. The result is
+     typechecked: status would_break means nothing changed. Otherwise status
+     is applied (saved as a version; POST .../undo puts it back) |
+     not_found (its text comes from data, or it has none) | ambiguous (count
+     elements match) | not_simple (one item of a list built from data, or the
+     whole page) | not_supported (mobile apps, for now). Offer the ones that
+     did not apply as a chat turn ("Remove the section with "Our menu"").
 
 Click-to-edit in the preview. The preview's index.html carries a small
 editor (placed on every GET .../preview, stripped from published sites). It
@@ -481,11 +493,16 @@ is off until the parent turns it on, and only talks to the origin that did:
 
 Messages from the preview (check e.origin as for vivid:error):
   {type: "vivid:editor-ready"}              the page (re)loaded: send edit-mode again
-  {type: "vivid:text-edit", old, new}      a text element was edited (Enter or blur;
-                                            Escape reverts): POST .../edits
+  {type: "vivid:text-edit", old, new}      text was edited (Enter or blur; Escape
+                                            reverts): POST .../edits. Text beside an
+                                            icon or inside mixed markup is editable:
+                                            `old` is just that piece of text.
   {type: "vivid:image-pick", src}          a picture was clicked: ask for a file,
                                             POST .../images/replace with this src
-  {type: "vivid:edit-hint", reason: "not_text"}  the click was on a mixed element
+  {type: "vivid:delete", target}           the person chose Delete or Delete section
+                                            on the toolbar the editor shows over the
+                                            clicked element: POST .../edits/delete
+                                            with `target` as the body
 After replacing a picture in public/, post {type: "vivid:image-updated", src}
 to the preview so it reloads that image (Vite does not hot-reload public/).
 
