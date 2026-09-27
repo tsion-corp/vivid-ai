@@ -43,6 +43,7 @@ Per project POST/DELETE /builder/projects/{id}/supabase · POST/DELETE .../payme
 Publish     POST /builder/projects/{id}/publish · GET .../publishes · GET .../publishes/{publish_id}
             POST .../publishes/{publish_id}/rollback · POST /builder/projects/{id}/unpublish
 SEO         GET/PUT /builder/projects/{id}/seo
+Secrets     GET /builder/projects/{id}/secrets · PUT/DELETE /builder/projects/{id}/secrets/{NAME}
 Usage       GET /builder/projects/{id}/usage · GET /builder/projects/{id}/analytics?days=30
 Plans       GET /plans · GET/POST/DELETE /me/plan (MyPlanOut)
 Wallet      GET /wallet?currency=NGN · GET /wallet/entries · GET /wallet/rates · POST /wallet/bank-account
@@ -739,6 +740,21 @@ POST /builder/projects/{id}/unpublish              -> Publish (202, kind "unpubl
      not_published if it never was.
 kind: publish | rollback | unpublish. A site keeps its address across
 renames: every publish goes to the address it already has.
+
+### Secrets (the owner's own keys for the app)
+
+GET    /builder/projects/{id}/secrets -> [{name, public, hint, updated_at}]         owner
+PUT    /builder/projects/{id}/secrets/{NAME} {value, public?: false} -> {name, public, hint, updated_at, where}
+DELETE /builder/projects/{id}/secrets/{NAME} -> 204
+Values are never returned; `hint` is the last four characters (keys of 12+).
+NAME is UPPER_SNAKE and not one Vivid sets itself (SUPABASE_, DECANE_,
+VITE_, VIVIDPAY_, PAYSTACK_, ...): 400 bad_name.
+public: true -> the app's .env as VITE_<NAME>, readable by anyone in the
+browser (say so; only publishable keys). public: false -> a server secret
+for the backend's edge functions (Deno.env.get(NAME)). `where`: app | backend
+(set on the linked Supabase project) | stored (set when a Supabase account
+is linked). The agent is told the server names, never the values, and may
+not overwrite them.
 
 ### SEO and link previews
 

@@ -3,6 +3,8 @@ orchestrator holds for a project. Fernet (AES-128-CBC with HMAC) under
 SECRETS_ENCRYPTION_KEY. A value goes into the database encrypted and comes
 out only through `get`; nothing here ever logs one.
 """
+from dataclasses import dataclass
+
 from cryptography.fernet import Fernet, InvalidToken
 from sqlalchemy import delete, select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -68,3 +70,31 @@ async def list_keys(db: AsyncSession, project_id: str) -> list[str]:
 async def delete_secret(db: AsyncSession, project_id: str, key: str) -> None:
     await db.execute(delete(BuilderSecret).where(BuilderSecret.project_id == project_id,
                                                  BuilderSecret.key == key))
+
+
+# ------------------------------------------------------------ user secrets
+#: Keys the person added in the project's settings, beside the platform's
+#: own (SUPABASE_*, DECANE_*...). Server secrets go to the backend's edge
+#: functions; public ones into the app's .env as VITE_<NAME>.
+USER_SERVER, USER_PUBLIC = "user:", "user-public:"
+
+
+@dataclass
+class UserSecret:
+    name: str
+    public: bool
+    value: str
+    updated_at: object
+
+
+async def user_secrets(db: AsyncSession, project_id: str) -> list[UserSecret]:
+    rows = await db.execute(select(BuilderSecret).where(BuilderSecret.project_id == project_id)
+                            .order_by(BuilderSecret.key))
+    out = []
+    for row in rows.scalars():
+        for prefix, public in ((USER_PUBLIC, True), (USER_SERVER, False)):
+            if row.key.startswith(prefix):
+                out.append(UserSecret(row.key[len(prefix):], public, decrypt(row.encrypted_value),
+                                      row.updated_at))
+                break
+    return out

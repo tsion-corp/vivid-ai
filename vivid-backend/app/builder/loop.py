@@ -264,13 +264,17 @@ class TurnRunner:
                  chain: "tools.Chain | None" = None,
                  auth: str | None = None,
                  memory: dict | None = None,
-                 env_values: dict[str, str] | None = None) -> None:
+                 env_values: dict[str, str] | None = None,
+                 user_secrets: list[str] | None = None) -> None:
         self.sandbox = sandbox
         #: What earlier turns left (builder/memory.py): the ledger, shown on
         #: every step, and an unfinished turn this one may continue. Updated
         #: as the turn goes; the route stores it when the turn ends.
         self.memory = memory_mod.load(memory)
         self.env_values = env_values or {}
+        #: Server secrets the person added (names only; the values reach the
+        #: backend's functions, never the model).
+        self.user_secrets = list(user_secrets or [])
         #: The unfinished turn this one continues, if its message asks to.
         left = self.memory.get("unfinished")
         self.continuing = bool(left and memory_mod.continues(user_text))
@@ -376,6 +380,25 @@ class TurnRunner:
         })
         yield stream.finish()
 
+    def _refusal(self, call: dict) -> str | None:
+        """Why a call must not run, when it must not: a migration that drops
+        tables this app did not create, or overwriting a secret the person
+        set themselves."""
+        args = call["arguments"]
+        if call["name"] == "apply_migration":
+            foreign = memory_mod.foreign_drops(str(args.get("sql") or ""), self.memory["ledger"],
+                                               self.user_text)
+            if foreign:
+                return (f"error: refused: this migration drops or empties {', '.join(foreign)}, "
+                        "which this app did not create. A database can hold the person's other "
+                        "apps, so those tables are not this app's to remove. Leave them, name "
+                        "this app's tables so they do not clash, and if they really must go, ask "
+                        "the person to say so by name.")
+        if call["name"] == "set_secret" and str(args.get("key") or "") in self.user_secrets:
+            return ("error: refused: the person set this secret themselves in the project's "
+                    "settings; it is already on the backend. Use it as it is.")
+        return None
+
     def _remember(self, outcome: str) -> None:
         """Keep an unfinished turn for the next one; forget it once the work
         it was doing is answered."""
@@ -448,6 +471,11 @@ class TurnRunner:
     async def _attempt_inner(self, endpoint: provider.Endpoint, stage: str) -> AsyncIterator[dict]:
         block = await context.build(self.sandbox, self.recent_files)
         remembered = memory_mod.ledger_block(self.memory["ledger"], self.env_values)
+        if self.user_secrets:
+            remembered += ("\n" if remembered else "## Project memory\n") + (
+                "- Server secrets the person added (set on the backend already; read them in edge "
+                "functions with Deno.env.get, never set or overwrite them): "
+                + ", ".join(self.user_secrets))
         left = self.memory.get("unfinished")
         if left and not self.continuing:
             remembered += ("\n" if remembered else "## Project memory\n") + (
@@ -681,16 +709,9 @@ class TurnRunner:
                     self.result.failed_tools.append(f"{call['name']}{' ' + hint if hint else ''}")
                     retry_call = (call["name"], hint, call["error"])
                     continue
-                foreign = (memory_mod.foreign_drops(str(call["arguments"].get("sql") or ""),
-                                                    self.memory["ledger"], self.user_text)
-                           if call["name"] == "apply_migration" else [])
-                if foreign:
-                    outcome = tools.Outcome(
-                        f"error: refused: this migration drops or empties {', '.join(foreign)}, "
-                        "which this app did not create. A database can hold the person's other "
-                        "apps, so those tables are not this app's to remove. Leave them, name "
-                        "this app's tables so they do not clash, and if they really must go, ask "
-                        "the person to say so by name.")
+                refusal = self._refusal(call)
+                if refusal:
+                    outcome = tools.Outcome(refusal)
                 else:
                     outcome = pre.get(call["id"]) or await tools.execute(
                         call["name"], call["arguments"], self.sandbox, self.backend, self.images,

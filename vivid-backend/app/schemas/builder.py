@@ -420,3 +420,25 @@ class SeoPage(BaseModel):
 
 class SeoOut(SeoIn):
     page: SeoPage
+
+
+class UserSecretIn(BaseModel):
+    value: str = Field(min_length=1, max_length=4000)
+    #: True: goes into the app's .env as VITE_<name>, readable by anyone in
+    #: the browser (publishable keys only). False: a server secret for the
+    #: backend's edge functions.
+    public: bool = False
+
+
+class UserSecretOut(BaseModel):
+    name: str
+    public: bool
+    #: The last four characters, to tell keys apart; never the value.
+    hint: str | None = None
+    updated_at: datetime
+
+
+class UserSecretSaved(UserSecretOut):
+    #: app (in .env) | backend (set on the linked Supabase project) |
+    #: stored (kept; set on the backend when one is linked)
+    where: str

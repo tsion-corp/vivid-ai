@@ -140,6 +140,9 @@ class Management:
         await self._call("POST", f"/v1/projects/{ref}/secrets",
                          json_body=[{"name": k, "value": v} for k, v in values.items()])
 
+    async def delete_secrets(self, ref: str, names: list[str]) -> None:
+        await self._call("DELETE", f"/v1/projects/{ref}/secrets", json_body=names)
+
     async def secret_names(self, ref: str) -> list[str]:
         rows = await self._call("GET", f"/v1/projects/{ref}/secrets") or []
         return [r["name"] for r in rows]

@@ -49,6 +49,7 @@ for any client: see docs/builder.md.
 import asyncio
 import json
 import pathlib
+import re
 import mimetypes
 import base64
 import secrets as secrets_mod
@@ -82,6 +83,7 @@ from app.db.session import async_session
 from app.schemas.builder import (AnalyticsOut, AppBuildIn, AppBuildOut, AssetOut, BuildAccountOut,
                                  BuildOptionsOut, CancelOut, ChatIn, DeleteIn, DeleteOut, DuplicateIn, DuplicateOut, EditsIn, EditsOut, FileOut,
                                  FilesOut, ImageReplaceOut, MessageOut, PreviewOut, ProjectCreate, SeoIn, SeoOut, SeoPage, ShareOut,
+                                 UserSecretIn, UserSecretOut, UserSecretSaved,
                                  ProjectOut, ProjectUpdate, PublishOut, SnapshotOut, SupabaseLinkIn,
                                  TextEditOut, UsageOut)
 from app.services import push, rate_limit
@@ -448,6 +450,8 @@ async def chat(project_id: str, body: ChatIn, request: Request,
                 return
             runner = TurnRunner(sandbox, stage, history, body.text, spec_md, recent,
                                 memory=project.memory, env_values=env_vars,
+                                user_secrets=[i.name for i in await secrets.user_secrets(db, project_id)
+                                              if not i.public] if secrets.configured() else [],
                                 cancelled=cancel.is_set, backend=backend,
                                 assets_block=assets_block, payments=payments, maps=maps,
                                 chain=chain, auth=auth,
@@ -680,6 +684,10 @@ async def _env_for(project: BuilderProject, db: AsyncSession,
             env["VITE_GOOGLE_MAPS_KEY"] = key
     if project.chain in chain_mod.CHAINS:
         env.update(chain_mod.env_for(chain_mod.CHAINS[project.chain], project.deployer_address))
+    for item in await secrets.user_secrets(db, project.id):
+        # The person marked these as fine for the browser.
+        if item.public:
+            env.setdefault(f"VITE_{item.name}", item.value)
     if project.auth_provider == "decane" and project.decane_app_id:
         # Browser-public by design: the key is authorised by its origin
         # allowlist, not by secrecy.
@@ -772,11 +780,111 @@ async def link_supabase(project_id: str, body: SupabaseLinkIn, request: Request,
     project.backend_mode = "byo"
     project.supabase_project_ref = body.project_ref
     await db.commit()
+    # Server secrets the person added before there was a backend.
+    await _push_server_secrets(project, user, db)
     sandbox = manager.peek(project_id)
     if sandbox is not None:
         await _sync_env(sandbox, _prefixed({"VITE_SUPABASE_URL": url, "VITE_SUPABASE_ANON_KEY": anon},
                                            targets.of(project)))
     return project
+
+
+# --------------------------------------------------------------- secrets
+#: Names the platform sets itself; a person's secret may not shadow them.
+_RESERVED_SECRET = re.compile(r"^(SUPABASE_|DECANE_|VIVIDPAY_|PAYSTACK_|GOOGLE_MAPS_|CHAIN_|EXPO_|VITE_|DENO_)")
+
+
+def _secret_out(item: "secrets.UserSecret") -> UserSecretOut:
+    value = item.value
+    hint = ("…" + value[-4:]) if len(value) >= 12 else None
+    return UserSecretOut(name=item.name, public=item.public, hint=hint, updated_at=item.updated_at)
+
+
+async def _push_server_secrets(project: BuilderProject, user: User, db: AsyncSession,
+                               only: list[str] | None = None) -> bool:
+    """The person's server secrets into the linked Supabase project's edge
+    functions. True when they reached it (a Supabase account is linked)."""
+    backend = await _backend_for(project, user, db)
+    if backend is None or not backend.can_functions:
+        return False
+    values = {i.name: i.value for i in await secrets.user_secrets(db, project.id)
+              if not i.public and (only is None or i.name in only)}
+    if values:
+        try:
+            await backend.api.set_secrets(backend.ref, values)
+        except supabase.SupabaseError as e:
+            log.warning("could not set user secrets on %s: %s", backend.ref, e.public)
+            return False
+    return True
+
+
+async def _refresh_env(project: BuilderProject, db: AsyncSession) -> None:
+    sandbox = manager.peek(project.id)
+    if sandbox is None:
+        return
+    env = await _env_for(project, db) or {}
+    try:
+        await sandbox.write_file(".env", "".join(f"{k}={v}\n" for k, v in env.items()))
+    except SandboxError as e:
+        log.warning("could not refresh .env for %s: %s", project.id, e)
+
+
+@router.get("/projects/{project_id}/secrets", response_model=list[UserSecretOut])
+async def list_user_secrets(project_id: str, user: User = Depends(get_current_user),
+                            db: AsyncSession = Depends(get_db)):
+    """The secrets the owner added: names and the last characters, never
+    the values."""
+    await _owned(project_id, user, db, "owner")
+    return [_secret_out(i) for i in await secrets.user_secrets(db, project_id)]
+
+
+@router.put("/projects/{project_id}/secrets/{name}", response_model=UserSecretSaved)
+async def put_user_secret(project_id: str, name: str, body: UserSecretIn,
+                          user: User = Depends(get_current_user), db: AsyncSession = Depends(get_db)):
+    """Add or replace one. `public` values go into the app's .env as
+    VITE_<name> (anyone can read them in the browser); server secrets go to
+    the linked backend's edge functions, read with Deno.env.get(name)."""
+    project = await _owned(project_id, user, db, "owner")
+    if not re.fullmatch(r"[A-Z][A-Z0-9_]{1,63}", name) or _RESERVED_SECRET.match(name):
+        raise APIError(400, "bad_name", "Use capital letters, digits and underscores (like STRIPE_SECRET_KEY), "
+                       "and not a name Vivid uses itself (SUPABASE_, DECANE_, VITE_...).")
+    if not secrets.configured():
+        raise APIError(503, "not_configured", "Secrets are not set up on this server.")
+    # One name, one kind: saving as the other kind replaces it.
+    await secrets.delete_secret(db, project_id, (secrets.USER_SERVER if body.public else secrets.USER_PUBLIC) + name)
+    await secrets.set_secret(db, project_id,
+                             (secrets.USER_PUBLIC if body.public else secrets.USER_SERVER) + name, body.value)
+    await db.commit()
+    if body.public:
+        await _refresh_env(project, db)
+        where = "app"
+    else:
+        await _refresh_env(project, db)       # a name that moved from public leaves .env
+        where = "backend" if await _push_server_secrets(project, user, db, [name]) else "stored"
+    item = next(i for i in await secrets.user_secrets(db, project_id) if i.name == name)
+    return UserSecretSaved(**_secret_out(item).model_dump(), where=where)
+
+
+@router.delete("/projects/{project_id}/secrets/{name}", status_code=204)
+async def delete_user_secret(project_id: str, name: str, user: User = Depends(get_current_user),
+                             db: AsyncSession = Depends(get_db)):
+    project = await _owned(project_id, user, db, "owner")
+    items = {i.name: i for i in await secrets.user_secrets(db, project_id)}
+    if name not in items:
+        raise APIError(404, "not_found", "No such secret")
+    await secrets.delete_secret(db, project_id, secrets.USER_PUBLIC + name)
+    await secrets.delete_secret(db, project_id, secrets.USER_SERVER + name)
+    await db.commit()
+    if items[name].public:
+        await _refresh_env(project, db)
+    else:
+        backend = await _backend_for(project, user, db)
+        if backend is not None and backend.can_functions:
+            try:
+                await backend.api.delete_secrets(backend.ref, [name])
+            except supabase.SupabaseError as e:
+                log.warning("could not remove %s from %s: %s", name, backend.ref, e.public)
+    return Response(status_code=204)
 
 
 # -------------------------------------------------------------- payments
