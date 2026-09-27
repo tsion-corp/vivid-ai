@@ -929,7 +929,7 @@ POST /me/gifts {kind: "plan", email, plan: "pro"|"max", yearly?, message?} -> Gi
 Gift {id, kind, email, credits, plan, yearly, amount_usd, message,
       status: pending|claimed|cancelled|expired, created_at, claim_by, url, emailed,
       remaining_credits, use_by, from_name}
-GET    /me/gifts -> {sent: Gift[], received: Gift[], gift_credits}
+GET    /me/gifts -> {sent: Gift[], received: Gift[], gift_credits}   (GET /me/plan carries gift_credits too)
 DELETE /me/gifts/{id} -> 204   take back an unclaimed gift (a plan is refunded); 409 already_claimed
 GET    /gifts/{token} (no auth) -> {from_name, kind, credits, plan, yearly, message, status}
 POST   /gifts/{token}/claim -> {gift, plan, plan_until}

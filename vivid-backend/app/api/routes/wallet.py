@@ -30,7 +30,7 @@ from app.api.deps import get_db, get_session_user
 from app.core.config import settings
 from app.core.errors import APIError
 from app.db.models import BuilderProject, User, WalletFunding
-from app.services.plans import catalog, subscriptions, usage
+from app.services.plans import gifts, catalog, subscriptions, usage
 from app.services.wallet import MICRO, crypto_options, dextopus, fx, ledger, pouch
 
 router = APIRouter(tags=["wallet"])
@@ -355,6 +355,8 @@ class MyPlanOut(BaseModel):
     window: CreditMeter
     month: CreditMeter
     extra_credits: float
+    #: Credits others gave you, unexpired; spent before extra credits.
+    gift_credits: float = 0
 
 
 async def _me_plan(db: AsyncSession, user: User) -> dict:
@@ -375,7 +377,8 @@ async def _me_plan(db: AsyncSession, user: User) -> dict:
                        "resets_at": m.window_resets_at, "hours": settings.PLAN_WINDOW_HOURS},
             "month": {"used": catalog.to_credits(m.month_used),
                       "limit": catalog.to_credits(m.month_limit), "resets_at": m.month_resets_at},
-            "extra_credits": catalog.to_credits(wallet.extra_tokens)}
+            "extra_credits": catalog.to_credits(wallet.extra_tokens),
+            "gift_credits": catalog.to_credits(await gifts.balance(db, user.id))}
 
 
 @router.get("/me/plan", response_model=MyPlanOut)
