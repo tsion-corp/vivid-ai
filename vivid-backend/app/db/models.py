@@ -325,6 +325,9 @@ class BuilderProject(Base):
     #: Files touched in the last two turns, newest turn first, for the
     #: context block. A list of lists of project-relative paths.
     recent_files: Mapped[list | None] = mapped_column(JSONB, default=None)
+    #: What the builder remembers between turns (builder/memory.py): the
+    #: ledger of backend work and an unfinished turn to continue.
+    memory: Mapped[dict | None] = mapped_column(JSONB, default=None)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_now)
     updated_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), default=_now, onupdate=_now)

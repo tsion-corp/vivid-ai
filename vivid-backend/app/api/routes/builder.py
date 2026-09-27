@@ -62,7 +62,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.deps import get_current_user, get_db
 from app.builder import (analytics, app_build, assets, billing, blob, chain as chain_mod,
-                         decane_connect, expo, images, jsx_remove, pgdirect, planning, publish, routing,
+                         decane_connect, expo, images, jsx_remove, memory, pgdirect, planning, publish, routing,
                          secrets, skills, snapshots, stream, supabase, targets, tools, usage,
                          visual)
 from app.builder.loop import FEED_DONE, OK_REASONS, ModelCall, TurnRunner, turns
@@ -360,6 +360,7 @@ async def chat(project_id: str, body: ChatIn, request: Request,
                 turns.finish(project_id)
                 return
             runner = TurnRunner(sandbox, stage, history, body.text, spec_md, recent,
+                                memory=project.memory, env_values=env_vars,
                                 cancelled=cancel.is_set, backend=backend,
                                 assets_block=assets_block, payments=payments, maps=maps,
                                 chain=chain, auth=auth,
@@ -479,6 +480,7 @@ async def _persist_turn(project_id: str, collector: stream.PartsCollector,
                     project.recent_files = recent[:RECENT_TURNS]
                 if runner.result.thumbnail_key:
                     project.thumbnail_key = runner.result.thumbnail_key
+                project.memory = runner.memory
                 await usage.record_model(db, project_id, runner.result.calls)
                 if runner.result.touched:
                     # A turn that changed nothing gets no version: "saved as
@@ -1487,10 +1489,25 @@ async def _hand_edit_target(project_id: str, user: User, db: AsyncSession) -> Bu
     return project
 
 
+def _rewound(project: BuilderProject) -> None:
+    """Files went back to another version: an unfinished turn's reads and
+    writes no longer describe them."""
+    if project.memory and project.memory.get("unfinished"):
+        mem = memory.load(project.memory)
+        memory.mark_stale(mem, [memory.EVERY_FILE])
+        project.memory = mem
+
+
 async def _save_hand_edit(db: AsyncSession, sandbox, project: BuilderProject,
-                          summary: str) -> BuilderSnapshot | None:
+                          summary: str, paths: list[str] | None = None) -> BuilderSnapshot | None:
     """A version for the edit, like a turn's. A failure to store it does not
-    undo the edit, which is already in the preview; the client is told."""
+    undo the edit, which is already in the preview; the client is told.
+    `paths` are the files it changed: an unfinished turn's reads of them
+    are out of date now."""
+    if project.memory and project.memory.get("unfinished") and paths:
+        mem = memory.load(project.memory)
+        memory.mark_stale(mem, paths)
+        project.memory = mem
     try:
         row = await snapshots.take(db, sandbox, project, summary)
         await db.commit()
@@ -1551,7 +1568,7 @@ async def replace_file(project_id: str, path: str, request: Request,
             ext = pathlib.PurePosixPath(clean).suffix
             raise APIError(400, "bad_image", f"Upload a {ext} image to replace this file.")
         await _write_image(db, project_id, sandbox, clean, fitted)
-        row = await _save_hand_edit(db, sandbox, project, f"Replaced {clean}")
+        row = await _save_hand_edit(db, sandbox, project, f"Replaced {clean}", [clean])
     return ImageReplaceOut(path=clean, snapshot=row)
 
 
@@ -1640,7 +1657,7 @@ async def delete_element(project_id: str, body: DeleteIn, request: Request,
             summary = f'Deleted the "{name}" {what}' if name else f"Deleted a {what}"
             if removal.data_file:
                 summary = f'Removed "{name}" from {removal.data_file}' if name else f"Removed an item from {removal.data_file}"
-            row = await _save_hand_edit(db, sandbox, project, summary)
+            row = await _save_hand_edit(db, sandbox, project, summary, removal.files)
     return DeleteOut(status=removal.status, reason=removal.reason, files=removal.files,
                      count=removal.count, data_file=removal.data_file, forget=removal.forget,
                      snapshot=row)
@@ -1676,7 +1693,7 @@ async def edit_text(project_id: str, body: EditsIn, request: Request,
             first = next(r for r in results if r.status == "applied")
             label = " ".join(first.new.split())
             label = label if len(label) <= 60 else label[:57] + "..."
-            row = await _save_hand_edit(db, sandbox, project, f"Edited text: {label}")
+            row = await _save_hand_edit(db, sandbox, project, f"Edited text: {label}", changed)
     return EditsOut(results=results, snapshot=row)
 
 
@@ -1807,6 +1824,7 @@ async def undo_last_turn(project_id: str, request: Request,
     if row is None:
         raise APIError(409, "nothing_to_undo", "There is no earlier version to go back to.")
     project.current_snapshot_id = row.id
+    _rewound(project)
     await db.commit()
     sandbox = manager.peek(project_id)
     if sandbox is not None:
@@ -1847,6 +1865,7 @@ async def restore_snapshot(project_id: str, seq: int, request: Request,
     if row is None:
         raise APIError(404, "not_found", "No such version")
     project.current_snapshot_id = row.id
+    _rewound(project)
     await db.commit()
     sandbox = manager.peek(project_id)
     if sandbox is not None:

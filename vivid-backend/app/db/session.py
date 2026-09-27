@@ -78,6 +78,8 @@ async def init_db() -> None:
             "auth_provider VARCHAR(16) NOT NULL DEFAULT 'none'"))
         await conn.execute(text(
             "ALTER TABLE builder_projects ADD COLUMN IF NOT EXISTS decane_app_id VARCHAR(36)"))
+        await conn.execute(text(
+            "ALTER TABLE builder_projects ADD COLUMN IF NOT EXISTS memory JSONB"))
         # Projects published before the column existed: date them from their
         # latest live publish, so clients keying "is live" on it keep them.
         await conn.execute(text(

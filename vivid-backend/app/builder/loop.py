@@ -18,6 +18,7 @@ import re
 from dataclasses import dataclass, field
 from typing import AsyncIterator, Awaitable, Callable
 
+from app.builder import memory as memory_mod
 from app.builder import context, prompt, routing, screenshots, skills, stream, tools
 from app.builder.sandbox.base import Sandbox
 from app.core.config import settings
@@ -118,6 +119,10 @@ HANDOVER_NOTE = ("The previous model stopped here ({reason}); the files it wrote
 BUILD_NUDGE = ("You have not changed any files yet. Build the app now: write the files with "
                "write_file (several per step), install what you need with run_command, and "
                "only then reply. Do not describe the plan.")
+READ_NUDGE = ("You have spent the last {n} steps only reading. What you read is above and "
+              "still current, and Project memory lists what earlier turns already did. Stop "
+              "looking and make the change now (write_file, edit_file, the backend tools); read "
+              "again only a file you have not seen.")
 BLANK_NUDGE = ("Your reply was empty. Continue the work with tool calls now, or answer the "
                "user in plain sentences.")
 CONTINUE_NUDGE = ("Go on and do it now with the tools; do not describe what you are about "
@@ -257,8 +262,20 @@ class TurnRunner:
                  recipe: str | None = None,
                  maps: str | None = None,
                  chain: "tools.Chain | None" = None,
-                 auth: str | None = None) -> None:
+                 auth: str | None = None,
+                 memory: dict | None = None,
+                 env_values: dict[str, str] | None = None) -> None:
         self.sandbox = sandbox
+        #: What earlier turns left (builder/memory.py): the ledger, shown on
+        #: every step, and an unfinished turn this one may continue. Updated
+        #: as the turn goes; the route stores it when the turn ends.
+        self.memory = memory_mod.load(memory)
+        self.env_values = env_values or {}
+        #: The unfinished turn this one continues, if its message asks to.
+        left = self.memory.get("unfinished")
+        self.continuing = bool(left and memory_mod.continues(user_text))
+        self._last_live: tuple[list[dict], int] | None = None
+        self._seen: dict[str, str] = {}
         self.backend = backend
         #: The app has a Supabase client (keys pasted) but this turn has no
         #: management tools: migrations and functions are written as files.
@@ -350,6 +367,7 @@ class TurnRunner:
                 yield stream.text_delta(text_id, "\n\n" + summary)
                 yield stream.text_end(text_id)
 
+        self._remember(outcome)
         yield stream.data("usage", {
             "model": self.result.model, "steps": self.result.steps,
             "tokens_in": self.result.tokens_in, "tokens_out": self.result.tokens_out,
@@ -357,6 +375,20 @@ class TurnRunner:
             "failed_tools": list(self.result.failed_tools),
         })
         yield stream.finish()
+
+    def _remember(self, outcome: str) -> None:
+        """Keep an unfinished turn for the next one; forget it once the work
+        it was doing is answered."""
+        left = self.memory.get("unfinished")
+        if outcome in OK_REASONS:
+            if self.continuing or not left:
+                self.memory["unfinished"] = None
+            return
+        if self._last_live is None:
+            return
+        messages, start = self._last_live
+        request = left.get("request") if (left and self.continuing) else self.user_text
+        self.memory["unfinished"] = memory_mod.unfinished(outcome, request or "", messages[start:])
 
     async def _closing_summary(self, said: str) -> str | None:
         """Two or three plain sentences on what this turn built or changed,
@@ -415,6 +447,15 @@ class TurnRunner:
 
     async def _attempt_inner(self, endpoint: provider.Endpoint, stage: str) -> AsyncIterator[dict]:
         block = await context.build(self.sandbox, self.recent_files)
+        remembered = memory_mod.ledger_block(self.memory["ledger"], self.env_values)
+        left = self.memory.get("unfinished")
+        if left and not self.continuing:
+            remembered += ("\n" if remembered else "## Project memory\n") + (
+                f"- Unfinished: an earlier request stopped before it was done "
+                f"(\"{left.get('request', '')[:200]}\"). If the person asks to continue it, "
+                "its work so far is shown to you then.")
+        if remembered:
+            block = remembered + "\n\n" + block
         messages = [{"role": "system",
                      "content": prompt.system_prompt(
                          self.spec_md, block, backend=self.backend is not None,
@@ -429,7 +470,14 @@ class TurnRunner:
                          functions=self.backend is None or self.backend.can_functions,
                          chain=self.chain, mobile=self._mobile)}]
         messages += self.history
+        # Where this turn's own work starts in `messages`, for the memory:
+        # the carried turn (if any) and every step after the request.
+        mem_start = len(messages)
+        carried = memory_mod.carry_messages(left) if self.continuing else []
+        messages += carried
         messages.append({"role": "user", "content": self.user_text})
+        # Reads the carried turn already holds are answered short.
+        self._seen = memory_mod.seen_reads(carried)
         if self._carry:
             # A handover: the fallback sees what the primary did and why it
             # stopped, instead of re-reading the project from scratch.
@@ -439,12 +487,16 @@ class TurnRunner:
         base_len = len(messages)
         self._carry = []
         self._live = (messages, base_len)
+        self._last_live = (messages, mem_start)
 
         strikes = 0
         # The turn's stage, not the attempt's: a fallback attempt of a first
         # build is still a first build (budget, review, critique).
         first_build = self.stage == routing.BUILD
         budget = settings.BUILDER_BUILD_MAX_STEPS if first_build else settings.BUILDER_MAX_STEPS
+        if self.continuing:
+            budget = max(budget, settings.BUILDER_CONTINUE_MAX_STEPS)
+        read_streak, read_nudges = 0, 2
         completion_left = settings.BUILDER_COMPLETION_ROUNDS if first_build else 0
         critique_left = settings.BUILDER_CRITIQUE_ROUNDS if self.critique else 0
         # A small edit does not need a screenshot pass; a first build, a
@@ -629,9 +681,28 @@ class TurnRunner:
                     self.result.failed_tools.append(f"{call['name']}{' ' + hint if hint else ''}")
                     retry_call = (call["name"], hint, call["error"])
                     continue
-                outcome = pre.get(call["id"]) or await tools.execute(
-                    call["name"], call["arguments"], self.sandbox, self.backend, self.images,
-                    typecheck_now=False, chain=self.chain)
+                foreign = (memory_mod.foreign_drops(str(call["arguments"].get("sql") or ""),
+                                                    self.memory["ledger"], self.user_text)
+                           if call["name"] == "apply_migration" else [])
+                if foreign:
+                    outcome = tools.Outcome(
+                        f"error: refused: this migration drops or empties {', '.join(foreign)}, "
+                        "which this app did not create. A database can hold the person's other "
+                        "apps, so those tables are not this app's to remove. Leave them, name "
+                        "this app's tables so they do not clash, and if they really must go, ask "
+                        "the person to say so by name.")
+                else:
+                    outcome = pre.get(call["id"]) or await tools.execute(
+                        call["name"], call["arguments"], self.sandbox, self.backend, self.images,
+                        typecheck_now=False, chain=self.chain)
+                memory_mod.record(self.memory["ledger"], call["name"], call["arguments"], outcome.text)
+                if call["name"] == "read_file" and not outcome.text.startswith("error"):
+                    key = memory_mod.read_key(call["arguments"])
+                    digest = memory_mod.digest(outcome.text)
+                    if self._seen.get(key) == digest:
+                        outcome.text = memory_mod.UNCHANGED
+                    else:
+                        self._seen[key] = digest
                 if outcome.touched and outcome.touched not in self.result.touched:
                     self.result.touched.append(outcome.touched)
                 if outcome.touched:
@@ -655,6 +726,15 @@ class TurnRunner:
             for call in calls:
                 messages.append({"role": "tool", "tool_call_id": call["id"],
                                  "name": call["name"], "content": results.get(call["id"], "")})
+            if any(c["name"] in memory_mod.PROGRESS_TOOLS for c in calls) or held:
+                read_streak = 0
+            else:
+                read_streak += 1
+            if read_streak >= settings.BUILDER_READ_STREAK and read_nudges > 0 and retry_call is None:
+                read_nudges -= 1
+                read_streak = 0
+                messages.append({"role": "user", "content": READ_NUDGE.format(
+                    n=settings.BUILDER_READ_STREAK)})
             if retry_call is not None:
                 # A write that never happened poisons every step after it;
                 # insist on the redo before anything else.
