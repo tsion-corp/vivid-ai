@@ -28,6 +28,8 @@ and never ask the user for them.
   the user came from, kept in sessionStorage) once `isConnected` is true.
 
 ## The hooks
+This is all of the kit an app needs: use it as written here, without reading the package's
+type definitions or source.
 - `useSocialAuth()`: `isConnected`, `profile` (`{name?, email?, picture?}`, may be
   absent: email sign-in never has a name), `sessionExpiresAt`, `error`, `clearError()`,
   `signInWithGoogle()`, `googleLoading`, `sendEmailCode(email)`,
