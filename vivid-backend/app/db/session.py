@@ -82,6 +82,11 @@ async def init_db() -> None:
             "ALTER TABLE builder_projects ADD COLUMN IF NOT EXISTS memory JSONB"))
         await conn.execute(text(
             "ALTER TABLE builder_messages ADD COLUMN IF NOT EXISTS user_id VARCHAR(36)"))
+        # builder_invites shipped for a day without its link token.
+        await conn.execute(text(
+            "ALTER TABLE builder_invites ADD COLUMN IF NOT EXISTS token VARCHAR(64)"))
+        await conn.execute(text(
+            "CREATE UNIQUE INDEX IF NOT EXISTS ix_builder_invites_token ON builder_invites (token)"))
         # Projects published before the column existed: date them from their
         # latest live publish, so clients keying "is live" on it keep them.
         await conn.execute(text(
