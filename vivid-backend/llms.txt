@@ -189,6 +189,13 @@ GET    /builder/projects                                                  -> Pro
 GET    /builder/projects/{id}                                             -> Project
 PATCH  /builder/projects/{id}       {name?, spec_md?, fullstack?, recipe?} -> Project
 DELETE /builder/projects/{id}                                             -> 204 (kills sandbox, deletes snapshots and files)
+POST   /builder/projects/{id}/duplicate  {seq?, name?}  -> 201 {project: Project, reset: string[]}
+     A new project of the caller's from a version of this one (the current
+     one without seq): its files, plan and uploads, at version 1. Never its
+     connections or .env: `reset` names what the source had to reconnect
+     (database | payments | sign-in | blockchain | maps key | published site).
+     Any role on the source may copy it. 402 plan_limit as for create; 409
+     nothing_to_copy before the first build; 404 for an unknown seq.
 
 Project:
 {
@@ -211,8 +218,14 @@ Project:
                                   // (shop, booking, restaurant, saas, wallet, nft-drop, ... 40+, files in the backend)
   published_url: string | null,     // set by the first successful publish only; null until then
   published_at: string | null,      // when that publish went live; "is live" = published_at != null
+  role: "owner" | "editor" | "viewer", // the caller's: editors build, hand-edit and publish;
+                                  // viewers read; only the owner deletes, shares and connects services
   created_at, updated_at
 }
+
+Roles: a route a role may not use answers 403 forbidden; a project the
+caller has no part in answers 404. Turns on a shared project use the
+owner's plan and credits, whoever sends them.
 
 `skip_plan: true` creates the project in build mode (for developers who
 know what they want). Non-technical users should always go through plan

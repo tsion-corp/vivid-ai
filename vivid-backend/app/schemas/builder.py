@@ -52,8 +52,24 @@ class ProjectOut(BaseModel):
     turn_started_at: datetime | None = None
     #: The latest desktop screenshot from the critique, a time-limited URL.
     thumbnail_url: str | None = None
+    #: The caller's role: owner | editor (builds, hand-edits, publishes) |
+    #: viewer (reads). Shared projects list with the other two.
+    role: str = "owner"
     created_at: datetime
     updated_at: datetime
+
+
+class DuplicateIn(BaseModel):
+    #: The version to copy; the current one when left out.
+    seq: int | None = Field(default=None, ge=1)
+    name: str | None = Field(default=None, max_length=120)
+
+
+class DuplicateOut(BaseModel):
+    project: ProjectOut
+    #: What the source was connected to that the copy is not, to reconnect:
+    #: database | payments | sign-in | blockchain | maps key | published site.
+    reset: list[str]
 
 
 class MessageOut(BaseModel):

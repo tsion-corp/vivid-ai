@@ -62,7 +62,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.deps import get_current_user, get_db
 from app.builder import (analytics, app_build, assets, billing, blob, chain as chain_mod,
-                         decane_connect, expo, images, jsx_remove, memory, pgdirect, planning, publish, routing,
+                         decane_connect, duplicate, expo, images, jsx_remove, memory, pgdirect, planning, publish, routing,
                          secrets, skills, snapshots, stream, supabase, targets, tools, usage,
                          visual)
 from app.builder.loop import FEED_DONE, OK_REASONS, ModelCall, TurnRunner, turns
@@ -79,7 +79,7 @@ from app.services.wallet import ledger
 from app.services.connectors import tokens as connector_tokens
 from app.db.session import async_session
 from app.schemas.builder import (AnalyticsOut, AppBuildIn, AppBuildOut, AssetOut, BuildAccountOut,
-                                 BuildOptionsOut, CancelOut, ChatIn, DeleteIn, DeleteOut, EditsIn, EditsOut, FileOut,
+                                 BuildOptionsOut, CancelOut, ChatIn, DeleteIn, DeleteOut, DuplicateIn, DuplicateOut, EditsIn, EditsOut, FileOut,
                                  FilesOut, ImageReplaceOut, MessageOut, PreviewOut, ProjectCreate,
                                  ProjectOut, ProjectUpdate, PublishOut, SnapshotOut, SupabaseLinkIn,
                                  TextEditOut, UsageOut)
@@ -148,6 +148,41 @@ async def create_project(body: ProjectCreate, user: User = Depends(get_current_u
     db.add(project)
     await db.commit()
     return project
+
+
+@router.post("/projects/{project_id}/duplicate", response_model=DuplicateOut, status_code=201)
+async def duplicate_project(project_id: str, body: DuplicateIn,
+                            user: User = Depends(get_current_user),
+                            db: AsyncSession = Depends(get_db)):
+    """A new project of the caller's from a version of this one (the current
+    one by default): its files, plan and uploads, none of its connections."""
+    source = await _owned(project_id, user, db, "viewer")
+    if body.seq is not None:
+        snapshot = (await db.execute(select(BuilderSnapshot).where(
+            BuilderSnapshot.project_id == project_id,
+            BuilderSnapshot.seq == body.seq))).scalar_one_or_none()
+        if snapshot is None:
+            raise APIError(404, "not_found", "No such version")
+    else:
+        snapshot = await snapshots.current(db, source)
+        if snapshot is None:
+            raise APIError(409, "nothing_to_copy", "Build the app before copying it.")
+    allowed, account, owned = await plan_gate.can_create_project(db, user.id)
+    if not allowed:
+        raise APIError(402, "plan_limit",
+                       f"The {account.plan.name} plan includes {account.plan.max_apps} apps and you "
+                       f"have {owned}.",
+                       details={"plan": account.plan.id, "max_apps": account.plan.max_apps,
+                                "apps": owned, "options": ["upgrade"]})
+    try:
+        project = await duplicate.copy(db, source, snapshot, user.id, body.name)
+    except blob.BlobError as e:
+        await db.rollback()
+        log.error("duplicating %s failed: %s", project_id, e)
+        raise APIError(503, "storage_unavailable", "The copy could not be made. Try again.")
+    await db.commit()
+    project.role = "owner"
+    return DuplicateOut(project=_present(project), reset=duplicate.reset_of(source))
 
 
 def _require_integration(project: BuilderProject, name: str) -> None:
