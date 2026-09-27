@@ -97,10 +97,14 @@ async def test_dev_server_logs_and_unknown_tool(sandbox):
 
 
 async def test_results_are_truncated(sandbox, monkeypatch):
+    # Reads have their own, larger limit: a file in pieces costs a step each.
     monkeypatch.setattr(settings, "BUILDER_TOOL_RESULT_CHARS", 50)
+    monkeypatch.setattr(settings, "BUILDER_READ_RESULT_CHARS", 200)
     sandbox.files["src/big.ts"] = "x" * 500
     out = await tools.execute("read_file", {"path": "src/big.ts"}, sandbox)
-    assert out.text.startswith("x" * 50 + "\n[truncated: 450 more characters")
+    assert out.text.startswith("x" * 200 + "\n[truncated: 300 more characters")
+    listing = await tools.execute("list_files", {}, sandbox)
+    assert len(listing.text) < 200
 
 
 def test_schemas_are_exactly_the_six():

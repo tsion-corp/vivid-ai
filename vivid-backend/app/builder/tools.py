@@ -16,6 +16,7 @@ from app.builder import chain as chain_mod, targets
 from app.builder.chain import Chain
 from app.builder.images import ImageError, ImageMaker
 from app.builder.supabase import Management, SupabaseError
+from app.builder import memory
 from app.core.config import settings
 
 
@@ -207,6 +208,8 @@ BLOCKED = [
     (re.compile(r"\bnpm\s+run\s+dev\b|\bvite\s*$|\bvite\s+--"), "starting a second dev server"),
     (re.compile(r"(^|[;&|]\s*)cd\s+(/|~|\.\.)"), "leaving the project root"),
     (re.compile(r"\benv\b\s*$|\bprintenv\b|\$\{?E2B|/proc/"), "reading the environment"),
+    (re.compile(r"(^|[\s/'\"(])\.env(\.[a-z]+)?\b"),
+     "the .env values are listed under Project memory in your instructions"),
 ]
 
 _TS_ERROR = re.compile(r"error TS\d+")
@@ -349,7 +352,8 @@ async def execute(name: str, args: dict, sandbox: Sandbox,
         warning = await _expo_go_import_warning(sandbox, outcome.touched)
         if warning:
             outcome.text = f"{outcome.text}\n{warning}"
-    outcome.text = truncate(outcome.text) or "(no output)"
+    limit = settings.BUILDER_READ_RESULT_CHARS if name == "read_file" else None
+    outcome.text = truncate(outcome.text, limit) or "(no output)"
     return outcome
 
 
@@ -567,6 +571,9 @@ _SUPABASE_HANDLERS = {
 # ------------------------------------------------------------- handlers
 async def _read_file(args: dict, sandbox: Sandbox) -> Outcome:
     path = safe_path(str(args.get("path", "")))
+    if path == ".env" or path.startswith(".env."):
+        return Outcome("error: the .env values are listed under Project memory in your "
+                       "instructions; .env is not read or edited.")
     content = await sandbox.read_file(path)
     start, end = args.get("start_line"), args.get("end_line")
     if start or end:
@@ -638,7 +645,10 @@ async def _run_command(args: dict, sandbox: Sandbox) -> Outcome:
     result = await sandbox.run(command, timeout=settings.BUILDER_COMMAND_TIMEOUT)
     head = (f"[timed out after {settings.BUILDER_COMMAND_TIMEOUT}s]" if result.timed_out
             else f"[exit code {result.exit_code}]")
-    return Outcome(f"{head}\n{result.output}".strip())
+    # An install changes package.json: counted as a change, so the turn's
+    # version keeps it and a new sandbox restored from it has the package.
+    installed = result.ok and not result.timed_out and memory.packages_in(command)
+    return Outcome(f"{head}\n{result.output}".strip(), touched="package.json" if installed else None)
 
 
 async def _dev_server_logs(args: dict, sandbox: Sandbox) -> Outcome:

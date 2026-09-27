@@ -331,6 +331,19 @@ class Settings(BaseSettings):
     # turn is handed to FALLBACK_MODEL.
     BUILDER_TYPECHECK_STRIKES: int = 3
     BUILDER_TOOL_RESULT_CHARS: int = 4000
+    # read_file returns more: a file read in 4000-char pieces cost a step per
+    # piece, and each step resends the whole conversation.
+    BUILDER_READ_RESULT_CHARS: int = 16_000
+    # Memory between turns (builder/memory.py). A turn that stops unfinished
+    # hands its tool calls and results to the next, within this many chars
+    # (oldest steps dropped first), each result shortened to the second.
+    BUILDER_MEMORY_CARRY_CHARS: int = 90_000
+    BUILDER_MEMORY_RESULT_CHARS: int = 16_000
+    # Steps for a turn that continues an unfinished one.
+    BUILDER_CONTINUE_MAX_STEPS: int = 35
+    # Consecutive steps that only read (no write, migration, secret...) before
+    # the model is told to stop looking and start; said at most twice a turn.
+    BUILDER_READ_STREAK: int = 6
     BUILDER_TYPECHECK_ERROR_LINES: int = 40
     # Chars of file tree + key files + recently touched files injected into
     # the system prompt each turn.
