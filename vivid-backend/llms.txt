@@ -475,14 +475,20 @@ POST /builder/projects/{id}/edits  {edits: [{old, new, all?}]}  -> {results, sna
 POST /builder/projects/{id}/edits/delete  DeleteIn -> DeleteOut {status, reason, files, count, snapshot}
      Remove an element or a section clicked in the preview. Send what the
      editor's vivid:delete gave you: {tag, id, classes, texts, src, scope:
-     element|section, label}. It is found in the source by its tag and text
-     (or an image's src) and cut exactly; a section that is a whole
-     component (a Hero.tsx) removes the places that render it. The result is
+     element|section, label}. It is found in the source by its text (JSX
+     text, string literals, constants it shows such as {HUB_ADDRESS} or
+     {SITE.phone}, and text passed as props like <FeatureCard title="...">)
+     or an image's src, then resolved to what rendered it: the element with
+     the clicked tag, or the component that renders it (<Card>, <Button>,
+     <FeatureCard>). It is cut exactly; a wrapper left empty (<Reveal>,
+     <Button asChild>) goes with it, and a section that is a whole component
+     (a Hero.tsx) removes the places that render it. The result is
      typechecked: status would_break means nothing changed. Otherwise status
      is applied (saved as a version; POST .../undo puts it back) |
-     not_found (its text comes from data, or it has none) | ambiguous (count
-     elements match) | not_simple (one item of a list built from data, or the
-     whole page) | not_supported (mobile apps, for now). Offer the ones that
+     not_found (its text is computed, or it has none) | ambiguous (count
+     elements match) | not_simple (one item of a list built from data, a part
+     of a component's own layout shared by every use, or the whole page) |
+     not_supported (mobile apps, for now). Offer the ones that
      did not apply as a chat turn ("Remove the section with "Our menu"").
 
 Click-to-edit in the preview. The preview's index.html carries a small

@@ -37,17 +37,21 @@ function walk(dir, found = []) {
     if (e.name === "node_modules" || e.name.startsWith(".")) continue;
     const full = path.join(dir, e.name);
     if (e.isDirectory()) walk(full, found);
-    else if (/\.(tsx|jsx)$/.test(e.name)) found.push(full);
+    else if (/\.(tsx|jsx|ts|js)$/.test(e.name) && !/\.d\.ts$/.test(e.name)) found.push(full);
   }
   return found;
 }
 
 const files = walk(path.join(root, "src"));
-const sources = new Map();
+// All sources, for the constants pages show (contact details, prices);
+// only .tsx/.jsx hold elements to remove.
+const allSources = new Map();
 for (const file of files) {
   const text = fs.readFileSync(file, "utf8");
-  sources.set(file, { text, sf: ts.createSourceFile(file, text, ts.ScriptTarget.Latest, true, ts.ScriptKind.TSX) });
+  const kind = /\.(tsx|jsx)$/.test(file) ? ts.ScriptKind.TSX : ts.ScriptKind.TS;
+  allSources.set(file, { text, sf: ts.createSourceFile(file, text, ts.ScriptTarget.Latest, true, kind) });
 }
+const sources = new Map([...allSources].filter(([f]) => /\.(tsx|jsx)$/.test(f)));
 
 // ------------------------------------------------------------------- text
 const ENTITIES = {
@@ -66,10 +70,57 @@ function norm(s) {
     .toLowerCase();
 }
 
-/** Every piece of literal text under a node: JSX text and string literals. */
+// ------------------------------------------------------------- constants
+// Text a page shows from a constant (`{HUB_ADDRESS}`, `{SITE.phone}`) is
+// part of what the element shows, so constants are resolved by name:
+// `const X = "..."` and string fields of `const X = { a: "...", b: { c } }`.
+const constants = new Map();
+function literal(e) {
+  while (e && (ts.isAsExpression(e) || ts.isSatisfiesExpression?.(e) || ts.isParenthesizedExpression(e))) e = e.expression;
+  return e;
+}
+function collect(name, init) {
+  const e = literal(init);
+  if (!e) return;
+  if (ts.isStringLiteral(e) || ts.isNoSubstitutionTemplateLiteral(e)) {
+    const list = constants.get(name) || [];
+    list.push(e.text);
+    constants.set(name, list);
+  } else if (ts.isObjectLiteralExpression(e)) {
+    for (const prop of e.properties) {
+      if (ts.isPropertyAssignment(prop) && (ts.isIdentifier(prop.name) || ts.isStringLiteral(prop.name))) {
+        collect(`${name}.${prop.name.text}`, prop.initializer);
+      }
+    }
+  }
+}
+for (const [, { sf }] of allSources) {
+  for (const st of sf.statements) {
+    if (!ts.isVariableStatement(st)) continue;
+    for (const d of st.declarationList.declarations) {
+      if (ts.isIdentifier(d.name) && d.initializer) collect(d.name.text, d.initializer);
+    }
+  }
+}
+function constantText(e) {
+  if (!(ts.isIdentifier(e) || ts.isPropertyAccessExpression(e))) return null;
+  const values = constants.get(e.getText().replace(/\?\./g, "."));
+  return values && values.length ? values.join(" ") : null;
+}
+
+/** Every piece of text under a node: JSX text, string literals, and the
+ *  constants it shows by name. */
 function textOf(node) {
   const parts = [];
   const visit = (n) => {
+    if (ts.isJsxExpression(n) && n.expression) {
+      const known = constantText(n.expression);
+      if (known !== null) { parts.push(known); return; }
+    }
+    if (ts.isTemplateSpan(n)) {
+      const known = constantText(n.expression);
+      if (known !== null) parts.push(known);
+    }
     if (ts.isJsxText(n)) parts.push(n.text);
     else if (ts.isStringLiteral(n) || ts.isNoSubstitutionTemplateLiteral(n)) parts.push(n.text);
     else if (ts.isTemplateExpression(n)) {
@@ -110,6 +161,11 @@ function jsxNodes(sf, pred) {
   return found;
 }
 
+const skipParens = (n) => {
+  while (n.parent && ts.isParenthesizedExpression(n.parent)) n = n.parent;
+  return n;
+};
+
 // ----------------------------------------------------------------- match
 const want = {
   tag: String(request.tag || "").toLowerCase(),
@@ -126,9 +182,48 @@ function srcMatches(value) {
   return a === want.src || want.src.endsWith(a) || a.endsWith(want.src);
 }
 
-const candidates = [];
+const isComponent = (tag) => !!tag && (/^[A-Z]/.test(tag) || tag.includes("."));
+
+/** The JSX element a node sits in as a child (not across a function). */
+function parentJsx(n) {
+  for (let p = n.parent; p; p = p.parent) {
+    if (ts.isJsxElement(p)) return p;
+    if (ts.isFunctionLike(p) || ts.isSourceFile(p)) return null;
+  }
+  return null;
+}
+
+/** The returned root tag of a component defined in the project, if any. */
+function rootTagOf(name) {
+  for (const [, { sf }] of sources) {
+    let found = null;
+    const visit = (n) => {
+      if (found) return;
+      if ((ts.isFunctionDeclaration(n) && n.name?.text === name) ||
+          (ts.isVariableDeclaration(n) && ts.isIdentifier(n.name) && n.name.text === name && n.initializer)) {
+        const body = ts.isFunctionDeclaration(n) ? n : n.initializer;
+        const inner = (b) => {
+          if (found) return;
+          if ((ts.isJsxElement(b) || ts.isJsxSelfClosingElement(b)) && componentRootOf(b)) { found = tagOf(b); return; }
+          ts.forEachChild(b, inner);
+        };
+        inner(body);
+        return;
+      }
+      ts.forEachChild(n, visit);
+    };
+    visit(sf);
+    if (found) return found;
+  }
+  return null;
+}
+
+// Every element is scored by how much of what the page showed it holds:
+// its text (literals, constants, and text passed as props to components
+// inside it), or an image's src.
+const scored = [];
 for (const [file, { sf }] of sources) {
-  for (const node of jsxNodes(sf, (n) => tagOf(n) === want.tag)) {
+  for (const node of jsxNodes(sf, () => true)) {
     let score = 0;
     if (want.texts.length) {
       const text = textOf(node);
@@ -136,35 +231,64 @@ for (const [file, { sf }] of sources) {
     } else if (want.src) {
       score = srcMatches(attr(node, "src")) ? 1 : 0;
     }
-    if (!score) continue;
-    const id = attr(node, "id");
-    if (want.id && id && id !== want.id) continue;
-    const cls = (attr(node, "className") || "").split(/\s+/);
-    const overlap = want.classes.filter((c) => cls.includes(c)).length + (want.id && id === want.id ? 5 : 0);
-    candidates.push({ file, node, score, overlap, size: node.end - node.getStart() });
+    if (score) scored.push({ file, node, score });
   }
 }
-if (!candidates.length) out({ status: "not_found", reason: "no element with that text in the code" });
+if (!scored.length) out({ status: "not_found", reason: "no element with that text in the code" });
 
-// The best text match; among those, drop any that contain another (an outer
-// element of the same tag holds the same text), then prefer class overlap.
-const best = Math.max(...candidates.map((c) => c.score));
-let pool = candidates.filter((c) => c.score === best);
-pool = pool.filter(
-  (c) => !pool.some((o) => o !== c && o.file === c.file && o.node.getStart() >= c.node.getStart() && o.node.end <= c.node.end),
+// The innermost elements holding the most of it...
+const best = Math.max(...scored.map((c) => c.score));
+let inner = scored.filter((c) => c.score === best);
+inner = inner.filter(
+  (c) => !inner.some((o) => o !== c && o.file === c.file && o.node.getStart() >= c.node.getStart() && o.node.end <= c.node.end),
 );
+
+// ...each resolved to what rendered the clicked element: itself when it has
+// the clicked tag, a component (a <Card> renders the div, a <FeatureCard
+// title="..."> holds its own text), or else the nearest enclosing one.
+const resolved = new Map();
+for (const c of inner) {
+  let n = c.node;
+  while (n && tagOf(n) !== want.tag && !isComponent(tagOf(n))) n = parentJsx(n);
+  if (!n) continue;
+  if (isComponent(tagOf(n)) && tagOf(n) !== want.tag) {
+    // A part inside a component that renders it from props (clicking the
+    // <p> of a <FeatureCard>) is the component's own layout, not this use.
+    const root = rootTagOf(tagOf(n));
+    if (root && root !== want.tag && !isComponent(root)) continue;
+  }
+  resolved.set(`${c.file}:${n.getStart()}`, { file: c.file, node: n });
+}
+let pool = [...resolved.values()];
+if (!pool.length) out({ status: "not_simple", reason: "part of a component used in several places" });
 if (pool.length > 1) {
-  const top = Math.max(...pool.map((c) => c.overlap));
-  pool = pool.filter((c) => c.overlap === top);
+  const overlapOf = (c) => {
+    const id = attr(c.node, "id");
+    const cls = (attr(c.node, "className") || "").split(/\s+/);
+    return want.classes.filter((k) => cls.includes(k)).length + (want.id && id === want.id ? 5 : 0);
+  };
+  const top = Math.max(...pool.map(overlapOf));
+  pool = pool.filter((c) => overlapOf(c) === top);
 }
 if (pool.length > 1) out({ status: "ambiguous", reason: `${pool.length} elements match`, count: pool.length });
-const target = pool[0];
+const picked = pool[0];
+
+/** A wrapper component left holding nothing (<Reveal>, <Button asChild>)
+ *  goes with its only child. */
+function withWrappers(node) {
+  let n = node;
+  for (;;) {
+    const top = skipParens(n);
+    const p = top.parent;
+    if (!p || !ts.isJsxElement(p) || !isComponent(tagOf(p))) return n;
+    const others = p.children.filter((ch) => ch !== top && !(ts.isJsxText(ch) && !ch.text.trim()));
+    if (others.length) return n;
+    n = p;
+  }
+}
+const target = { file: picked.file, node: withWrappers(picked.node) };
 
 // ---------------------------------------------------------------- remove
-const skipParens = (n) => {
-  while (n.parent && ts.isParenthesizedExpression(n.parent)) n = n.parent;
-  return n;
-};
 
 /** The enclosing function's name when `node` is its whole returned JSX. */
 function componentRootOf(node) {

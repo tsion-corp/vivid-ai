@@ -219,3 +219,89 @@ def test_delete_route(client, fake_manager, fake_blob, monkeypatch):  # noqa: F8
     r = client.post(f"/v1/builder/projects/{pid}/edits/delete", json={"tag": "li", "texts": ["Jollof"]})
     assert r.json()["status"] == "not_simple" and r.json()["snapshot"] is None
     assert client.post(f"/v1/builder/projects/{pid}/edits/delete", json={"tag": "<script>"}).status_code == 422
+
+
+CONTACT = '''export const HUB_ADDRESS = "14 Adeola Odeku Street, Victoria Island, Lagos";
+export const SITE = { phone: "0803 123 4567" } as const;
+'''
+CARD_UI = '''export function Card({ className, ...p }: any) { return <div className={"rounded-xl " + (className ?? "")} {...p} />; }
+export function CardTitle(p: any) { return <div {...p} />; }
+'''
+FEATURE = '''export function FeatureCard({ title, body }: { title: string; body: string }) {
+  return (
+    <div className="feature">
+      <h3>{title}</h3>
+      <p>{body}</p>
+    </div>
+  );
+}
+'''
+PAGE = '''import { HUB_ADDRESS, SITE } from "../lib/contact";
+import { FeatureCard } from "../components/FeatureCard";
+import { Card, CardTitle } from "../components/ui/card";
+import { Button } from "../components/ui/button";
+import { Reveal } from "../components/Reveal";
+export function Page() {
+  return (
+    <main>
+      <Reveal delay={0.1}>
+        <div className="rounded-2xl bg-card p-6">
+          <h3>Dispatch desk</h3>
+          <dl>
+            <dt>Address</dt>
+            <dd className="text-muted-foreground">{HUB_ADDRESS}</dd>
+          </dl>
+          <p>Call {SITE.phone}</p>
+        </div>
+      </Reveal>
+      <div className="grid">
+        <FeatureCard title="Same-day delivery" body="Order by noon." />
+        <FeatureCard title="Live tracking" body="Watch your rider." />
+        <Card className="p-6"><CardTitle>Cash on delivery</CardTitle></Card>
+      </div>
+      <Button asChild><a href="/track">Track a parcel</a></Button>
+    </main>
+  );
+}
+'''
+
+
+@pytest.fixture
+def site(project):
+    (project / "src/lib").mkdir()
+    (project / "src/pages").mkdir()
+    (project / "src/components/ui").mkdir()
+    (project / "src/lib/contact.ts").write_text(CONTACT)
+    (project / "src/components/ui/card.tsx").write_text(CARD_UI)
+    (project / "src/components/FeatureCard.tsx").write_text(FEATURE)
+    (project / "src/pages/Page.tsx").write_text(PAGE)
+    return project
+
+
+@needs_node
+def test_text_from_constants_props_and_components_is_found(site):
+    """What generated sites do: contact details in a constants file, text
+    passed to a card component as props, shadcn Cards, Button asChild."""
+    dd = run(site, tag="dd", texts=["14 Adeola Odeku Street, Victoria Island, Lagos"])
+    assert dd["status"] == "applied" and "{HUB_ADDRESS}" not in dd["files"]["src/pages/Page.tsx"]
+    phone = run(site, tag="p", texts=["Call 0803 123 4567"])
+    assert phone["status"] == "applied" and "SITE.phone" not in phone["files"]["src/pages/Page.tsx"]
+
+    feature = run(site, tag="div", classes=["feature"], texts=["Live tracking", "Watch your rider."])
+    page = feature["files"]["src/pages/Page.tsx"]
+    assert feature["status"] == "applied" and 'title="Live tracking"' not in page and 'title="Same-day delivery"' in page
+    # The <p> inside a FeatureCard is that component's own layout: not this use's to cut.
+    assert run(site, tag="p", texts=["Watch your rider."])["status"] == "not_simple"
+
+    card = run(site, tag="div", classes=["rounded-xl", "p-6"], texts=["Cash on delivery"])
+    assert card["status"] == "applied" and "Cash on delivery" not in card["files"]["src/pages/Page.tsx"]
+
+
+@needs_node
+def test_a_wrapper_left_empty_goes_with_its_only_child(site):
+    desk = run(site, tag="div", classes=["rounded-2xl", "bg-card", "p-6"],
+               texts=["Dispatch desk", "Address", "14 Adeola Odeku Street, Victoria Island, Lagos"])
+    page = desk["files"]["src/pages/Page.tsx"]
+    assert desk["status"] == "applied" and "<Reveal" not in page and "Dispatch desk" not in page
+    link = run(site, tag="a", texts=["Track a parcel"])
+    assert link["status"] == "applied" and "<Button asChild>" not in link["files"]["src/pages/Page.tsx"]
