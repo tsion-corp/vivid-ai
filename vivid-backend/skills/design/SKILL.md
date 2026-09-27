@@ -145,7 +145,9 @@ Even a dashboard needs these (the motion skill adds more for pages that sell):
 
 ## Navigation
 - Header: logo left, up to five links, one primary action right. On phones the links
-  collapse into a menu button (use the dropdown-menu component); the primary action stays.
+  collapse into a menu button that opens the full-height menu sheet in "The phone menu"
+  below (big links, the current page marked, the primary action at the bottom), never a
+  dropdown; the primary action also stays in the header when it fits.
 - Signed in, the header's right side is an account menu (the dropdown-menu component,
   trigger = avatar initial or name, `cursor-pointer`): My orders, Account, and Sign out,
   on desktop and on phones alike. Sign out must be reachable in two taps from any page,

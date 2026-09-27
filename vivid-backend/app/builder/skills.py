@@ -109,7 +109,8 @@ def design_block(spec_md: str | None, user_text: str = "", recipe: str | None = 
         text = _read(f"design/references/recipes/{recipe}.md")
         if text:
             parts.append(text)
-    for ref in ("design/references/palettes.md", "design/references/fonts.md"):
+    for ref in ("design/references/palettes.md", "design/references/fonts.md",
+                "design/references/mobile-menu.md"):
         text = _read(ref)
         if text:
             parts.append(text)
