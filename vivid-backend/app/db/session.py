@@ -88,6 +88,10 @@ async def init_db() -> None:
             "ALTER TABLE builder_publishes ADD COLUMN IF NOT EXISTS artifact_key VARCHAR(512)"))
         await conn.execute(text(
             "ALTER TABLE builder_projects ADD COLUMN IF NOT EXISTS seo JSONB"))
+        await conn.execute(text(
+            "ALTER TABLE builder_projects ADD COLUMN IF NOT EXISTS forms_email VARCHAR(320)"))
+        await conn.execute(text(
+            "ALTER TABLE builder_projects ADD COLUMN IF NOT EXISTS forms_enabled BOOLEAN NOT NULL DEFAULT TRUE"))
         # builder_invites shipped for a day without its link token.
         await conn.execute(text(
             "ALTER TABLE builder_invites ADD COLUMN IF NOT EXISTS token VARCHAR(64)"))

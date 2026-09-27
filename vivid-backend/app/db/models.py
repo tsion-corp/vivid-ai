@@ -331,6 +331,10 @@ class BuilderProject(Base):
     #: How the published site presents itself to search and link previews
     #: ({title, description, image, favicon, noindex}); applied at publish.
     seo: Mapped[dict | None] = mapped_column(JSONB, default=None)
+    #: Form submissions from the app (routes/forms.py) are emailed here, or
+    #: to the owner's own address when empty; off stores nothing.
+    forms_email: Mapped[str | None] = mapped_column(String(320), default=None)
+    forms_enabled: Mapped[bool] = mapped_column(Boolean, default=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_now)
     updated_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), default=_now, onupdate=_now)
@@ -422,6 +426,22 @@ class BuilderShare(Base):
     token: Mapped[str] = mapped_column(String(64), unique=True, index=True)
     created_by: Mapped[str | None] = mapped_column(String(36), default=None)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_now)
+
+
+class BuilderFormSubmission(Base):
+    """What someone sent through a form on a site Vivid built (contact,
+    booking, quote...), kept for the owner and emailed to them."""
+    __tablename__ = "builder_form_submissions"
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=_uuid)
+    project_id: Mapped[str] = mapped_column(
+        ForeignKey("builder_projects.id", ondelete="CASCADE"), index=True)
+    form: Mapped[str] = mapped_column(String(64), default="contact")
+    fields: Mapped[dict] = mapped_column(JSONB, default=dict)
+    #: Sent from the builder's preview (a test), not the published site.
+    test: Mapped[bool] = mapped_column(Boolean, default=False)
+    emailed: Mapped[bool] = mapped_column(Boolean, default=False)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_now, index=True)
 
 
 class BuilderSecret(Base):

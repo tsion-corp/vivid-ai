@@ -442,3 +442,30 @@ class UserSecretSaved(UserSecretOut):
     #: app (in .env) | backend (set on the linked Supabase project) |
     #: stored (kept; set on the backend when one is linked)
     where: str
+
+
+class FormsIn(BaseModel):
+    enabled: bool = True
+    #: Where submissions are emailed; empty = the owner's own address.
+    email: str | None = Field(default=None, max_length=320)
+
+
+class FormsOut(BaseModel):
+    enabled: bool
+    email: str | None
+    #: The owner's address, used when `email` is empty.
+    default_email: str | None
+    #: Whether this server sends email at all; submissions are kept either way.
+    email_ready: bool
+
+
+class FormSubmissionOut(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
+    id: str
+    form: str
+    fields: dict
+    #: Sent from the builder's preview.
+    test: bool
+    emailed: bool
+    created_at: datetime

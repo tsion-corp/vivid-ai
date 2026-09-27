@@ -184,6 +184,23 @@ def maps_block(provider: str | None) -> str:
     return "## Maps skill\n" + text if text else ""
 
 
+_FORM_WORDS = re.compile(r"\b(contact|book(ing)?|reserv\w*|quote|enquir\w*|inquir\w*|newsletter|"
+                         r"subscribe|sign[- ]?up form|form|get in touch|message us|rsvp|appointment)\b", re.I)
+
+
+def forms_block(spec_md: str | None, user_text: str, backend: bool) -> str:
+    """The forms skill, for a website that has (or is asked for) a form
+    reaching the owner. With a backend the app may keep the data itself,
+    so it is offered only when the request or spec talks about forms."""
+    wanted = _FORM_WORDS.search(f"{spec_md or ''}\n{user_text}")
+    if backend and not wanted:
+        return ""
+    if not backend and spec_md is not None and not wanted:
+        return ""
+    text = _read("forms/SKILL.md")
+    return "## Forms skill\n" + text if text else ""
+
+
 def auth_block(provider: str | None) -> str:
     """The auth skill, when the app signs its users in with Decane."""
     if provider != "decane":
@@ -255,7 +272,7 @@ def ui_block(spec_md: str | None, user_text: str = "",
     blocks = (design_block(spec_md, user_text, recipe), copy_block(),
               motion_block(recipe, user_text),
               fullstack_block(backend), auth_block(auth), payments_block(payments),
-              maps_block(maps), web3_block(chain))
+              maps_block(maps), forms_block(spec_md, user_text, backend), web3_block(chain))
     return "\n\n".join(b for b in blocks if b)
 
 

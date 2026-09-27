@@ -47,6 +47,8 @@ One turn per project at a time (409 otherwise). The stream is the contract
 for any client: see docs/builder.md.
 """
 import asyncio
+import csv
+import io
 import json
 import pathlib
 import re
@@ -73,7 +75,7 @@ from app.builder.sandbox.base import PathError, SandboxError, safe_path
 from app.builder.sandbox.manager import manager
 from app.core.config import settings
 from app.core.errors import APIError
-from app.db.models import (BuilderAppBuild, BuilderAsset, BuilderMember, BuilderMessage, BuilderShare, BuilderProject, BuilderPublish, BuilderSnapshot, Connector, User, VividPayCheckout, VividPayProject)
+from app.db.models import (BuilderAppBuild, BuilderAsset, BuilderFormSubmission, BuilderMember, BuilderMessage, BuilderShare, BuilderProject, BuilderPublish, BuilderSnapshot, Connector, User, VividPayCheckout, VividPayProject)
 from app.services.connectors import supabase as supabase_connector
 from app.services.plans import gate as plan_gate
 from app.services.plans import usage as usage_svc
@@ -83,10 +85,11 @@ from app.db.session import async_session
 from app.schemas.builder import (AnalyticsOut, AppBuildIn, AppBuildOut, AssetOut, BuildAccountOut,
                                  BuildOptionsOut, CancelOut, ChatIn, DeleteIn, DeleteOut, DuplicateIn, DuplicateOut, EditsIn, EditsOut, FileOut,
                                  FilesOut, ImageReplaceOut, MessageOut, PreviewOut, ProjectCreate, SeoIn, SeoOut, SeoPage, ShareOut,
-                                 UserSecretIn, UserSecretOut, UserSecretSaved,
+                                 UserSecretIn, UserSecretOut, UserSecretSaved, FormsIn, FormsOut,
+                                 FormSubmissionOut,
                                  ProjectOut, ProjectUpdate, PublishOut, SnapshotOut, SupabaseLinkIn,
                                  TextEditOut, UsageOut)
-from app.services import push, rate_limit
+from app.services import mail, push, rate_limit
 from app.services.vividpay import VividPayError, key_hash, new_key
 from app.services.vividpay import payouts as vp_payouts
 from app.services.models_gateway import provider
@@ -684,6 +687,9 @@ async def _env_for(project: BuilderProject, db: AsyncSession,
             env["VITE_GOOGLE_MAPS_KEY"] = key
     if project.chain in chain_mod.CHAINS:
         env.update(chain_mod.env_for(chain_mod.CHAINS[project.chain], project.deployer_address))
+    if not targets.of(project).is_mobile:
+        # Forms on the site deliver to the owner (routes/forms.py).
+        env["VITE_VIVID_FORMS_URL"] = f"{settings.PUBLIC_BASE_URL.rstrip('/')}/v1/forms/{project.id}"
     for item in await secrets.user_secrets(db, project.id):
         # The person marked these as fine for the browser.
         if item.public:
@@ -787,6 +793,73 @@ async def link_supabase(project_id: str, body: SupabaseLinkIn, request: Request,
         await _sync_env(sandbox, _prefixed({"VITE_SUPABASE_URL": url, "VITE_SUPABASE_ANON_KEY": anon},
                                            targets.of(project)))
     return project
+
+
+# ----------------------------------------------------------------- forms
+async def _forms_out(db: AsyncSession, project: BuilderProject) -> FormsOut:
+    owner = await db.get(User, project.owner_id)
+    return FormsOut(enabled=project.forms_enabled, email=project.forms_email,
+                    default_email=owner.profile_email if owner else None,
+                    email_ready=mail.configured())
+
+
+@router.get("/projects/{project_id}/forms", response_model=FormsOut)
+async def get_forms(project_id: str, user: User = Depends(get_current_user),
+                    db: AsyncSession = Depends(get_db)):
+    project = await _owned(project_id, user, db, "viewer")
+    return await _forms_out(db, project)
+
+
+@router.put("/projects/{project_id}/forms", response_model=FormsOut)
+async def put_forms(project_id: str, body: FormsIn, user: User = Depends(get_current_user),
+                    db: AsyncSession = Depends(get_db)):
+    """Where the site's forms deliver, and whether they accept anything."""
+    project = await _owned(project_id, user, db, "owner")
+    email = (body.email or "").strip().lower() or None
+    if email and not mail.valid_address(email):
+        raise APIError(400, "bad_email", "That doesn't look like an email address.")
+    project.forms_enabled, project.forms_email = body.enabled, email
+    await db.commit()
+    return await _forms_out(db, project)
+
+
+async def _submissions(db: AsyncSession, project_id: str, limit: int, before: datetime | None):
+    q = (select(BuilderFormSubmission).where(BuilderFormSubmission.project_id == project_id)
+         .order_by(BuilderFormSubmission.created_at.desc()).limit(limit))
+    if before is not None:
+        q = q.where(BuilderFormSubmission.created_at < before)
+    return list((await db.execute(q)).scalars())
+
+
+@router.get("/projects/{project_id}/forms/submissions", response_model=list[FormSubmissionOut])
+async def list_submissions(project_id: str, limit: int = 50, before: datetime | None = None,
+                           user: User = Depends(get_current_user), db: AsyncSession = Depends(get_db)):
+    """Newest first; page with `before` = the last row's created_at."""
+    await _owned(project_id, user, db, "owner")
+    return await _submissions(db, project_id, max(1, min(limit, 200)), before)
+
+
+@router.get("/projects/{project_id}/forms/submissions.csv")
+async def submissions_csv(project_id: str, user: User = Depends(get_current_user),
+                          db: AsyncSession = Depends(get_db)):
+    """Every submission (up to 5,000), one column per field."""
+    await _owned(project_id, user, db, "owner")
+    rows = await _submissions(db, project_id, 5000, None)
+    columns = []
+    for row in rows:
+        for key in row.fields:
+            if key not in columns:
+                columns.append(key)
+    out = io.StringIO()
+    writer = csv.writer(out)
+    writer.writerow(["sent_at", "form", "test", *columns])
+    for row in rows:
+        # A leading = + - @ would run as a formula in a spreadsheet.
+        cells = [str(row.fields.get(c, "")) for c in columns]
+        writer.writerow([row.created_at.isoformat(), row.form, "yes" if row.test else "",
+                         *[("'" + c) if c[:1] in "=+-@" else c for c in cells]])
+    return Response(out.getvalue(), media_type="text/csv",
+                    headers={"Content-Disposition": 'attachment; filename="form-submissions.csv"'})
 
 
 # --------------------------------------------------------------- secrets

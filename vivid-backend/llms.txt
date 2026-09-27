@@ -44,6 +44,8 @@ Publish     POST /builder/projects/{id}/publish · GET .../publishes · GET .../
             POST .../publishes/{publish_id}/rollback · POST /builder/projects/{id}/unpublish
 SEO         GET/PUT /builder/projects/{id}/seo
 Secrets     GET /builder/projects/{id}/secrets · PUT/DELETE /builder/projects/{id}/secrets/{NAME}
+Forms       GET/PUT /builder/projects/{id}/forms · GET .../forms/submissions · GET .../forms/submissions.csv
+            public (the built site posts): POST /forms/{project_id}
 Usage       GET /builder/projects/{id}/usage · GET /builder/projects/{id}/analytics?days=30
 Plans       GET /plans · GET/POST/DELETE /me/plan (MyPlanOut)
 Wallet      GET /wallet?currency=NGN · GET /wallet/entries · GET /wallet/rates · POST /wallet/bank-account
@@ -740,6 +742,24 @@ POST /builder/projects/{id}/unpublish              -> Publish (202, kind "unpubl
      not_published if it never was.
 kind: publish | rollback | unpublish. A site keeps its address across
 renames: every publish goes to the address it already has.
+
+### Forms on the site (contact, booking, quote, newsletter)
+
+Websites get VITE_VIVID_FORMS_URL in their .env; the agent's forms post there
+(the forms skill). Each submission is kept and emailed to the owner.
+POST /forms/{project_id}  (the built site; no auth)  {form?: "contact", ...fields}
+     JSON or form-encoded, 10 KB max. Accepted from the published site, and
+     from the builder preview marked as a test; 403 wrong_origin otherwise.
+     `_gotcha` is a honeypot (filled = dropped, still 200). 429 per address
+     per minute, 200 a day per project; 404 when forms are off.
+GET  /builder/projects/{id}/forms -> {enabled, email, default_email, email_ready}
+PUT  /builder/projects/{id}/forms {enabled, email?} -> same           owner
+     email: where to deliver (empty = the owner's own address,
+     default_email). email_ready false: this server sends no email yet, and
+     submissions are only kept.
+GET  /builder/projects/{id}/forms/submissions?limit=50&before=<created_at> ->
+     [{id, form, fields, test, emailed, created_at}] newest first       owner
+GET  /builder/projects/{id}/forms/submissions.csv -> text/csv          owner
 
 ### Secrets (the owner's own keys for the app)
 

@@ -152,6 +152,11 @@ def client(maker, monkeypatch, fake_manager):
         yield tc
 
 
+def app_env(env: str) -> str:
+    """A project's .env without the forms URL every website gets."""
+    return "".join(line + "\n" for line in env.splitlines() if not line.startswith("VITE_VIVID_FORMS_URL="))
+
+
 def _incr(redis):
     async def incr(key):
         redis.strings[key] = str(int(redis.strings.get(key, "0")) + 1)
@@ -289,7 +294,7 @@ def test_preview_and_files(client, fake_manager):
     assert r.json() == {"url": "http://fake:5173", "sandbox_id": "fake_1", "driver": "fake",
                         "target": "web", "device_url": None}
     assert client.get(f"/v1/builder/projects/{pid}/files").json() == {
-        "files": ["package.json", "src/App.tsx", "src/main.tsx"]}
+        "files": [".env", "package.json", "src/App.tsx", "src/main.tsx"]}                  # the forms URL
     assert client.get(f"/v1/builder/projects/{pid}/files/src/App.tsx").json() == {
         "path": "src/App.tsx", "content": "x", "binary": False, "content_base64": None,
         "content_type": "text/plain"}
@@ -508,7 +513,7 @@ def test_supabase_link_env_and_tools(client, maker, monkeypatch, fake_manager):
     assert ("keys", "refone") in StubAPI.calls
 
     client.post(f"/v1/builder/projects/{pid}/chat", json={"text": "build"})
-    assert fake_manager.sandbox.files[".env"] == (
+    assert app_env(fake_manager.sandbox.files[".env"]) == (
         "VITE_SUPABASE_URL=https://refone.supabase.co\nVITE_SUPABASE_ANON_KEY=sb_publishable_x\n")
     assert "apply_migration" in seen[-1][0] and "Backend: Supabase" in seen[-1][1]
 
@@ -823,7 +828,7 @@ def test_paystack_connector_and_payments(client, maker, monkeypatch, fake_manage
     r = client.post(f"/v1/builder/projects/{pid}/payments")
     assert r.status_code == 200 and r.json()["payments_provider"] == "paystack"
     client.post(f"/v1/builder/projects/{pid}/chat", json={"text": "add checkout"})
-    assert fake_manager.sandbox.files[".env"] == "VITE_PAYSTACK_PUBLIC_KEY=pk_test_" + "b" * 30 + "\n"
+    assert app_env(fake_manager.sandbox.files[".env"]) == "VITE_PAYSTACK_PUBLIC_KEY=pk_test_" + "b" * 30 + "\n"
     assert "## Payments skill" in seen[-1] and "kobo" in seen[-1]
 
     # With a Supabase backend, the secret key goes to the edge-function secrets.
@@ -911,7 +916,7 @@ def test_google_maps_connector_and_project_maps(client, monkeypatch, fake_manage
     r = client.post(f"/v1/builder/projects/{pid}/maps")
     assert r.status_code == 200 and r.json()["maps_provider"] == "google"
     client.post(f"/v1/builder/projects/{pid}/chat", json={"text": "add a map"})
-    assert fake_manager.sandbox.files[".env"] == "VITE_GOOGLE_MAPS_KEY=AIza" + "x" * 35 + "\n"
+    assert app_env(fake_manager.sandbox.files[".env"]) == "VITE_GOOGLE_MAPS_KEY=AIza" + "x" * 35 + "\n"
     assert "## Maps skill" in seen[-1] and "PlaceAutocomplete" in seen[-1]
     r = client.delete(f"/v1/builder/projects/{pid}/maps")
     assert r.json()["maps_provider"] == "none"

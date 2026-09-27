@@ -666,6 +666,11 @@ class Settings(BaseSettings):
     BUILDER_INVITE_DAYS: int = 14
     BUILDER_MAX_MEMBERS: int = 20
 
+    # Forms on the sites people build (routes/forms.py): submissions per
+    # minute from one address to one project, and per project per day.
+    BUILDER_FORMS_PER_MINUTE: int = 5
+    BUILDER_FORMS_PER_DAY: int = 200
+
     # Outgoing email (app/services/mail.py): invites, gifts, and the forms
     # generated sites send. Any SMTP provider; empty host = no email is sent
     # (forms still store what they receive).
