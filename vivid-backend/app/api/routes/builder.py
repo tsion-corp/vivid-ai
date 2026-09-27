@@ -63,7 +63,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.deps import get_current_user, get_db
 from app.builder import (analytics, app_build, assets, billing, blob, chain as chain_mod,
-                         decane_connect, duplicate, expo, images, jsx_remove, memory, pgdirect, planning, publish, routing,
+                         decane_connect, duplicate, expo, images, jsx_remove, memory, seo as seo_mod, pgdirect, planning, publish, routing,
                          secrets, skills, snapshots, stream, supabase, targets, tools, usage,
                          visual)
 from app.builder.loop import FEED_DONE, OK_REASONS, ModelCall, TurnRunner, turns
@@ -81,7 +81,7 @@ from app.services.connectors import tokens as connector_tokens
 from app.db.session import async_session
 from app.schemas.builder import (AnalyticsOut, AppBuildIn, AppBuildOut, AssetOut, BuildAccountOut,
                                  BuildOptionsOut, CancelOut, ChatIn, DeleteIn, DeleteOut, DuplicateIn, DuplicateOut, EditsIn, EditsOut, FileOut,
-                                 FilesOut, ImageReplaceOut, MessageOut, PreviewOut, ProjectCreate, ShareOut,
+                                 FilesOut, ImageReplaceOut, MessageOut, PreviewOut, ProjectCreate, SeoIn, SeoOut, SeoPage, ShareOut,
                                  ProjectOut, ProjectUpdate, PublishOut, SnapshotOut, SupabaseLinkIn,
                                  TextEditOut, UsageOut)
 from app.services import push, rate_limit
@@ -1429,8 +1429,11 @@ async def start_publish(project_id: str, request: Request,
 async def _run_publish(project_id: str, publish_id: str, alias: str, redis) -> None:
     """Build the sandbox's files and deploy them, keeping the build."""
     async def build():
+        async with async_session() as db:
+            project = await db.get(BuilderProject, project_id)
+            seo = dict(project.seo or {}) if project else {}
         sandbox = await _start_sandbox(project_id, redis)
-        site = await publish.build_site(sandbox, project_id)
+        site = await publish.build_site(sandbox, project_id, seo=seo, site_url=publish.public_url(alias))
         await manager.touch(project_id)
         try:
             key = blob.publish_key(project_id, publish_id)
@@ -1486,6 +1489,37 @@ async def _run_deploy(project_id: str, publish_id: str, alias: str, make_site, l
         await update(status="failed", error=provider.scrub(str(e))[:500])
     finally:
         _publishing.pop(project_id, None)
+
+
+async def _page_seo(db: AsyncSession, project: BuilderProject) -> dict:
+    """What the current version's index.html says about itself."""
+    snapshot = await snapshots.current(db, project)
+    if snapshot is None:
+        return {}
+    try:
+        page = seo_mod.from_snapshot(await blob.get(snapshot.r2_key))
+    except blob.BlobError:
+        return {}
+    return seo_mod.read(page) if page else {}
+
+
+@router.get("/projects/{project_id}/seo", response_model=SeoOut)
+async def get_seo(project_id: str, user: User = Depends(get_current_user),
+                  db: AsyncSession = Depends(get_db)):
+    """The saved settings, and what the page itself says (`page`), which is
+    what a field left empty keeps."""
+    project = await _owned(project_id, user, db, "viewer")
+    return SeoOut(**SeoIn(**(project.seo or {})).model_dump(), page=SeoPage(**await _page_seo(db, project)))
+
+
+@router.put("/projects/{project_id}/seo", response_model=SeoOut)
+async def put_seo(project_id: str, body: SeoIn, user: User = Depends(get_current_user),
+                  db: AsyncSession = Depends(get_db)):
+    """Save them; the next publish writes them into the page."""
+    project = await _owned(project_id, user, db, "owner")
+    project.seo = {k: v for k, v in body.model_dump().items() if v not in (None, "")}
+    await db.commit()
+    return SeoOut(**body.model_dump(), page=SeoPage(**await _page_seo(db, project)))
 
 
 def _publish_guard(project: BuilderProject, project_id: str) -> None:

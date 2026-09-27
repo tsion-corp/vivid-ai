@@ -42,6 +42,7 @@ Per project POST/DELETE /builder/projects/{id}/supabase · POST/DELETE .../payme
             POST/DELETE /builder/projects/{id}/auth (the app's own sign-in, Decane)
 Publish     POST /builder/projects/{id}/publish · GET .../publishes · GET .../publishes/{publish_id}
             POST .../publishes/{publish_id}/rollback · POST /builder/projects/{id}/unpublish
+SEO         GET/PUT /builder/projects/{id}/seo
 Usage       GET /builder/projects/{id}/usage · GET /builder/projects/{id}/analytics?days=30
 Plans       GET /plans · GET/POST/DELETE /me/plan (MyPlanOut)
 Wallet      GET /wallet?currency=NGN · GET /wallet/entries · GET /wallet/rates · POST /wallet/bank-account
@@ -738,6 +739,20 @@ POST /builder/projects/{id}/unpublish              -> Publish (202, kind "unpubl
      not_published if it never was.
 kind: publish | rollback | unpublish. A site keeps its address across
 renames: every publish goes to the address it already has.
+
+### SEO and link previews
+
+GET /builder/projects/{id}/seo -> {title, description, image, favicon, noindex,
+                                   page: {title, description, image}}
+PUT /builder/projects/{id}/seo {title?, description?, image?, favicon?, noindex?} -> same   owner
+How the published site shows up in search and in link previews (WhatsApp,
+X, Slack). Written into index.html at publish time, not into the code, so
+they apply from the next publish (a rollback keeps what that build had).
+Empty fields keep what the page says, shown in `page` (the current
+version's own tags) as the placeholder. title <= 70, description <= 200;
+image (the preview card picture) and favicon are an upload's path
+(/uploads/card.png, from the assets list) or an https URL. noindex asks
+search engines not to list the site. 422 for anything else.
 
 Poll the row every 3 to 5 seconds until status is "live" (url set; the
 project's published_url updates too) or "failed" (error holds the build

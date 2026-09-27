@@ -26,6 +26,7 @@ from dataclasses import dataclass
 import httpx
 from blake3 import blake3
 
+from app.builder import seo as seo_mod
 from app.builder import visual
 from app.builder.sandbox.base import Sandbox, SandboxError
 from app.core.config import settings
@@ -102,8 +103,10 @@ def file_hash(content: bytes, path: str) -> str:
 
 
 # ---------------------------------------------------------------- build
-async def build_site(sandbox: Sandbox, project_id: str | None = None) -> BuiltSite:
-    """`vite build` in the sandbox, dist/ brought back as bytes."""
+async def build_site(sandbox: Sandbox, project_id: str | None = None, seo: dict | None = None,
+                     site_url: str | None = None) -> BuiltSite:
+    """`vite build` in the sandbox, dist/ brought back as bytes, with the
+    project's SEO settings written into index.html."""
     result = await sandbox.run("rm -rf dist && npx vite build",
                                timeout=settings.BUILDER_BUILD_TIMEOUT)
     if not result.ok:
@@ -122,6 +125,7 @@ async def build_site(sandbox: Sandbox, project_id: str | None = None) -> BuiltSi
     files["index.html"] = visual.strip_editor(files["index.html"])
     if project_id:
         files["index.html"] = inject_analytics(files["index.html"], project_id)
+    files["index.html"] = seo_mod.apply(files["index.html"], seo, site_url)
     site = BuiltSite(files)
     if site.size > settings.BUILDER_PUBLISH_MAX_BYTES:
         raise PublishError(f"The built site is {site.size // 1_000_000} MB, over the limit.")

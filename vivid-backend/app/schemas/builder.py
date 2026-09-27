@@ -397,3 +397,26 @@ class InvitePreviewOut(BaseModel):
     role: str
     #: expired | used | ok
     status: str
+
+
+class SeoIn(BaseModel):
+    """How the published site presents itself. Empty fields keep what the
+    page says; `image` and `favicon` are paths of uploads (/uploads/x.png)
+    or full URLs."""
+    title: str | None = Field(default=None, max_length=70)
+    description: str | None = Field(default=None, max_length=200)
+    image: str | None = Field(default=None, max_length=1024, pattern=r"^(/|https://)[^\s\"'<>]*$")
+    favicon: str | None = Field(default=None, max_length=1024, pattern=r"^(/|https://)[^\s\"'<>]*$")
+    #: Ask search engines not to list the site.
+    noindex: bool = False
+
+
+class SeoPage(BaseModel):
+    """What the current version's index.html says, for the empty fields."""
+    title: str | None = None
+    description: str | None = None
+    image: str | None = None
+
+
+class SeoOut(SeoIn):
+    page: SeoPage

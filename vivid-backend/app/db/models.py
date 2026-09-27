@@ -328,6 +328,9 @@ class BuilderProject(Base):
     #: What the builder remembers between turns (builder/memory.py): the
     #: ledger of backend work and an unfinished turn to continue.
     memory: Mapped[dict | None] = mapped_column(JSONB, default=None)
+    #: How the published site presents itself to search and link previews
+    #: ({title, description, image, favicon, noindex}); applied at publish.
+    seo: Mapped[dict | None] = mapped_column(JSONB, default=None)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_now)
     updated_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), default=_now, onupdate=_now)
