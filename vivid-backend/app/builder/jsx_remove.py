@@ -36,6 +36,11 @@ class Removal:
     reason: str | None = None
     component: str | None = None
     count: int = 0
+    #: Set when the item was an entry of data in the code (seed data, a
+    #: list): the file it was in, and the texts it showed, which a page that
+    #: keeps its data in the browser's storage still holds.
+    data_file: str | None = None
+    forget: list[str] = field(default_factory=list)
 
 
 async def _ensure_script(sandbox: Sandbox) -> None:
@@ -96,7 +101,9 @@ async def remove(sandbox: Sandbox, target: dict) -> Removal:
         for path, content in files.items():
             await sandbox.write_file(path, content)
     removed = answer.get("removed") or {}
-    return Removal(APPLIED, files=sorted(files), component=removed.get("component"))
+    return Removal(APPLIED, files=sorted(files), component=removed.get("component"),
+                   data_file=removed.get("file") if removed.get("data") else None,
+                   forget=[str(v) for v in removed.get("values") or []][:6])
 
 
 async def cleanup(sandbox: Sandbox) -> None:

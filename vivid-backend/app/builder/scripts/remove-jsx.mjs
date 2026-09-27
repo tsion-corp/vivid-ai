@@ -108,6 +108,70 @@ function constantText(e) {
   return values && values.length ? values.join(" ") : null;
 }
 
+// ------------------------------------------------------------------ data
+// Text a page shows from data (`{s.tracking_code}` over a seed array, a
+// `{title}` passed down, `{item}` of a string list) is not in the JSX. Every
+// string in an object or array literal is indexed by the field it sits in,
+// so an element showing `{x.tracking_code}` holds any tracking_code value.
+const dataKeys = new Map();
+const addKey = (value, key) => {
+  const v = norm(value);
+  if (v.length < 2) return;
+  if (!dataKeys.has(v)) dataKeys.set(v, new Set());
+  dataKeys.get(v).add(key);
+};
+const isText = (e) => !!e && (ts.isStringLiteral(e) || ts.isNoSubstitutionTemplateLiteral(e));
+for (const [, { sf }] of allSources) {
+  const visit = (n) => {
+    if (ts.isPropertyAssignment(n) && (ts.isIdentifier(n.name) || ts.isStringLiteral(n.name)) && isText(literal(n.initializer))) {
+      addKey(literal(n.initializer).text, n.name.text);
+    } else if (ts.isArrayLiteralExpression(n)) {
+      for (const el of n.elements) if (isText(literal(el))) addKey(literal(el).text, "[]");
+    }
+    ts.forEachChild(n, visit);
+  };
+  visit(sf);
+}
+
+/** The field names an expression shows: `s.tracking_code` -> tracking_code,
+ *  `title` -> title (and "*id", a bare value such as a string list item). */
+function keysOf(e, keys = new Set()) {
+  e = literal(e);
+  if (!e) return keys;
+  if (ts.isNonNullExpression(e)) return keysOf(e.expression, keys);
+  if (ts.isIdentifier(e)) { keys.add(e.text); keys.add("*id"); }
+  else if (ts.isPropertyAccessExpression(e)) keys.add(e.name.text);
+  else if (ts.isElementAccessExpression(e) && isText(e.argumentExpression)) keys.add(e.argumentExpression.text);
+  else if (ts.isCallExpression(e)) {
+    if (ts.isPropertyAccessExpression(e.expression)) keysOf(e.expression.expression, keys); // s.code.toUpperCase()
+    e.arguments.forEach((a) => keysOf(a, keys));
+  } else if (ts.isConditionalExpression(e)) { keysOf(e.whenTrue, keys); keysOf(e.whenFalse, keys); }
+  else if (ts.isBinaryExpression(e)) { keysOf(e.left, keys); keysOf(e.right, keys); }
+  return keys;
+}
+
+/** Fields shown by the expressions under a node (not the constants). */
+function slotsOf(node) {
+  const keys = new Set();
+  const visit = (n) => {
+    if (ts.isJsxExpression(n) && n.expression && !ts.isJsxAttribute(n.parent) && constantText(n.expression) === null) {
+      keysOf(n.expression, keys);
+    }
+    if (ts.isTemplateSpan(n) && constantText(n.expression) === null) keysOf(n.expression, keys);
+    ts.forEachChild(n, visit);
+  };
+  visit(node);
+  return keys;
+}
+
+/** Whether `t` (normalised) is a data value of a field the element shows. */
+function fromData(t, keys) {
+  const fields = dataKeys.get(t);
+  if (!fields) return false;
+  for (const k of fields) if (keys.has(k) || (k === "[]" && keys.has("*id"))) return true;
+  return false;
+}
+
 /** Every piece of text under a node: JSX text, string literals, and the
  *  constants it shows by name. */
 function textOf(node) {
@@ -224,15 +288,34 @@ function rootTagOf(name) {
 const scored = [];
 for (const [file, { sf }] of sources) {
   for (const node of jsxNodes(sf, () => true)) {
-    let score = 0;
+    let score = 0, data = 0;
     if (want.texts.length) {
       const text = textOf(node);
-      score = want.texts.filter((t) => text.includes(t)).length;
+      let keys = null;
+      for (const t of want.texts) {
+        if (text.includes(t)) score++;
+        else if (fromData(t, (keys ??= slotsOf(node)))) { score++; data++; }
+      }
     } else if (want.src) {
       score = srcMatches(attr(node, "src")) ? 1 : 0;
     }
-    if (score) scored.push({ file, node, score });
+    if (score) scored.push({ file, node, score, data });
   }
+}
+const classesOf = (n) => (attr(n, "className") || "").split(/\s+/).filter(Boolean);
+if (!scored.length && want.texts.length && want.classes.length) {
+  // Text the page loads while running (an API, the browser's storage) is in
+  // no file: an element of the clicked tag that shows data and carries the
+  // clicked classes is the one, when only one does.
+  for (const [file, { sf }] of sources) {
+    for (const node of jsxNodes(sf, (n) => tagOf(n) === want.tag)) {
+      const cls = classesOf(node);
+      if (cls.length < 2 || !slotsOf(node).size) continue;
+      const shared = cls.filter((k) => want.classes.includes(k)).length;
+      if (shared === cls.length || shared === want.classes.length) scored.push({ file, node, score: 1, data: 1, loose: true });
+    }
+  }
+  if (scored.length > 1) out({ status: "ambiguous", reason: `${scored.length} elements match`, count: scored.length });
 }
 if (!scored.length) out({ status: "not_found", reason: "no element with that text in the code" });
 
@@ -257,14 +340,15 @@ for (const c of inner) {
     const root = rootTagOf(tagOf(n));
     if (root && root !== want.tag && !isComponent(root)) continue;
   }
-  resolved.set(`${c.file}:${n.getStart()}`, { file: c.file, node: n });
+  const key = `${c.file}:${n.getStart()}`;
+  resolved.set(key, { file: c.file, node: n, data: (resolved.get(key)?.data || 0) + c.data, loose: c.loose });
 }
 let pool = [...resolved.values()];
 if (!pool.length) out({ status: "not_simple", reason: "part of a component used in several places" });
 if (pool.length > 1) {
   const overlapOf = (c) => {
     const id = attr(c.node, "id");
-    const cls = (attr(c.node, "className") || "").split(/\s+/);
+    const cls = classesOf(c.node);
     return want.classes.filter((k) => cls.includes(k)).length + (want.id && id === want.id ? 5 : 0);
   };
   const top = Math.max(...pool.map(overlapOf));
@@ -286,7 +370,7 @@ function withWrappers(node) {
     n = p;
   }
 }
-const target = { file: picked.file, node: withWrappers(picked.node) };
+const target = { file: picked.file, node: withWrappers(picked.node), data: picked.data, loose: picked.loose };
 
 // ---------------------------------------------------------------- remove
 
@@ -361,8 +445,118 @@ function apply(text, cuts) {
   return result;
 }
 
-if (insideMap(target.node)) {
-  out({ status: "not_simple", reason: "one item of a list the page builds from data" });
+// ------------------------------------------------------------------ lists
+/** The `.map()` call whose callback renders `node` (at any depth), across
+ *  one component: a <Row> rendered by `rows.map(...)` counts. */
+function mapCallOf(node) {
+  let fn = node.parent;
+  while (fn && !ts.isFunctionLike(fn) && !ts.isSourceFile(fn)) fn = fn.parent;
+  if (!fn || ts.isSourceFile(fn)) return null;
+  const call = fn.parent;
+  if (call && ts.isCallExpression(call) && ts.isPropertyAccessExpression(call.expression) &&
+      /^(map|flatMap)$/.test(call.expression.name.text) && call.arguments.includes(fn)) return call;
+  return null;
+}
+function listOf(node) {
+  const direct = mapCallOf(node);
+  if (direct) return direct;
+  // Inside a component: listed when every place that renders it is a list.
+  let fn = node.parent;
+  while (fn && !ts.isFunctionLike(fn)) fn = fn.parent;
+  const name = fn && (fn.name?.getText() || (fn.parent && ts.isVariableDeclaration(fn.parent) && fn.parent.name.getText()));
+  if (!name || !isComponent(name)) return null;
+  const calls = [];
+  for (const [, { sf }] of sources) {
+    for (const use of jsxNodes(sf, (n) => tagOf(n) === name)) {
+      const call = mapCallOf(use);
+      if (!call) return null;
+      calls.push(call);
+    }
+  }
+  return calls[0] || null;
+}
+
+/** Names the list's items come from: `rows.slice(0, 8)` where
+ *  `const rows = db.shipments.filter(...)` says "shipments". */
+function hintOf(call) {
+  let text = call.expression.expression.getText();
+  const first = text.match(/^[A-Za-z_$][\w$]*/)?.[0];
+  if (first) {
+    const visit = (n) => {
+      if (ts.isVariableDeclaration(n) && ts.isIdentifier(n.name) && n.name.text === first && n.initializer) text += " " + n.initializer.getText();
+      ts.forEachChild(n, visit);
+    };
+    visit(call.getSourceFile());
+  }
+  return text;
+}
+
+/** Every string an array entry holds, at any depth. */
+function stringsOf(node) {
+  const found = [];
+  const visit = (n) => {
+    if (isText(n)) found.push(norm(n.text));
+    ts.forEachChild(n, visit);
+  };
+  visit(node);
+  return found;
+}
+
+/** The entry of a literal array (seed data, a list in the page) that holds
+ *  what the page showed, removed from its array. */
+function removeEntry(call) {
+  const hint = hintOf(call);
+  const entries = [];
+  for (const [file, { sf, text }] of allSources) {
+    const visit = (n) => {
+      if (ts.isArrayLiteralExpression(n) && n.elements.length) {
+        const holder = skipParens(n).parent;
+        const name = holder && (ts.isVariableDeclaration(holder) || ts.isPropertyAssignment(holder)) ? holder.name.getText() : "";
+        n.elements.forEach((el, i) => {
+          const e = literal(el);
+          if (!(ts.isObjectLiteralExpression(e) || isText(e))) return;
+          const values = stringsOf(e);
+          const score = want.texts.filter((t) => values.some((v) => v === t || (t.length >= 3 && v.includes(t)))).length;
+          if (score) entries.push({ file, text, array: n, i, score, named: !!name && new RegExp(`\\b${name}\\b`).test(hint) });
+        });
+      }
+      ts.forEachChild(n, visit);
+    };
+    visit(sf);
+  }
+  if (!entries.length) {
+    out({ status: "not_simple", reason: "one item of a list the page loads while running, not from the code" });
+  }
+  const rank = (e) => e.score * 2 + (e.named ? 1 : 0);
+  const top = Math.max(...entries.map(rank));
+  const best = entries.filter((e) => rank(e) === top);
+  if (best.length > 1) out({ status: "ambiguous", reason: `${best.length} items of the list match`, count: best.length });
+  const { file, text, array, i } = best[0];
+  const els = array.elements;
+  let cut;
+  if (i < els.length - 1) cut = { start: els[i].getFullStart(), end: els[i + 1].getFullStart() };
+  else if (i > 0) cut = { start: els[i - 1].end, end: els[i].end };
+  else {
+    let end = els[i].end;
+    while (/[\s,]/.test(text[end]) && end < array.end - 1) end++;
+    cut = { start: els[i].getFullStart(), end };
+  }
+  const rel = (f) => path.relative(root, f).split(path.sep).join("/");
+  const values = (request.texts || []).filter((t) => stringsOf(els[i]).includes(norm(t)));
+  out({
+    status: "applied",
+    files: { [rel(file)]: apply(text, [cut]) },
+    removed: { file: rel(file), tag: want.tag, data: true, values },
+  });
+}
+
+// One item of a list the page builds from data: the item is its entry in
+// the data, so that is what goes (the same element, removed from the JSX,
+// would leave every item). Text of the list's own layout, the same in
+// every item, is removed from the layout as any other element.
+{
+  const call = listOf(target.node);
+  if (call && (target.data || target.loose || insideMap(target.node))) removeEntry(call);
 }
 
 const changed = {};
@@ -389,7 +583,7 @@ for (const [file, { text, sf }] of sources) {
   if (!uses.length) continue;
   const cuts = [];
   for (const use of uses) {
-    if (insideMap(use)) out({ status: "not_simple", reason: `${component} is rendered in a list` });
+    if (mapCallOf(use)) removeEntry(mapCallOf(use));
     const cut = cutFor(use, text);
     if (!cut) out({ status: "not_simple", reason: `${component} is passed as a value` });
     cuts.push(cut);

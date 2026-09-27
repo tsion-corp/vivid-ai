@@ -1638,9 +1638,12 @@ async def delete_element(project_id: str, body: DeleteIn, request: Request,
             name = name if len(name) <= 50 else name[:47] + "..."
             what = "section" if body.scope == "section" else "element"
             summary = f'Deleted the "{name}" {what}' if name else f"Deleted a {what}"
+            if removal.data_file:
+                summary = f'Removed "{name}" from {removal.data_file}' if name else f"Removed an item from {removal.data_file}"
             row = await _save_hand_edit(db, sandbox, project, summary)
     return DeleteOut(status=removal.status, reason=removal.reason, files=removal.files,
-                     count=removal.count, snapshot=row)
+                     count=removal.count, data_file=removal.data_file, forget=removal.forget,
+                     snapshot=row)
 
 
 @router.post("/projects/{project_id}/edits", response_model=EditsOut)

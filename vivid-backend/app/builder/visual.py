@@ -568,7 +568,22 @@ EDITOR_SCRIPT = r"""<script>
     var d = e.data || {};
     if (d.type === "vivid:edit-mode") { owner = e.origin; setMode(!!d.on); }
     else if (d.type === "vivid:image-updated" && e.origin === owner) bust(d.src);
+    else if (d.type === "vivid:forget" && e.origin === owner) forget(d.texts || []);
   });
+  // An item removed from the code's data can live on in what the page saved
+  // in the browser (a store seeded once): those saved entries go too.
+  function forget(texts) {
+    var gone = 0;
+    [window.localStorage, window.sessionStorage].forEach(function (store) {
+      try {
+        for (var i = store.length - 1; i >= 0; i--) {
+          var key = store.key(i), value = store.getItem(key) || "";
+          if (texts.some(function (t) { return t && value.indexOf(t) !== -1; })) { store.removeItem(key); gone++; }
+        }
+      } catch (err) {}
+    });
+    if (gone) window.location.reload();
+  }
   window.parent.postMessage({ type: "vivid:editor-ready" }, "*");
 })();
 </script>"""

@@ -280,13 +280,20 @@ class DeleteIn(BaseModel):
 class DeleteOut(BaseModel):
     #: applied | not_found (its text comes from data, or it has none) |
     #: ambiguous (several elements match; count says how many) |
-    #: not_simple (an item of a list built from data, or the whole page) |
+    #: not_simple (an item of a list loaded while running, or the whole page) |
     #: would_break (removing it would break the code; nothing changed) |
     #: not_supported (mobile apps) | error
     status: str
     reason: str | None = None
     files: list[str] = []
     count: int = 0
+    #: Set when the element was one item of a list built from data in the
+    #: code: that entry was removed from this file (e.g. src/lib/seed.ts).
+    data_file: str | None = None
+    #: Texts of the removed entry. A page that keeps its data in the
+    #: browser's storage still shows it: post {type: "vivid:forget", texts}
+    #: to the preview, which clears those saved entries and reloads.
+    forget: list[str] = []
     #: The version the delete was saved as, when it applied.
     snapshot: SnapshotOut | None = None
 
