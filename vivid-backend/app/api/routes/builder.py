@@ -71,7 +71,7 @@ from app.builder.sandbox.base import PathError, SandboxError, safe_path
 from app.builder.sandbox.manager import manager
 from app.core.config import settings
 from app.core.errors import APIError
-from app.db.models import (BuilderAppBuild, BuilderAsset, BuilderMessage, BuilderProject, BuilderPublish, BuilderSnapshot, Connector, User, VividPayCheckout, VividPayProject)
+from app.db.models import (BuilderAppBuild, BuilderAsset, BuilderMember, BuilderMessage, BuilderProject, BuilderPublish, BuilderSnapshot, Connector, User, VividPayCheckout, VividPayProject)
 from app.services.connectors import supabase as supabase_connector
 from app.services.plans import gate as plan_gate
 from app.services.plans import usage as usage_svc
@@ -95,10 +95,32 @@ log = logging.getLogger("vivid.builder")
 RECENT_TURNS = 2
 
 
-async def _owned(project_id: str, user: User, db: AsyncSession) -> BuilderProject:
+#: What each role may do, lowest first: a viewer sees the thread, preview
+#: and versions; an editor also builds, hand-edits and publishes; only the
+#: owner deletes, shares, links services and manages secrets.
+ROLES = ("viewer", "editor", "owner")
+
+
+async def _role(project: BuilderProject, user: User, db: AsyncSession) -> str | None:
+    if project.owner_id == user.id:
+        return "owner"
+    member = await db.get(BuilderMember, (project.id, user.id))
+    return member.role if member else None
+
+
+async def _owned(project_id: str, user: User, db: AsyncSession,
+                 need: str = "owner") -> BuilderProject:
+    """The project, when `user` may do what `need` names (viewer, editor or
+    owner); 404 otherwise, so a project's existence is not revealed. The
+    caller's role is on `project.role`."""
     project = await db.get(BuilderProject, project_id)
-    if project is None or project.owner_id != user.id:
+    role = await _role(project, user, db) if project is not None else None
+    if role is None:
         raise APIError(404, "not_found", "Project not found")
+    if ROLES.index(role) < ROLES.index(need):
+        raise APIError(403, "forbidden", "Only the project's owner can do that." if need == "owner"
+                       else "You can view this project but not change it.")
+    project.role = role
     return project
 
 
@@ -172,7 +194,7 @@ async def list_projects(user: User = Depends(get_current_user),
 @router.get("/projects/{project_id}", response_model=ProjectOut)
 async def get_project(project_id: str, user: User = Depends(get_current_user),
                       db: AsyncSession = Depends(get_db)):
-    return _present(await _owned(project_id, user, db), await _writable(db, user.id))
+    return _present(await _owned(project_id, user, db, "viewer"), await _writable(db, user.id))
 
 
 @router.patch("/projects/{project_id}", response_model=ProjectOut)
@@ -229,7 +251,7 @@ async def delete_project_row(db: AsyncSession, project: BuilderProject, redis) -
 @router.get("/projects/{project_id}/messages", response_model=list[MessageOut])
 async def list_messages(project_id: str, user: User = Depends(get_current_user),
                         db: AsyncSession = Depends(get_db)):
-    await _owned(project_id, user, db)
+    await _owned(project_id, user, db, "viewer")
     rows = await db.execute(select(BuilderMessage)
                             .where(BuilderMessage.project_id == project_id)
                             .order_by(BuilderMessage.created_at))
@@ -264,7 +286,7 @@ async def chat(project_id: str, body: ChatIn, request: Request,
     """One turn. The response is `text/event-stream` in the AI SDK UI
     Message Stream (v1) shape; the user message is stored before the model
     is called and the assistant message when the stream ends."""
-    project = await _owned(project_id, user, db)
+    project = await _owned(project_id, user, db, "editor")
     redis = request.app.state.redis
     if not await rate_limit.check_bucket(redis, f"builder:{user.id}",
                                          settings.BUILDER_RATE_LIMIT_PER_MINUTE):
@@ -272,7 +294,8 @@ async def chat(project_id: str, body: ChatIn, request: Request,
                        "Too many builder messages this minute. Please wait a moment.")
     if not routing.endpoint_for(routing.BUILD).configured:
         raise APIError(503, "not_configured", "The app builder is not configured.")
-    plan_check = await plan_gate.can_start_turn(db, user.id, project_id)
+    # The owner's plan pays for every turn on a project, whoever sends it.
+    plan_check = await plan_gate.can_start_turn(db, project.owner_id, project_id)
     if not plan_check.ok:
         if plan_check.read_only:
             raise APIError(402, "plan_limit",
@@ -300,7 +323,7 @@ async def chat(project_id: str, body: ChatIn, request: Request,
 
     user_parts = [{"type": "text", "text": body.text}]
     user_parts += [{"type": "file", "mediaType": "image/*", "url": u} for u in body.images]
-    user_msg = BuilderMessage(project_id=project_id, role="user", parts=user_parts)
+    user_msg = BuilderMessage(project_id=project_id, role="user", parts=user_parts, user_id=user.id)
     db.add(user_msg)
     project.updated_at = datetime.now(timezone.utc)
     await db.commit()
@@ -449,7 +472,7 @@ async def chat_stream(project_id: str, user: User = Depends(get_current_user),
     """Attach to the running turn: every part it has produced so far, then
     the rest as it goes, ending with [DONE]. 204 when nothing is running
     (fetch the thread instead)."""
-    await _owned(project_id, user, db)
+    await _owned(project_id, user, db, "viewer")
     feed = turns.get(project_id)
     if feed is None:
         return Response(status_code=204)
@@ -1118,7 +1141,7 @@ async def upload_asset(project_id: str, request: Request, file: UploadFile = Fil
     """Give the builder a file. It lands in the app at /uploads/<name> (a
     live sandbox gets it at once; a fresh one on start), and the model is
     told about it in every turn."""
-    project = await _owned(project_id, user, db)
+    project = await _owned(project_id, user, db, "editor")
     data = await file.read()
     try:
         asset = await assets.add(db, project_id, file.filename or "file",
@@ -1141,7 +1164,7 @@ async def upload_asset(project_id: str, request: Request, file: UploadFile = Fil
 @router.get("/projects/{project_id}/assets", response_model=list[AssetOut])
 async def list_assets(project_id: str, user: User = Depends(get_current_user),
                       db: AsyncSession = Depends(get_db)):
-    project = await _owned(project_id, user, db)
+    project = await _owned(project_id, user, db, "viewer")
     return [_asset_out(a, targets.of(project)) for a in await assets.list_for(db, project_id)]
 
 
@@ -1149,7 +1172,7 @@ async def list_assets(project_id: str, user: User = Depends(get_current_user),
 async def delete_asset(project_id: str, asset_id: str,
                        user: User = Depends(get_current_user),
                        db: AsyncSession = Depends(get_db)):
-    await _owned(project_id, user, db)
+    await _owned(project_id, user, db, "editor")
     asset = await db.get(BuilderAsset, asset_id)
     if asset is None or asset.project_id != project_id:
         raise APIError(404, "not_found", "No such file")
@@ -1255,7 +1278,7 @@ async def start_app_build(project_id: str, body: AppBuildIn,
 @router.get("/projects/{project_id}/builds", response_model=list[AppBuildOut])
 async def list_app_builds(project_id: str, user: User = Depends(get_current_user),
                           db: AsyncSession = Depends(get_db)):
-    await _owned(project_id, user, db)
+    await _owned(project_id, user, db, "viewer")
     rows = await db.execute(select(BuilderAppBuild)
                             .where(BuilderAppBuild.project_id == project_id)
                             .order_by(BuilderAppBuild.created_at.desc()).limit(50))
@@ -1263,8 +1286,8 @@ async def list_app_builds(project_id: str, user: User = Depends(get_current_user
 
 
 async def _owned_build(project_id: str, build_id: str, user: User,
-                       db: AsyncSession) -> BuilderAppBuild:
-    await _owned(project_id, user, db)
+                       db: AsyncSession, need: str = "viewer") -> BuilderAppBuild:
+    await _owned(project_id, user, db, need)
     build = await db.get(BuilderAppBuild, build_id)
     if build is None or build.project_id != project_id:
         raise APIError(404, "not_found", "No such build")
@@ -1291,7 +1314,7 @@ async def get_app_build(project_id: str, build_id: str,
 async def cancel_app_build(project_id: str, build_id: str,
                            user: User = Depends(get_current_user),
                            db: AsyncSession = Depends(get_db)):
-    build = await _owned_build(project_id, build_id, user, db)
+    build = await _owned_build(project_id, build_id, user, db, "owner")
     try:
         await app_build.cancel(db, build, user.id)
     except (expo.ExpoError, app_build.BuildError) as e:
@@ -1312,7 +1335,7 @@ async def start_publish(project_id: str, request: Request,
                         db: AsyncSession = Depends(get_db)):
     """Build the current files and put them on the project's live URL. The
     row comes back `pending`; poll it until `live` or `failed`."""
-    project = await _owned(project_id, user, db)
+    project = await _owned(project_id, user, db, "editor")
     if targets.of(project).is_mobile:
         raise APIError(400, "not_supported",
                        "Mobile apps are not published as websites. Start a build instead "
@@ -1384,7 +1407,7 @@ async def _run_publish(project_id: str, publish_id: str, alias: str, redis) -> N
 @router.get("/projects/{project_id}/publishes", response_model=list[PublishOut])
 async def list_publishes(project_id: str, user: User = Depends(get_current_user),
                          db: AsyncSession = Depends(get_db)):
-    await _owned(project_id, user, db)
+    await _owned(project_id, user, db, "viewer")
     rows = await db.execute(select(BuilderPublish)
                             .where(BuilderPublish.project_id == project_id)
                             .order_by(BuilderPublish.created_at.desc()))
@@ -1395,7 +1418,7 @@ async def list_publishes(project_id: str, user: User = Depends(get_current_user)
 async def get_publish(project_id: str, publish_id: str,
                       user: User = Depends(get_current_user),
                       db: AsyncSession = Depends(get_db)):
-    await _owned(project_id, user, db)
+    await _owned(project_id, user, db, "viewer")
     row = await db.get(BuilderPublish, publish_id)
     if row is None or row.project_id != project_id:
         raise APIError(404, "not_found", "No such publish")
@@ -1408,7 +1431,7 @@ async def start_build(project_id: str, request: Request,
                       db: AsyncSession = Depends(get_db)):
     """Leave plan mode. The spec, if any, is what the builder works to; a
     project may also start building with no spec at all."""
-    project = await _owned(project_id, user, db)
+    project = await _owned(project_id, user, db, "editor")
     if turns.running(project_id):
         raise APIError(409, "busy", "Wait for the running turn to finish first.")
     if project.mode != "build":
@@ -1420,7 +1443,7 @@ async def start_build(project_id: str, request: Request,
 @router.post("/projects/{project_id}/cancel", response_model=CancelOut)
 async def cancel_turn(project_id: str, user: User = Depends(get_current_user),
                       db: AsyncSession = Depends(get_db)):
-    await _owned(project_id, user, db)
+    await _owned(project_id, user, db, "editor")
     return CancelOut(cancelled=turns.cancel(project_id))
 
 
@@ -1429,7 +1452,7 @@ async def cancel_turn(project_id: str, user: User = Depends(get_current_user),
 async def preview(project_id: str, request: Request,
                   user: User = Depends(get_current_user),
                   db: AsyncSession = Depends(get_db)):
-    await _owned(project_id, user, db)
+    await _owned(project_id, user, db, "viewer")
     sandbox = await _sandbox(project_id, request)
     try:
         await visual.ensure_editor(sandbox)
@@ -1444,7 +1467,7 @@ async def preview(project_id: str, request: Request,
 async def list_files(project_id: str, request: Request,
                      user: User = Depends(get_current_user),
                      db: AsyncSession = Depends(get_db)):
-    await _owned(project_id, user, db)
+    await _owned(project_id, user, db, "viewer")
     sandbox = await _sandbox(project_id, request)
     return FilesOut(files=await sandbox.list_files())
 
@@ -1453,7 +1476,7 @@ async def list_files(project_id: str, request: Request,
 async def read_file(project_id: str, path: str, request: Request,
                     user: User = Depends(get_current_user),
                     db: AsyncSession = Depends(get_db)):
-    await _owned(project_id, user, db)
+    await _owned(project_id, user, db, "viewer")
     try:
         clean = safe_path(path)
     except PathError as e:
@@ -1481,7 +1504,7 @@ _editing: dict[str, asyncio.Lock] = {}
 
 
 async def _hand_edit_target(project_id: str, user: User, db: AsyncSession) -> BuilderProject:
-    project = await _owned(project_id, user, db)
+    project = await _owned(project_id, user, db, "editor")
     if turns.running(project_id):
         raise APIError(409, "busy", "Wait for the running turn to finish first.")
     if await snapshots.current(db, project) is None:
@@ -1773,7 +1796,7 @@ async def _sandbox(project_id: str, request: Request):
 @router.get("/projects/{project_id}/snapshots", response_model=list[SnapshotOut])
 async def list_snapshots(project_id: str, user: User = Depends(get_current_user),
                          db: AsyncSession = Depends(get_db)):
-    await _owned(project_id, user, db)
+    await _owned(project_id, user, db, "viewer")
     rows = await db.execute(select(BuilderSnapshot)
                             .where(BuilderSnapshot.project_id == project_id)
                             .order_by(BuilderSnapshot.seq))
@@ -1788,7 +1811,7 @@ async def take_snapshot(project_id: str, request: Request,
     this; this is for when that failed (a timed-out read) and the work
     exists only in the sandbox. 204 would hide the answer, so an unchanged
     tree returns the latest snapshot instead."""
-    project = await _owned(project_id, user, db)
+    project = await _owned(project_id, user, db, "editor")
     if turns.running(project_id):
         raise APIError(409, "busy", "Wait for the running turn to finish first.")
     sandbox = await _sandbox(project_id, request)
@@ -1812,7 +1835,7 @@ async def undo_last_turn(project_id: str, request: Request,
     """One click back: restore the version before the current one. Nothing
     is deleted; the next turn's version continues the sequence, and
     `restore` can go forward again."""
-    project = await _owned(project_id, user, db)
+    project = await _owned(project_id, user, db, "editor")
     if turns.running(project_id):
         raise APIError(409, "busy", "Wait for the running turn to finish first.")
     current = await snapshots.current(db, project)
@@ -1844,7 +1867,7 @@ async def dev_server_logs(project_id: str, request: Request, lines: int = 100,
     """The dev server's recent output: what a client shows when the preview
     is blank or an error overlay is up, next to a "Fix this" button that
     sends the text as a chat turn."""
-    await _owned(project_id, user, db)
+    await _owned(project_id, user, db, "viewer")
     sandbox = await _sandbox(project_id, request)
     return {"lines": (await sandbox.dev_server_logs(max(1, min(lines, 500)))).splitlines()}
 
@@ -1856,7 +1879,7 @@ async def restore_snapshot(project_id: str, seq: int, request: Request,
     """Make an older version current. A live sandbox gets the files now;
     otherwise the next sandbox starts from it. The next turn's snapshot
     continues the sequence, so nothing is lost by going back."""
-    project = await _owned(project_id, user, db)
+    project = await _owned(project_id, user, db, "editor")
     if turns.running(project_id):
         raise APIError(409, "busy", "Wait for the running turn to finish first.")
     row = (await db.execute(select(BuilderSnapshot)
@@ -1885,12 +1908,12 @@ async def project_analytics(project_id: str, days: int = 30,
                             db: AsyncSession = Depends(get_db)):
     """Visits to the published app: totals, per day, top pages, referrers,
     devices and countries, for the last `days` (1 to 365)."""
-    await _owned(project_id, user, db)
+    await _owned(project_id, user, db, "viewer")
     return AnalyticsOut(**await analytics.rollup(db, project_id, days))
 
 
 @router.get("/projects/{project_id}/usage", response_model=UsageOut)
 async def project_usage(project_id: str, user: User = Depends(get_current_user),
                         db: AsyncSession = Depends(get_db)):
-    await _owned(project_id, user, db)
+    await _owned(project_id, user, db, "viewer")
     return UsageOut(**await usage.rollup(db, project_id=project_id))

@@ -343,6 +343,8 @@ class BuilderMessage(Base):
     project_id: Mapped[str] = mapped_column(
         ForeignKey("builder_projects.id", ondelete="CASCADE"), index=True)
     role: Mapped[str] = mapped_column(String(16))  # user | assistant
+    #: Who wrote a user message, on a project shared with others.
+    user_id: Mapped[str | None] = mapped_column(String(36), default=None)
     parts: Mapped[list] = mapped_column(JSONB, default=list)
     #: Vendor slug that produced an assistant message; analytics only.
     model: Mapped[str | None] = mapped_column(String(128), default=None)
@@ -369,6 +371,38 @@ class BuilderSnapshot(Base):
 
     __table_args__ = (UniqueConstraint("project_id", "seq",
                                        name="uq_builder_snapshots_project_seq"),)
+
+
+class BuilderMember(Base):
+    """Someone the owner shares a project with. Editors run turns (on the
+    owner's credits), hand-edit and publish; viewers see the thread, the
+    preview and the versions. The owner is not a row here."""
+    __tablename__ = "builder_members"
+
+    project_id: Mapped[str] = mapped_column(
+        ForeignKey("builder_projects.id", ondelete="CASCADE"), primary_key=True)
+    user_id: Mapped[str] = mapped_column(
+        ForeignKey("users.id", ondelete="CASCADE"), primary_key=True, index=True)
+    role: Mapped[str] = mapped_column(String(8), default="editor")  # editor | viewer
+    invited_by: Mapped[str | None] = mapped_column(String(36), default=None)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_now)
+
+
+class BuilderInvite(Base):
+    """An invitation to someone with no account yet: it becomes a membership
+    when an account with this email signs in."""
+    __tablename__ = "builder_invites"
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=_uuid)
+    project_id: Mapped[str] = mapped_column(
+        ForeignKey("builder_projects.id", ondelete="CASCADE"), index=True)
+    email: Mapped[str] = mapped_column(String(320), index=True)
+    role: Mapped[str] = mapped_column(String(8), default="editor")
+    invited_by: Mapped[str | None] = mapped_column(String(36), default=None)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_now)
+    accepted_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), default=None)
+
+    __table_args__ = (UniqueConstraint("project_id", "email", name="uq_builder_invites_project_email"),)
 
 
 class BuilderSecret(Base):
