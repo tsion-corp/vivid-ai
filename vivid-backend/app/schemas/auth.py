@@ -105,3 +105,28 @@ class TokenPairOut(BaseModel):
     refresh_token: str
     token_type: str = "bearer"
     user: UserOut
+
+
+class LinkTokenRequest(BaseModel):
+    #: From the 409 link_required answer to a Google sign-in.
+    link_token: str = Field(min_length=10, max_length=64)
+
+
+class LinkConfirmRequest(LinkTokenRequest):
+    model_config = ConfigDict(str_strip_whitespace=True)
+    code: str = Field(min_length=4, max_length=12)
+
+
+class IdentityOut(BaseModel):
+    #: email | google | other (a sign-in from before methods were recorded)
+    method: str
+    #: The address of an emailed-code sign-in, masked.
+    email: str | None = None
+    created_at: datetime
+
+
+class IdentitiesOut(BaseModel):
+    methods: list[IdentityOut]
+    #: After connecting a sign-in that had its own account: what moved over
+    #: ({projects, wallet_micro?}).
+    merged: dict | None = None

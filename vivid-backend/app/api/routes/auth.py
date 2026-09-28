@@ -1,4 +1,5 @@
 import hashlib
+import secrets
 import json
 import logging
 import time
@@ -17,8 +18,9 @@ from app.db.models import User
 from app.schemas.auth import (DecaneLoginRequest, DeleteMeRequest, DeletionOut,
                               DeletionPreviewOut, EmailStartRequest, EmailVerifyRequest,
                               HandoffExchangeRequest, HandoffOut, HandoffRequest, LoginRequest,
-                              ProfileUpdate, RefreshRequest, SignupRequest, TokenPairOut, UserOut)
-from app.services import account, decane
+                              IdentitiesOut, LinkConfirmRequest, LinkTokenRequest, ProfileUpdate,
+                              RefreshRequest, SignupRequest, TokenPairOut, UserOut)
+from app.services import account, decane, identities
 
 # Sentinel password hash for social-login accounts — it can never verify, so
 # password login on these accounts always fails cleanly.
@@ -63,33 +65,75 @@ async def login(body: LoginRequest, db: AsyncSession = Depends(get_db)):
     return _pair(user)
 
 
-async def _session(db: AsyncSession, access_token: str, name: str | None = None,
-                   email: str | None = None, picture: str | None = None) -> TokenPairOut:
-    """A verified Decane token -> Vivid's own token pair. The account is keyed
-    on the token's stable `uid`, never on an email the caller supplies, which
-    would allow account takeover."""
+def _claims(access_token: str) -> dict:
     try:
-        claims = decane.verify_access_token(access_token)
+        return decane.verify_access_token(access_token)
     except decane.DecaneAuthError as e:
         status = 503 if "not configured" in str(e) else 401
         raise HTTPException(status_code=status, detail=str(e))
 
-    # Synthetic, deterministic identity per Decane user — the email column is
-    # our unique key and Decane tokens carry no verified email.
-    identity = f"decane_{claims['uid']}@users.vivid"
-    user = (await db.execute(
-        select(User).where(User.email == identity))).scalar_one_or_none()
-    if user is None:
-        user = User(email=identity, password_hash=OAUTH_SENTINEL)
-        db.add(user)
-    # The profile fills what the account doesn't have yet: a real name, a
-    # photo, and the address to show (the account key stays synthetic).
+
+def _fill_profile(user: User, name: str | None, email: str | None, picture: str | None) -> None:
+    """The profile fills what the account doesn't have yet: a real name, a
+    photo, and the address to show (display only; never used to find it)."""
     if name and not user.name:
         user.name = name.strip()[:120]
     if picture and not user.avatar_url:
         user.avatar_url = picture[:1024]
     if email and not user.profile_email:
         user.profile_email = email.lower()[:320]
+
+
+#: A Google sign-in waiting for the emailed code that joins it to an
+#: existing account: redis key -> {uid, email, name, picture}.
+LINK_TTL = 900
+
+
+def _link_key(token: str) -> str:
+    return f"auth:link:{token}"
+
+
+async def _session(db: AsyncSession, access_token: str, name: str | None = None,
+                   email: str | None = None, picture: str | None = None, *,
+                   method: str = "other", verified: str | None = None, redis=None) -> TokenPairOut:
+    """A verified Decane token -> Vivid's own token pair. The account is the
+    one this Decane id is an identity of (identities.py), never one found by
+    an email the caller supplies, which would allow account takeover.
+
+    `verified`: an address the sign-in proved (an emailed code). A Google
+    sign-in (`method` "google") we have not seen, whose claimed email is an
+    existing account's proven address, is held back: 409 link_required, and a
+    code goes to that address; entering it (POST /auth/link/confirm) joins
+    Google to that account."""
+    claims = _claims(access_token)
+    uid = str(claims["uid"])
+    user = await identities.resolve(db, uid)
+    if user is None:
+        claimed = (email or "").strip().lower()
+        if method == "google" and claimed and redis is not None:
+            existing = await identities.by_verified_email(db, claimed)
+            if existing is not None:
+                await db.rollback()
+                token = secrets.token_urlsafe(24)
+                await redis.set(_link_key(token), json.dumps(
+                    {"uid": uid, "email": claimed, "name": name, "picture": picture}), ex=LINK_TTL)
+                sent = True
+                try:
+                    await _send_code(claimed, redis)
+                except APIError:
+                    sent = False                       # a code went out moments ago: it still works
+                raise APIError(409, "link_required",
+                               f"You already have a Vivid account with {_masked(claimed)}. Enter the code we "
+                               "emailed there to use Google with it.",
+                               details={"link_token": token, "email": _masked(claimed), "code_sent": sent,
+                                        "options": ["confirm", "resend", "separate"]})
+        user = User(email=identities.legacy_email(uid), password_hash=OAUTH_SENTINEL)
+        db.add(user)
+        await db.flush()
+        await identities.attach(db, uid, user, method, verified)
+    elif verified:
+        await identities.attach(db, uid, user, "email", verified)
+    _fill_profile(user, name, email, picture)
     await db.commit()
     return _pair(user)
 
@@ -171,7 +215,7 @@ async def email_verify(body: EmailVerifyRequest, db: AsyncSession = Depends(get_
         raise _decane_error(e)
     profile = result.get("profile") or {}
     return await _session(db, str(result.get("jwt") or ""), name=profile.get("name"),
-                          email=profile.get("email") or email, picture=profile.get("picture"))
+                          email=email, picture=profile.get("picture"), method="email", verified=email)
 
 
 @router.get("/google/start")
@@ -191,11 +235,128 @@ async def google_start(request: Request):
 
 
 @router.post("/decane", response_model=TokenPairOut)
-async def decane_login(body: DecaneLoginRequest,
+async def decane_login(body: DecaneLoginRequest, request: Request,
                        db: AsyncSession = Depends(get_db)):
     """The end of the Google redirect: the `decane_jwt` Decane put on the
-    callback URL, verified offline (ES256, JWKS) and traded for a session."""
-    return await _session(db, body.access_token, body.name, body.email, body.picture)
+    callback URL, verified offline (ES256, JWKS) and traded for a session.
+    409 link_required when it should join an existing account first."""
+    return await _session(db, body.access_token, body.name, body.email, body.picture,
+                          method="google", redis=getattr(request.app.state, "redis", None))
+
+
+async def _pending_link(request: Request, token: str) -> dict:
+    redis = getattr(request.app.state, "redis", None)
+    raw = await redis.get(_link_key(token)) if redis is not None else None
+    if not raw:
+        raise APIError(410, "link_expired", "That took too long. Sign in with Google again.")
+    return json.loads(raw)
+
+
+@router.post("/link/confirm", response_model=TokenPairOut)
+async def link_confirm(body: LinkConfirmRequest, request: Request, db: AsyncSession = Depends(get_db)):
+    """The code from the address the Google sign-in claimed: it proves the
+    address, so Google joins the account that proved it before."""
+    pending = await _pending_link(request, body.link_token)
+    try:
+        result = await decane.verify_email(pending["email"], body.code.strip())
+    except decane.DecaneError as e:
+        raise _decane_error(e)
+    email_uid = str(_claims(str(result.get("jwt") or ""))["uid"])
+    user = await identities.resolve(db, email_uid) or await identities.by_verified_email(db, pending["email"])
+    if user is None:
+        raise APIError(410, "link_expired", "That account is gone. Sign in with Google again.")
+    await identities.attach(db, email_uid, user, "email", pending["email"])
+    await identities.attach(db, pending["uid"], user, "google")
+    _fill_profile(user, pending.get("name"), pending["email"], pending.get("picture"))
+    await db.commit()
+    await request.app.state.redis.delete(_link_key(body.link_token))
+    return _pair(user)
+
+
+@router.post("/link/resend", status_code=202)
+async def link_resend(body: LinkTokenRequest, request: Request):
+    pending = await _pending_link(request, body.link_token)
+    return await _send_code(pending["email"], request.app.state.redis)
+
+
+@router.post("/link/separate", response_model=TokenPairOut)
+async def link_separate(body: LinkTokenRequest, request: Request, db: AsyncSession = Depends(get_db)):
+    """Keep Google as its own, separate account after all."""
+    pending = await _pending_link(request, body.link_token)
+    user = await identities.resolve(db, pending["uid"])
+    if user is None:
+        user = User(email=identities.legacy_email(pending["uid"]), password_hash=OAUTH_SENTINEL)
+        db.add(user)
+        await db.flush()
+        await identities.attach(db, pending["uid"], user, "google")
+    _fill_profile(user, pending.get("name"), pending["email"], pending.get("picture"))
+    await db.commit()
+    await request.app.state.redis.delete(_link_key(body.link_token))
+    return _pair(user)
+
+
+# ------------------------------------------------------ sign-in methods
+def _method_out(row) -> dict:
+    return {"method": row.method, "email": _masked(row.email) if row.email else None,
+            "created_at": row.created_at}
+
+
+async def _connect(db: AsyncSession, me: User, uid: str, method: str, email: str | None) -> IdentitiesOut:
+    other = await identities.resolve(db, uid)
+    merged = None
+    if other is not None and other.id != me.id:
+        try:
+            merged = await identities.merge(db, me, other)
+        except ValueError as e:
+            await db.rollback()
+            raise APIError(409, "merge_blocked", e.args[0][0]["message"], details={"blockers": e.args[0]})
+    await identities.attach(db, uid, me, method, email)
+    await db.commit()
+    return IdentitiesOut(methods=[_method_out(r) for r in await identities.methods(db, me)], merged=merged)
+
+
+@router.get("/me/identities", response_model=IdentitiesOut)
+async def my_identities(user: User = Depends(get_session_user), db: AsyncSession = Depends(get_db)):
+    """The ways into this account (emailed code, Google)."""
+    rows = await identities.methods(db, user)
+    if not rows:
+        # An account from before identities: its one sign-in, recorded now.
+        if user.email.startswith("decane_"):
+            await identities.resolve(db, user.email.removeprefix("decane_").removesuffix("@users.vivid"))
+            await db.commit()
+            rows = await identities.methods(db, user)
+    return IdentitiesOut(methods=[_method_out(r) for r in rows])
+
+
+@router.post("/me/identities/email/start", status_code=202)
+async def connect_email_start(body: EmailStartRequest, request: Request,
+                              user: User = Depends(get_session_user)):
+    """A code to the address to connect (as for sign-in)."""
+    return await _send_code(body.email.strip().lower(), getattr(request.app.state, "redis", None))
+
+
+@router.post("/me/identities/email", response_model=IdentitiesOut)
+async def connect_email(body: EmailVerifyRequest, user: User = Depends(get_session_user),
+                        db: AsyncSession = Depends(get_db)):
+    """Connect an emailed-code sign-in. When that address already has its
+    own Vivid account, that account is merged into this one (merged says
+    what moved); 409 merge_blocked when money makes that unsafe."""
+    email = body.email.strip().lower()
+    try:
+        result = await decane.verify_email(email, body.code.strip())
+    except decane.DecaneError as e:
+        raise _decane_error(e)
+    uid = str(_claims(str(result.get("jwt") or ""))["uid"])
+    return await _connect(db, user, uid, "email", email)
+
+
+@router.post("/me/identities/google", response_model=IdentitiesOut)
+async def connect_google(body: DecaneLoginRequest, user: User = Depends(get_session_user),
+                         db: AsyncSession = Depends(get_db)):
+    """Connect Google: the `decane_jwt` from a Google sign-in done while
+    signed in here. Merges its account into this one, as for email."""
+    uid = str(_claims(body.access_token)["uid"])
+    return await _connect(db, user, uid, "google", None)
 
 
 @router.get("/me", response_model=UserOut)

@@ -18,6 +18,8 @@ bad_asset (400), not_found (404).
 ## Endpoint index (diff your client against this list)
 
 Auth        POST /auth/email/start · POST /auth/email/verify · GET /auth/google/start · POST /auth/decane
+            POST /auth/link/confirm · /link/resend · /link/separate · GET /auth/me/identities
+            POST /auth/me/identities/email/start · /me/identities/email · /me/identities/google
             POST /auth/refresh · GET /auth/me · PATCH /auth/me
             GET /auth/me/deletion · POST /auth/me/deletion-code · DELETE /auth/me {code}
             POST /auth/handoff {next?} · POST /auth/handoff/exchange {token}
@@ -104,6 +106,33 @@ first entry), with ?decane_jwt=...&name=&email=&picture=. Exchange that:
   -> the same pair. The profile fields are display-only.
 
 Accounts are keyed on Decane's user id, never on an email a client sends.
+Decane gives the emailed code and Google different ids for the same person,
+so an account can hold several sign-in methods:
+
+  409 link_required on POST /auth/decane: this Google sign-in claims an
+  address that someone proved with an emailed code (an existing account).
+  It is not signed in; a code went to that address (details.code_sent).
+  details: {link_token, email (masked), code_sent, options}. Show "You
+  already have an account with t***@gmail.com: enter the code we sent there
+  to use Google with it", a code input, "Resend", and "Keep them separate".
+    POST /auth/link/confirm {link_token, code} -> the pair, for the existing
+         account; Google opens it from now on.
+    POST /auth/link/resend {link_token} -> 202 (the same limits as sign-in codes)
+    POST /auth/link/separate {link_token} -> the pair, for a new, separate account
+    410 link_expired after 15 minutes: sign in with Google again.
+
+  Signed in (session only), in the account settings:
+    GET  /auth/me/identities -> {methods: [{method: email|google|other, email, created_at}]}
+    POST /auth/me/identities/email/start {email} -> 202, then
+    POST /auth/me/identities/email {email, code} -> {methods, merged}
+    POST /auth/me/identities/google {access_token: <decane_jwt from a Google
+         sign-in done while signed in>} -> {methods, merged}
+    When the connected method already had its own Vivid account, that
+    account is folded into this one: projects, shares, messages, gifts,
+    chats, API keys, devices, connections, the wallet balance and extra
+    credits; it is then closed. merged = {projects, wallet_micro?}. 409
+    merge_blocked (details.blockers [{code, message}]) when it has a paid
+    plan (paid_plan) or uses Vivid Pay (vivid_pay).
 
 Step 3, use and refresh:
   Authorization: Bearer <access_token> on every request.

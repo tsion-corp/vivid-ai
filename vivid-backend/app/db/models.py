@@ -35,11 +35,29 @@ class User(Base):
     name: Mapped[str | None] = mapped_column(String(120), default=None)
     avatar_url: Mapped[str | None] = mapped_column(String(1024), default=None)
     profile_email: Mapped[str | None] = mapped_column(String(320), default=None)
+    #: An address this person proved they own (an emailed-code sign-in).
+    #: The only email ever used to find an account; profile_email is not.
+    verified_email: Mapped[str | None] = mapped_column(String(320), default=None, index=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_now)
     #: Set when the person deleted their account. The row stays, anonymised,
     #: because the money records keyed to it are kept for seven years
     #: (app/services/account.py); every credential is refused from then on.
     deleted_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), default=None)
+
+
+class UserIdentity(Base):
+    """A way to sign in to an account: one Decane user id per sign-in method
+    (Decane gives the emailed code and Google different ids for the same
+    person). Several can point at one account once they are linked."""
+    __tablename__ = "user_identities"
+
+    decane_uid: Mapped[str] = mapped_column(String(64), primary_key=True)
+    user_id: Mapped[str] = mapped_column(ForeignKey("users.id", ondelete="CASCADE"), index=True)
+    #: email | google | other
+    method: Mapped[str] = mapped_column(String(16), default="other")
+    #: For an emailed-code identity: the address (proved by the code).
+    email: Mapped[str | None] = mapped_column(String(320), default=None)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_now)
 
 
 class Client(Base):

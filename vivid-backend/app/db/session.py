@@ -92,6 +92,10 @@ async def init_db() -> None:
             "ALTER TABLE builder_projects ADD COLUMN IF NOT EXISTS forms_email VARCHAR(320)"))
         await conn.execute(text(
             "ALTER TABLE builder_projects ADD COLUMN IF NOT EXISTS forms_enabled BOOLEAN NOT NULL DEFAULT TRUE"))
+        await conn.execute(text(
+            "ALTER TABLE users ADD COLUMN IF NOT EXISTS verified_email VARCHAR(320)"))
+        await conn.execute(text(
+            "CREATE INDEX IF NOT EXISTS ix_users_verified_email ON users (verified_email)"))
         # builder_invites shipped for a day without its link token.
         await conn.execute(text(
             "ALTER TABLE builder_invites ADD COLUMN IF NOT EXISTS token VARCHAR(64)"))
