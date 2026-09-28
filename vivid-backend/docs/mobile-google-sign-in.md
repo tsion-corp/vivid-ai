@@ -76,7 +76,38 @@ Notes:
 - **`decane_is_new_user=true`** on the callback means the account was just
   created. Use it only if the app shows onboarding.
 
-## 3. Checking it
+## 3. When Google should join an existing account (409 link_required)
+
+Decane gives Google and the emailed code different user ids, so the same
+address used to make two accounts. Now, when a Google sign-in claims an
+address someone already proved with an emailed code, `POST /v1/auth/decane`
+answers **409 `link_required`** instead of a session, and a code has gone to
+that address:
+
+```json
+{"error": {"code": "link_required", "message": "You already have a Vivid account with te***@gmail.com. ...",
+           "details": {"link_token": "…", "email": "te***@gmail.com", "code_sent": true,
+                       "options": ["confirm", "resend", "separate"]}}}
+```
+
+Show the message, a 6-digit code field, "Send another code" and "Keep a
+separate account":
+
+- `POST /v1/auth/link/confirm {link_token, code}` returns the usual token
+  pair, for the existing account. Google opens it from then on.
+- `POST /v1/auth/link/resend {link_token}` returns 202.
+- `POST /v1/auth/link/separate {link_token}` returns a token pair for a new,
+  separate account.
+- 410 `link_expired` after 15 minutes means: start Google sign-in again.
+
+In the account screen, people who already have two accounts can connect the
+other method. The other account's projects and wallet balance move over. See
+`GET /v1/auth/me/identities`, `POST /v1/auth/me/identities/email/start` then
+`/me/identities/email {email, code}`, and `/me/identities/google {access_token}`
+(a Decane token from a Google sign-in done while signed in). There's a 409
+`merge_blocked` when that account has a paid plan or Vivid Pay (details.blockers).
+
+## 4. Checking it
 
 1. Sign in with Google on a real phone (iOS and Android). The auth session
    should close and the app should be signed in.
