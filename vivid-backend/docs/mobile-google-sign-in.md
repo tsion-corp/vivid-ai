@@ -1,5 +1,13 @@
 # Google sign-in on mobile (vividbuild://auth)
 
+Two parts: **Part 1** makes Google sign-in return to the app. **Part 2**
+(new) joins Google and emailed-code sign-ins for the same person into one
+account. Each part stands on its own.
+
+---
+
+# Part 1: Google sign-in returns to the app
+
 Google sign-in on the app should come back to the app, not to the website. Our
 backend asks Decane for the Google consent URL. Decane then chooses which of its
 registered callbacks to return to, based on the `Origin` of the request. The
@@ -76,41 +84,101 @@ Notes:
 - **`decane_is_new_user=true`** on the callback means the account was just
   created. Use it only if the app shows onboarding.
 
-## 3. When Google should join an existing account (409 link_required)
-
-Decane gives Google and the emailed code different user ids, so the same
-address used to make two accounts. Now, when a Google sign-in claims an
-address someone already proved with an emailed code, `POST /v1/auth/decane`
-answers **409 `link_required`** instead of a session, and a code has gone to
-that address:
-
-```json
-{"error": {"code": "link_required", "message": "You already have a Vivid account with te***@gmail.com. ...",
-           "details": {"link_token": "…", "email": "te***@gmail.com", "code_sent": true,
-                       "options": ["confirm", "resend", "separate"]}}}
-```
-
-Show the message, a 6-digit code field, "Send another code" and "Keep a
-separate account":
-
-- `POST /v1/auth/link/confirm {link_token, code}` returns the usual token
-  pair, for the existing account. Google opens it from then on.
-- `POST /v1/auth/link/resend {link_token}` returns 202.
-- `POST /v1/auth/link/separate {link_token}` returns a token pair for a new,
-  separate account.
-- 410 `link_expired` after 15 minutes means: start Google sign-in again.
-
-In the account screen, people who already have two accounts can connect the
-other method. The other account's projects and wallet balance move over. See
-`GET /v1/auth/me/identities`, `POST /v1/auth/me/identities/email/start` then
-`/me/identities/email {email, code}`, and `/me/identities/google {access_token}`
-(a Decane token from a Google sign-in done while signed in). There's a 409
-`merge_blocked` when that account has a paid plan or Vivid Pay (details.blockers).
-
-## 4. Checking it
+## 3. Checking it
 
 1. Sign in with Google on a real phone (iOS and Android). The auth session
    should close and the app should be signed in.
 2. Sign in with Google on the website. It should still land on the site's
    `/auth/callback`.
 3. If step 1 opens the website instead, see step 1 of the dashboard section.
+
+---
+---
+
+# Part 2: One account for Google and the emailed code (new)
+
+**The problem.** Decane gives each sign-in method its own user id, so signing
+in with Google and with an emailed code using the same address made two
+separate Vivid accounts. The backend now links them. The app needs two
+things: a code step during Google sign-in, and a "Sign-in methods" section in
+the account screen.
+
+## A. Code step during Google sign-in
+
+Sometimes a Google sign-in claims an address that someone already proved with
+an emailed code. Then `POST /v1/auth/decane` answers **409 `link_required`**
+instead of a session, and a code has gone to that address:
+
+```json
+{"error": {"code": "link_required",
+           "message": "You already have a Vivid account with te***@gmail.com. Enter the code we emailed there to use Google with it.",
+           "details": {"link_token": "…", "email": "te***@gmail.com", "code_sent": true,
+                       "options": ["confirm", "resend", "separate"]}}}
+```
+
+Show a screen with the message, a 6-digit code field, and two smaller
+actions, "Send another code" and "Keep a separate account":
+
+| Action | Call | Answer |
+|---|---|---|
+| Enter the code | `POST /v1/auth/link/confirm {link_token, code}` | the usual token pair, for the existing account. Google opens it from then on. |
+| Send another code | `POST /v1/auth/link/resend {link_token}` | 202 |
+| Keep a separate account | `POST /v1/auth/link/separate {link_token}` | a token pair for a new, separate account |
+
+Errors to handle:
+- **400 `invalid_code`:** wrong or expired code. Let them retry.
+- **429 `code_just_sent` / `too_many_codes`:** a code went out moments ago, or
+  too many this hour.
+- **410 `link_expired`:** after 15 minutes. Start Google sign-in again.
+
+```ts
+// In signInWithGoogle(), step 4, before `if (!res.ok) throw ...`:
+if (res.status === 409) {
+  const { error } = await res.json();
+  if (error.code === "link_required") {
+    return { linkRequired: true, linkToken: error.details.link_token, email: error.details.email };
+  }
+}
+
+export const confirmLink = (linkToken: string, code: string) =>
+  post("/v1/auth/link/confirm", { link_token: linkToken, code });   // -> token pair
+export const resendLinkCode = (linkToken: string) =>
+  post("/v1/auth/link/resend", { link_token: linkToken });
+export const keepSeparate = (linkToken: string) =>
+  post("/v1/auth/link/separate", { link_token: linkToken });        // -> token pair
+```
+
+## B. "Sign-in methods" in the account screen
+
+This is for people who already have two accounts, and for adding a second
+way in. All calls need the signed-in bearer token.
+
+- **List:** `GET /v1/auth/me/identities` returns `{methods: [{method: "email" | "google" | "other", email, created_at}]}`.
+  `"other"` is a sign-in from before methods were recorded; show it as "Your
+  first sign-in".
+- **Connect an email:**
+  1. `POST /v1/auth/me/identities/email/start {email}` returns 202. A code
+     goes to that address.
+  2. `POST /v1/auth/me/identities/email {email, code}` returns `{methods, merged}`.
+- **Connect Google:** run the same Google flow as Part 1 while signed in.
+  Then, instead of `/v1/auth/decane`, send the `decane_jwt` to
+  `POST /v1/auth/me/identities/google {access_token: decane_jwt}`. That
+  returns `{methods, merged}`.
+
+If the connected method already had its own Vivid account, that account is
+folded into this one: its projects, shares, messages, gifts, chats, API keys,
+devices, wallet balance and extra credits move over, and the other account is
+closed. `merged` says what moved, as `{projects, wallet_micro?}`. Show
+"Connected. 2 projects moved over from the other account."
+
+**409 `merge_blocked`** means that account has a paid plan (`paid_plan`) or
+uses Vivid Pay (`vivid_pay`). `error.details.blockers` is a list of
+`{code, message}`. Show the message; nothing was changed.
+
+## C. Checking Part 2
+
+1. On a fresh test address: sign in with an emailed code, sign out, then sign
+   in with Google on the same address. The code screen appears. Enter the
+   code, and you're in the same account (same projects).
+2. With two existing accounts: sign in to one, then use "Connect Google" in
+   the account screen with the other. Its projects appear in this account.
