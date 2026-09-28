@@ -103,6 +103,30 @@ separate Vivid accounts. The backend now links them. The app needs two
 things: a code step during Google sign-in, and a "Sign-in methods" section in
 the account screen.
 
+## Why this can't affect anyone else
+
+Linking only ever joins one person's own accounts, and only when that person
+proves it:
+
+- **An email the app sends never finds an account.** The Google email reaches
+  us through the app or browser and could be typed by anyone, so on its own it
+  opens nothing. Only an address proved with an emailed code counts.
+- **Joining at sign-in needs the code sent to that address.** A Google
+  sign-in that claims someone else's address gets no session. It gets the
+  code screen, and the code goes to the real owner's inbox. Without it, the
+  only way forward is "Keep a separate account".
+- **Merging in settings needs both sign-ins.** You must be signed in to one
+  account and complete the other sign-in yourself. Nobody can pull another
+  person's account into theirs.
+- **Nothing happens automatically to existing accounts.** Accounts that are
+  already split stay as they are until their owner connects them. Every
+  sign-in with no match works exactly as before.
+- **Other people keep what they had.** People a merged project was shared
+  with keep their access; the project just moves to the merged account.
+- **No money is lost.** A wallet balance is moved with a matching entry on
+  both accounts. Accounts with a paid plan or Vivid Pay are never merged:
+  that answers `merge_blocked` and changes nothing.
+
 ## A. Code step during Google sign-in
 
 Sometimes a Google sign-in claims an address that someone already proved with
