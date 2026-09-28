@@ -28,6 +28,7 @@ from app.db.models import (BuilderProject, User, VividPayAccount, VividPayChecko
 from app.services.vividpay import (VividPayError, checkouts, earnings, events, fee_for,
                                    key_hash, kyc, payouts)
 from app.services.wallet import deposits, pouch
+from sqlalchemy import select
 from tests.conftest import FakeRedis
 from tests.test_builder_routes import maker  # noqa: F401
 
@@ -50,8 +51,11 @@ class FakePouch:
         monkeypatch.setattr(settings, "POUCH_API_KEY", "sk_test")
         for name in ("ensure_customer_ref", "open_account", "account_balance", "banks",
                      "validate_account", "payout_quote", "create_payout", "get_payout",
-                     "find_payout", "kyc_bvn", "find_transfer", "create_static_address"):
+                     "find_payout", "kyc_bvn", "find_transfer", "create_static_address",
+                     "inbound_transfers"):
             monkeypatch.setattr(pouch, name, getattr(self, name))
+        # No background look-agains in tests: they would outlive the test's database.
+        monkeypatch.setattr(deposits, "LOOK_AGAIN_AFTER", ())
 
     async def ensure_customer_ref(self, ref, first, last, email=None, phone=None):
         self.calls.append(("customer", ref, first, last))
@@ -103,6 +107,9 @@ class FakePouch:
 
     async def find_transfer(self, tid, pages=5):
         return self.transfers.get(tid)
+
+    async def inbound_transfers(self, skip=0, take=100):
+        return list(self.transfers.values())[skip:skip + take]
 
 
 @pytest.fixture
@@ -706,3 +713,22 @@ def test_paystack_routes_leave_a_vivid_pay_project_alone(maker, fake, monkeypatc
         async with maker() as db:
             return (await db.get(BuilderProject, pid)).payments_provider
     assert asyncio.run(provider()) == "vividpay"
+
+
+async def test_any_pouch_webhook_is_a_look_now(maker, fake):
+    """Whatever Pouch calls the event, and whatever it puts in `data`, a
+    top-up is credited straight away from the transfer list."""
+    await _setup(maker)
+    from app.db.models import WalletEntry, WalletFunding
+    async with maker() as db:
+        db.add(WalletFunding(user_id="u1", provider="pouch", option="bank", external_id="va_topup", address="0123"))
+        await db.commit()
+    fake.transfers["tr_top"] = {"id": "tr_top", "virtual_account_id": "va_topup", "amount": 500_000}
+    async with maker() as db:
+        out = await deposits.on_pouch_event(db, {"event": "transfer.received", "data": {"reference": "x"}})
+        await db.commit()
+        assert out is True
+        entries = (await db.execute(select(WalletEntry).where(WalletEntry.provider_ref == "tr_top"))).scalars().all()
+        assert len(entries) == 1
+        # The same webhook again credits nothing more.
+        assert await deposits.on_pouch_event(db, {"event": "transfer.received", "data": {}}) is None

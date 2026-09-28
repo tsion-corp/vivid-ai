@@ -556,7 +556,11 @@ class Settings(BaseSettings):
     WALLET_DISPLAY_CURRENCIES: list[str] = ["USD", "NGN", "GHS", "KES", "ZAR", "EUR", "GBP"]
     # How often deposits are fetched from both providers, in case a webhook
     # never arrived. Webhooks only make crediting faster.
-    WALLET_RECONCILE_SECONDS: int = 300
+    WALLET_RECONCILE_SECONDS: int = 60
+    # While someone watches for a top-up (GET /wallet?watch=1, every few
+    # seconds from the add-funds screen), Pouch's newest transfers are
+    # checked at most this often across everyone.
+    WALLET_WATCH_SECONDS: int = 4
     # Smallest crypto deposit worth crediting, in USD (below it the bridging
     # fees eat most of it; Dextopus still settles it).
     WALLET_CRYPTO_MIN_USD: float = 2.0

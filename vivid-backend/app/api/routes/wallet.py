@@ -21,7 +21,7 @@ import logging
 import time
 from datetime import datetime
 
-from fastapi import APIRouter, Depends, Query
+from fastapi import APIRouter, Depends, Query, Request
 from pydantic import BaseModel, Field
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -31,7 +31,7 @@ from app.core.config import settings
 from app.core.errors import APIError
 from app.db.models import BuilderProject, User, WalletFunding
 from app.services.plans import catalog, gifts, subscriptions, usage
-from app.services.wallet import MICRO, crypto_options, dextopus, fx, ledger, pouch
+from app.services.wallet import MICRO, crypto_options, deposits, dextopus, fx, ledger, pouch
 
 router = APIRouter(tags=["wallet"])
 log = logging.getLogger("vivid.wallet")
@@ -50,9 +50,23 @@ async def _display(micro: int, currency: str) -> dict | None:
 
 # ------------------------------------------------------------------ wallet
 @router.get("/wallet")
-async def get_wallet(currency: str = Query("NGN", max_length=3),
+async def get_wallet(request: Request, currency: str = Query("NGN", max_length=3), watch: bool = False,
                      user: User = Depends(get_session_user),
                      db: AsyncSession = Depends(get_db)):
+    """`watch=1` while the person waits for a bank transfer to land: Pouch's
+    newest transfers are checked now (at most every WALLET_WATCH_SECONDS
+    across everyone), so a top-up shows without waiting for Pouch's webhook."""
+    if watch and pouch.configured():
+        redis = getattr(request.app.state, "redis", None)
+        try:
+            go = redis is None or await redis.set("wallet:watch", "1", nx=True, ex=settings.WALLET_WATCH_SECONDS)
+        except Exception:
+            go = False
+        if go:
+            try:
+                await deposits.look_now(db)
+            except Exception as e:                        # the webhook and reconciler still come
+                log.warning("wallet watch look failed: %s", e)
     wallet = await ledger.wallet_for(db, user.id)
     await db.commit()
     return {"balance_micro": wallet.balance_micro, "balance_usd": _usd(wallet.balance_micro),

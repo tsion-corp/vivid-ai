@@ -974,6 +974,10 @@ POST   /gifts/{token}/claim -> {gift, plan, plan_until}
 
 GET /wallet?currency=NGN -> {balance_micro (micro-USD), display {amount,
 currency, rate}, currencies, bank_available, crypto_available, ...}.
+GET /wallet?watch=1 while the person waits for a bank transfer to land (poll
+every few seconds from the add-funds screen): Pouch's newest transfers are
+checked on the spot, so a top-up shows as soon as Pouch has it, not when its
+webhook or the minute-by-minute check gets there.
 GET /wallet/entries -> history. Money in:
   Bank: POST /wallet/bank-account [{bvn?}] -> the user's own naira account
     {account_number, bank_name, account_name}; made once. 400 bvn_required

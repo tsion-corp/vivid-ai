@@ -6,6 +6,7 @@ an authenticated API call, and the reconciler finds anything a webhook
 never announced. Both end here, and the ledger's unique provider_ref makes
 the second arrival of the same deposit a no-op.
 """
+import asyncio
 import hashlib
 import hmac
 import logging
@@ -154,30 +155,79 @@ def verify_pouch_signature(raw_body: bytes, signature: str | None, secret: str) 
     return False
 
 
-async def on_pouch_event(db: AsyncSession, payload: dict):
-    """A transfer into a wallet top-up account credits the wallet; into a
-    Vivid Pay checkout's account, pays that order; a payout event settles
-    a withdrawal. Anything else (e.g. money arriving in an owner's earnings
-    account from a sweep) is ignored."""
+async def look_now(db: AsyncSession, take: int = 50) -> int:
+    """Credit whatever is new among Pouch's latest inbound transfers: wallet
+    top-ups, and Vivid Pay orders. One API call; safe to repeat (the ledger
+    credits a transfer once). Returns how many were credited. Commits."""
     from app.services.vividpay import events as pay_events
-    event = payload.get("event") or ""
+    if not pouch.configured():
+        return 0
+    credited = 0
+    for row in await pouch.inbound_transfers(skip=0, take=take):
+        if await credit_pouch_transfer(db, row):
+            credited += 1
+        elif await pay_events.on_transfer(db, row):
+            credited += 1
+    await db.commit()
+    return credited
+
+
+#: After a webhook, when the transfer is not listed yet: look again this
+#: many seconds later (Pouch's list can trail its webhook).
+LOOK_AGAIN_AFTER = (5, 15, 45)
+_retries: set = set()
+
+
+def _look_again_later() -> None:
+    async def run():
+        from app.db.session import async_session
+        for delay in LOOK_AGAIN_AFTER:
+            await asyncio.sleep(delay)
+            try:
+                async with async_session() as db:
+                    if await look_now(db):
+                        return
+            except Exception as e:                   # the reconciler still runs
+                log.warning("pouch look-again failed: %s", e)
+    try:
+        task = asyncio.get_running_loop().create_task(run())
+        _retries.add(task)
+        task.add_done_callback(_retries.discard)
+    except RuntimeError:
+        pass
+
+
+async def on_pouch_event(db: AsyncSession, payload: dict):
+    """A payout event settles a withdrawal; a fill event, an optimistic
+    fill. Any other event is taken as "money may have arrived": the named
+    transfer, else Pouch's newest transfers, are credited now (wallet
+    top-ups and Vivid Pay orders alike), and looked at again shortly when
+    nothing was new yet. The event names Pouch sends are logged, never
+    assumed: expecting one exact name left every top-up waiting for the
+    reconciler."""
+    from app.services.vividpay import events as pay_events
+    event = payload.get("event") or payload.get("type") or ""
+    data = payload.get("data") if isinstance(payload.get("data"), dict) else {}
+    log.info("pouch webhook %r (data keys: %s)", event, ", ".join(sorted(data)[:12]))
     if event.startswith("payout."):
         return await pay_events.on_payout_event(db, payload)
     if event.startswith("optimistic_fill."):
         return await pay_events.on_fill_event(db, payload)
-    if event != "virtual_account.credited":
-        return None
-    transfer_id = (payload.get("data") or {}).get("id")
-    if not transfer_id:
-        return None
-    transfer = await pouch.find_transfer(str(transfer_id))
-    if transfer is None:
-        log.warning("pouch webhook names transfer %s the API does not list", transfer_id)
-        return None
-    entry = await credit_pouch_transfer(db, transfer)
-    if entry is not None:
-        return entry
-    return await pay_events.on_transfer(db, transfer)
+    transfer_id = next((str(data[k]) for k in ("transfer_id", "inbound_transfer_id", "transferId", "id")
+                        if data.get(k)), None)
+    if transfer_id:
+        transfer = await pouch.find_transfer(transfer_id, pages=1)
+        if transfer is not None:
+            entry = await credit_pouch_transfer(db, transfer)
+            if entry is not None:
+                return entry
+            paid = await pay_events.on_transfer(db, transfer)
+            if paid:
+                return paid
+    if await look_now(db):
+        return True
+    _look_again_later()
+    return None
 
 
 async def on_dextopus_event(db: AsyncSession, payload: dict) -> WalletEntry | None:
