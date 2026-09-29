@@ -693,7 +693,7 @@ class Settings(BaseSettings):
     E2B_VIDEO_TEMPLATE: str = "vivid-video"
     BUILDER_VIDEO_TEMPLATE_DIR: str = "../sandbox-templates/vivid-video"
     #: The strong model the videos need (the sample was made by Claude Opus).
-    VIDEO_MODEL: str = "anthropic/claude-sonnet-5"
+    VIDEO_MODEL: str = "anthropic/claude-sonnet-5.5"
     VIDEO_MAX_STEPS: int = 60
     #: Wall clock for one video, composing and rendering, in seconds.
     VIDEO_TIMEOUT_SECONDS: int = 1800
