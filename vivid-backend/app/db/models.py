@@ -495,6 +495,36 @@ class Gift(Base):
     cancelled_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), default=None)
 
 
+class BuilderVideo(Base):
+    """A launch video of a project (app/builder/video.py): an agent plans it
+    from the code and renders it with Hyperframes in a throwaway sandbox."""
+    __tablename__ = "builder_videos"
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=_uuid)
+    project_id: Mapped[str] = mapped_column(
+        ForeignKey("builder_projects.id", ondelete="CASCADE"), index=True)
+    #: Who asked (an editor may); the owner's allowance or wallet pays.
+    user_id: Mapped[str] = mapped_column(String(36))
+    owner_id: Mapped[str] = mapped_column(String(36), index=True)
+    snapshot_id: Mapped[str | None] = mapped_column(String(36), default=None)
+    #: queued | composing | rendering | done | failed | canceled
+    status: Mapped[str] = mapped_column(String(12), default="queued")
+    tone: Mapped[str | None] = mapped_column(String(80), default=None)
+    #: landscape | vertical | square
+    format: Mapped[str] = mapped_column(String(10), default="landscape")
+    direction: Mapped[str | None] = mapped_column(String(300), default=None)
+    duration_s: Mapped[float | None] = mapped_column(Float, default=None)
+    video_key: Mapped[str | None] = mapped_column(String(512), default=None)
+    poster_key: Mapped[str | None] = mapped_column(String(512), default=None)
+    share_copy: Mapped[str | None] = mapped_column(Text, default=None)
+    error: Mapped[str | None] = mapped_column(Text, default=None)
+    #: allowance | wallet
+    paid_with: Mapped[str] = mapped_column(String(10), default="allowance")
+    amount_micro: Mapped[int] = mapped_column(BigInteger, default=0)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_now, index=True)
+    finished_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), default=None)
+
+
 class BuilderSecret(Base):
     """A per-project secret (Supabase tokens, service keys), Fernet-encrypted
     at rest. Values never appear in a tool result or the stream."""

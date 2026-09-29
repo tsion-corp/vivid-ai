@@ -16,6 +16,8 @@ DEPOSIT_BANK, DEPOSIT_CRYPTO = "deposit_bank", "deposit_crypto"
 CHARGE, REFUND, TOKEN_PACK, PLAN, ADJUSTMENT = "charge", "refund", "token_pack", "plan", "adjustment"
 #: A plan bought for someone else.
 GIFT = "gift"
+#: A launch video beyond the month's allowance.
+VIDEO = "video"
 
 
 class InsufficientFunds(Exception):

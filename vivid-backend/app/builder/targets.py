@@ -22,6 +22,8 @@ from app.core.config import settings
 
 WEB = "web"
 MOBILE = "mobile"
+#: Not a project target: the throwaway sandbox launch videos are made in.
+VIDEO = "video"
 
 
 @dataclass(frozen=True)
@@ -119,6 +121,28 @@ _MOBILE = Target(
 
 _BY_NAME = {t.name: t for t in (_WEB, _MOBILE)}
 NAMES = tuple(_BY_NAME)
+
+#: Chromium, ffmpeg, hyperframes and the brag assets; no dev server. Sized
+#: for rendering, which is CPU-bound.
+_VIDEO = Target(
+    name=VIDEO,
+    template_setting="E2B_VIDEO_TEMPLATE",
+    port_setting="BUILDER_DEV_PORT",
+    template_dir_setting="BUILDER_VIDEO_TEMPLATE_DIR",
+    local_dev_cmd=("true",),
+    key_files=(),
+    typecheck_cmd="true",
+    blocked=(),
+    env_prefix="VITE_",
+    upload_dir="project/public/uploads",
+    shots=(),
+    vcpus=4,
+    memory_gib=4.0,
+)
+
+
+def video() -> Target:
+    return _VIDEO
 
 
 def get(name: str | None) -> Target:

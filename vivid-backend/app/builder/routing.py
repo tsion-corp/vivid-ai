@@ -12,6 +12,8 @@ PLAN = "plan"
 BUILD = "build"
 EDIT = "edit"
 FALLBACK = "fallback"
+#: Launch videos (video.py): motion design needs a stronger model.
+VIDEO = "video"
 
 
 def stage_for(snapshot_seq: int) -> str:
@@ -25,6 +27,7 @@ def slug_for(stage: str) -> str:
         BUILD: settings.BUILD_MODEL,
         EDIT: settings.EDIT_MODEL,
         FALLBACK: settings.FALLBACK_MODEL,
+        VIDEO: settings.VIDEO_MODEL,
     }[stage]
 
 

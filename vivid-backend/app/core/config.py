@@ -632,6 +632,11 @@ class Settings(BaseSettings):
     PLAN_MAX_YEARLY_PRICE_USD: float = 0.80
     PLAN_MAX_WINDOW_CREDITS: float = 24
     PLAN_MAX_MONTH_CREDITS: float = 200
+    # Launch videos (app/builder/video.py) included per month; more are paid
+    # from the wallet at VIDEO_PRICE_USD each.
+    PLAN_FREE_VIDEOS: int = 1
+    PLAN_PRO_VIDEOS: int = 5
+    PLAN_MAX_VIDEOS: int = 20
     # Extra credits bought from the wallet once the plan is used up; they
     # never expire.
     PLAN_CREDIT_PRICE_USD: float = 0.30
@@ -681,6 +686,21 @@ class Settings(BaseSettings):
     GIFT_CLAIM_DAYS: int = 30
     GIFT_CREDIT_DAYS: int = 30
     GIFT_MAX_PENDING: int = 20
+
+    # Launch videos: an agent writes a Hyperframes composition from the
+    # project's code (the brag skill) and renders it in a throwaway sandbox
+    # of the vivid-video template (Chromium + ffmpeg + hyperframes).
+    E2B_VIDEO_TEMPLATE: str = "vivid-video"
+    BUILDER_VIDEO_TEMPLATE_DIR: str = "../sandbox-templates/vivid-video"
+    #: The strong model the videos need (the sample was made by Claude Opus).
+    VIDEO_MODEL: str = "anthropic/claude-sonnet-5"
+    VIDEO_MAX_STEPS: int = 60
+    #: Wall clock for one video, composing and rendering, in seconds.
+    VIDEO_TIMEOUT_SECONDS: int = 1800
+    #: A render command may take this long (a 20 s video at 30 fps).
+    VIDEO_RENDER_TIMEOUT: int = 900
+    #: An extra video beyond the month's allowance, from the owner's wallet.
+    VIDEO_PRICE_USD: float = 1.50
 
     # Outgoing email (app/services/mail.py): invites, gifts, and the forms
     # generated sites send. Any SMTP provider; empty host = no email is sent

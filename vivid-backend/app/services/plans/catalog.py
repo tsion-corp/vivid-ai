@@ -39,6 +39,8 @@ class Plan:
     max_apps: int | None
     window_credits: float
     month_credits: float
+    #: Launch videos included each month.
+    videos_per_month: int = 0
 
     @property
     def window_tokens(self) -> int:
@@ -57,11 +59,11 @@ def plans() -> dict[str, Plan]:
     s = settings
     return {
         FREE: Plan(FREE, "Free", 0.0, 0.0, s.PLAN_FREE_APPS, s.PLAN_FREE_WINDOW_CREDITS,
-                   s.PLAN_FREE_MONTH_CREDITS),
+                   s.PLAN_FREE_MONTH_CREDITS, s.PLAN_FREE_VIDEOS),
         PRO: Plan(PRO, "Pro", s.PLAN_PRO_PRICE_USD, s.PLAN_PRO_YEARLY_PRICE_USD, None,
-                  s.PLAN_PRO_WINDOW_CREDITS, s.PLAN_PRO_MONTH_CREDITS),
+                  s.PLAN_PRO_WINDOW_CREDITS, s.PLAN_PRO_MONTH_CREDITS, s.PLAN_PRO_VIDEOS),
         MAX: Plan(MAX, "Max", s.PLAN_MAX_PRICE_USD, s.PLAN_MAX_YEARLY_PRICE_USD, None,
-                  s.PLAN_MAX_WINDOW_CREDITS, s.PLAN_MAX_MONTH_CREDITS),
+                  s.PLAN_MAX_WINDOW_CREDITS, s.PLAN_MAX_MONTH_CREDITS, s.PLAN_MAX_VIDEOS),
     }
 
 

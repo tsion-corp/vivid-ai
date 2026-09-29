@@ -52,6 +52,8 @@ Forms       GET/PUT /builder/projects/{id}/forms · GET .../forms/submissions ·
             public (the built site posts): POST /forms/{project_id}
 Usage       GET /builder/projects/{id}/usage · GET /builder/projects/{id}/analytics?days=30
 Plans       GET /plans · GET/POST/DELETE /me/plan (MyPlanOut)
+Videos      GET /builder/me/videos/allowance · GET .../projects/{id}/videos/allowance
+            POST/GET /builder/projects/{id}/videos · GET/DELETE .../videos/{video_id}
 Gifts       POST/GET /me/gifts · DELETE /me/gifts/{id} · GET /gifts/{token} (public) · POST /gifts/{token}/claim
 Wallet      GET /wallet?currency=NGN · GET /wallet/entries · GET /wallet/rates · POST /wallet/bank-account
             GET /wallet/crypto/chains · GET /wallet/crypto/tokens?chain_id= · POST /wallet/crypto/address
@@ -942,6 +944,35 @@ Refusals a client must handle:
     App builds also answer 402 payment_required when the month's Vivid
     builds are used up: details {cap, options: ["own_expo_account", "wait"]}.
     As with limit_reached, offer only the options your client may.
+
+### Launch videos
+
+A short (15-25 s) launch video of a project, with a poster and a caption to
+post it with, made from its code: an agent plans an angle and a storyboard
+and renders it (the open-source brag skill with Hyperframes). About ten
+minutes. Websites and mobile apps alike.
+
+GET  /builder/me/videos/allowance -> {plan, included, used, left, price_usd, resets_at}
+GET  /builder/projects/{id}/videos/allowance -> the same, for the project's owner
+     (whose allowance and wallet a video of it uses). Included a month: Free 1,
+     Pro 5, Max 20. More cost price_usd each from the owner's wallet.
+POST /builder/projects/{id}/videos {tone?, format?: landscape|vertical|square, direction?}
+     -> Video (202)   editor
+     tone: default | polished | yc-parody | chaotic | deadpan | cinematic | app-store,
+     or a few words of freeform feel; inferred when empty. direction (<= 300):
+     what to focus on. 409 nothing_built before the first version; 409 busy while
+     another video of it is being made; 402 insufficient_funds (as for /me/plan)
+     when the allowance is used and the owner's wallet is short.
+GET  /builder/projects/{id}/videos -> Video[] newest first
+GET  /builder/projects/{id}/videos/{video_id} -> Video   poll every 10 s while making
+DELETE /builder/projects/{id}/videos/{video_id} -> 204   stops one being made (a paid
+     one is refunded) or removes a finished one
+Video {id, status: queued|composing|rendering|done|failed|canceled, tone, format,
+       direction, duration_s, video_url, poster_url (7-day links, when done),
+       share_copy, error, paid_with: allowance|wallet, amount_usd, created_at, finished_at}
+A failed video is refunded and does not use the allowance. When one is done
+the owner gets a push (type "video_ready", project_id, video_id) and an email.
+Videos never use build credits.
 
 ### Gifts (credits or a plan, for someone else)
 

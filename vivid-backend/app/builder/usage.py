@@ -31,11 +31,14 @@ def billable_tokens(usage: dict) -> int:
     return int(round((prompt - cached) + cached * settings.PLAN_CACHED_TOKEN_WEIGHT + completion))
 
 
-async def record_model(db: AsyncSession, project_id: str, calls: list[ModelCall]) -> None:
+async def record_model(db: AsyncSession, project_id: str, calls: list[ModelCall],
+                       kind: str = MODEL) -> None:
+    """`kind` "video": a launch video's calls, kept out of the plan meter
+    (which counts kind "model") because videos have their own allowance."""
     for call in calls:
         usage = call.usage or {}
         db.add(BuilderUsageEvent(
-            project_id=project_id, kind=MODEL, quantity=billable_tokens(usage), unit="tokens",
+            project_id=project_id, kind=kind, quantity=billable_tokens(usage), unit="tokens",
             cost_usd=await pricing.cost_of(call.model, usage), model=call.model,
             meta={"stage": call.stage,
                   "prompt_tokens": usage.get("prompt_tokens"),
