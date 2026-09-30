@@ -2,30 +2,97 @@
 
 Read the project directory to understand what you're bragging about.
 
-## What to look for
+## What to look for: the whole product, not the landing page
 
-Read these in priority order:
+The landing page is the product describing itself; the code is the product. A brag that
+only restages the landing page shows what every competitor's video shows. Read enough of
+the codebase to know **everything the product does**, then choose what to show. Skim
+widely; read deeply only what could end up on screen.
 
-1. **`index.html`** — the primary source. Read the full file. Extract: page title, hero headline, tagline, all section headings, CTA text, testimonial copy, nav items. This is the voice and story of the app.
+### 1. Map the project
 
-2. **`styles.css`** or equivalent — extract: primary color palette (look for CSS custom properties / `:root` vars), font families, background colors, accent colors. These become the visual identity of the brag video.
+- List the source tree. Skip `node_modules/`, `dist/`, `build/`, `.next/`, lock files and tests.
+- Note the stack: web (Vite, Next) or mobile (Expo, React Native); the router; the backend
+  (Supabase migrations, API routes, edge functions, server code); integrations.
+- Find the router and **list every route or screen with its component**: `src/App.tsx`
+  `<Route>`s, `app/` or `pages/` directories, Expo `app/(tabs)/`, navigation stacks.
 
-3. **`README.md`** — if present, extract: project name, one-line description, any listed features.
+### 2. Walk every screen
 
-4. **`package.json`** — if present, extract: `name`, `description`.
+Open each route's component and write one line per screen:
+- what the person can do there,
+- the video-worthy UI on it (a form, a live list, a map, a chart, an editor, a checkout,
+  a status timeline, a dashboard),
+- real copy from it (headings, button labels, empty states, success messages).
 
-5. **Subdirectory files** — if this is a multi-page app, scan route files, component files, or page files. Extract key feature names and screen descriptions.
+Group the screens by area and by who uses them: the public site, the signed-in app, the
+owner's admin or dashboard, settings, and any other roles (riders, staff, vendors).
 
-6. **The user flow / happy path** — scan beyond marketing pages. The brag's strongest material is usually the product *in use*, not the product's marketing of itself. Look at:
-   - **Routes** (`app/`, `pages/`, route files) — the screens beyond the landing page.
-   - **Key feature components** — the upload form, the editor, the result view, the dashboard.
-   - **State machines, stores, or step components** — how a session progresses.
-   - **README "how it works" or "usage" sections** — the project's own description of the flow.
-   - **Example or demo folders** — sample inputs and outputs the team tested with.
+### 3. Find what the product actually does
 
-   Identify the 2–3 beats of *using* the product: **entry → key action → result.**
+- **Data model.** Migrations, schemas, types and seed files give the nouns (orders,
+  bookings, riders, invoices) and their states (`booked → in_transit → delivered`). A state
+  moving from one value to the next is a great video beat.
+- **Logic.** Stores, hooks, services, API calls, edge functions: calculations (pricing,
+  ETAs, matching, scoring), integrations (payments, maps, sign-in, AI, notifications,
+  realtime), and anything clever or unusual.
+- **Demo data.** Seed and fixture files give realistic names, amounts and places to fill
+  the video's UI. Use them; never real customer data.
+- **Voice.** The README, docs and the landing page: the product's own claims and tone. Use
+  them for copy, and check each claim against the code before repeating it.
+- **Assets.** `public/`, `assets/` and uploads: the logo, icons, product images.
+- **Icons.** Find the icon set the app really uses: the package (`lucide-react`,
+  `@heroicons/react`, `react-icons`, `@expo/vector-icons`, `@phosphor-icons/react`...),
+  inline `<svg>` components, and SVG files. For each highlight screen, note the icons
+  it shows by name (`Truck`, `CalendarCheck`...). The video draws these, never
+  placeholder boxes.
 
-7. **`public/` or `assets/`** — note any images, logos, icons. These can be referenced in the composition.
+### 4. Write `<output-dir>/feature-map.md`
+
+```markdown
+# Feature map: [App]
+
+## Stack
+[framework, router, backend, integrations — one line each]
+
+## Screens (by area)
+### [Area, e.g. Customer app]
+- [route] · [component file] · [what you do there] · [video-worthy UI]
+
+## Features
+| Feature | Where in the code | What it does for the user | How it shows on screen | Wow (1-5) | Distinctive? |
+|---|---|---|---|---|---|
+
+## Flows
+- [Who, e.g. customer]: [entry] → [key action] → [result]
+- [Who, e.g. owner]: ...
+
+## Real numbers and facts (from the code)
+- [e.g. "12 Lagos delivery zones", "3 service tiers", "₦2,500 base fare"]
+
+## Demo data to use
+[names, amounts, places from seed files]
+
+## Brand
+[colors, fonts, logo and key visual file paths]
+
+## Highlights (chosen)
+1. [feature] — [screen/component to recreate] — [the moment on screen]
+2. ...
+```
+
+List **every** feature you find. A real app usually has 8 to 20. Rate each one.
+
+### 5. Choose the highlights
+
+Pick **3 or 4 features** that are the most impressive **and** the most distinctive: the
+ones a competitor's video could not show. Cover more than one area when the product has
+them (the customer's live tracking map *and* the owner's dispatch board). Each highlight
+must be showable from a real screen or component, with real copy and demo data.
+
+The landing page may frame the video (the hook line, the outro) but is never a
+highlight when the app has screens of its own. If the project really is a
+landing-page-only site, say so in the feature map and use its strongest sections.
 
 ## The 9-question rubric
 
@@ -36,17 +103,19 @@ After reading, answer all nine. Write these down before moving to Step 2.
    One sentence. What does it actually do (or claim to do)?
 
 2. What is the funniest or most impressive claim?
-   The one line from the site that earns a reaction.
+   The one line that earns a reaction: from the site, or a real fact from the
+   code (a number, a capability) the site undersells.
 
 3. What is the visual hook?
    The strongest CSS visual: a color palette moment, a UI element, a diagram, a card.
 
 4. What should be shown from the actual UI?
-   Which section of the site has the most video-worthy content?
-   (Hero? Feature section? Testimonial? The UI mockup?)
+   The 3-4 highlights chosen in feature-map.md, each with the screen or
+   component it comes from (file path) and the moment it shows.
 
 5. What is the shortest satisfying video?
-   Would 15 seconds work? 20? What's the minimum to land the joke/claim?
+   About 4 seconds per highlight, plus a hook and an outro: 3 highlights
+   land in 18-22 seconds, 4 in up to 30.
 
 6. What tone fits best?
    If the user specified a preset, use it.
@@ -69,6 +138,8 @@ After reading, answer all nine. Write these down before moving to Step 2.
    - Low music bed with final fade; one dry logo hit if the composition supports it
    - Dense chaotic music; Hyperframes may align text/card reveals to beats
    - Cinematic bed with a low swell, restrained motion-matched accents, and subtle audio-reactive glow/presence if it supports the visual style
+   Choose it for **this** app: its category and its audience (see `audio.md` →
+   "Sound for the app"). A banking app and a party-games app must not sound alike.
 
 8. What should the share caption say?
    Draft one sentence. This becomes share-copy.txt.

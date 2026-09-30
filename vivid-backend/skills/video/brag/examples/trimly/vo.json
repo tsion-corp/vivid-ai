@@ -1,0 +1,34 @@
+{
+ "voice": {
+  "kokoro": "am_michael"
+ },
+ "lines": [
+  {
+   "id": "vo-01",
+   "text": "This is Trimly.",
+   "speed": 0.95,
+   "direction": "confident, a smile, land on Trimly"
+  },
+  {
+   "id": "vo-02",
+   "parts": [
+    "Pick a slot.",
+    "Tap once.",
+    "You're booked."
+   ],
+   "gap": 0.2,
+   "speed": 1.05,
+   "direction": "brisk, each phrase a beat"
+  },
+  {
+   "id": "vo-03",
+   "parts": [
+    "Book your next cut",
+    "in one tap."
+   ],
+   "gap": 0.3,
+   "speed": 0.9,
+   "direction": "calm and certain"
+  }
+ ]
+}

@@ -18,10 +18,13 @@ Create a short launch-style brag video for [App Name].
 
 ## Source Material
 - Project root: [path]
-- Primary files read: [index.html, styles.css, README, etc.]
+- Feature map: `<output-dir>/feature-map.md`
 - Product name: [name]
 - Tagline / strongest claim: [line]
-- Key UI or visual moment to recreate: [specific element]
+- Feature highlights to recreate, one scene each (from the feature map):
+  1. [feature] — source: [component/screen file paths to reuse] — moment: [what happens on screen] — demo data: [names/amounts from seed files]
+  2. ...
+  Reuse these components' real markup, styles and copy; fill them with the demo data.
 - Copy that must appear verbatim:
   - [line 1]
   - [line 2]
@@ -45,6 +48,9 @@ Create a short launch-style brag video for [App Name].
 - Display font: [font or fallback decision]
 - Body font: [font or fallback decision]
 - Visual references from the project: [short list]
+- Product name / logo: [exact name as written in the app, and the logo file if any]. It is on screen at frame 0 and in the final frame.
+- Icons: [icon package + names per scene, or SVG file paths]. Draw these real icons; never grey blocks, empty squares or emoji stand-ins.
+- Text motion: [per scene: recipe from text-animation.md, e.g. "hook: slide in by word, snap ease"; "tagline: blur in by line"]
 
 ## Storyboard
 Use the storyboard in `<output-dir>/brag-plan.md` as the creative contract.
@@ -57,6 +63,9 @@ Scene summary:
 ## Audio
 - Audio role: [warm bed / sparse professional accents / cinematic support / dense rhythmic layer / intentional silence]
 - Audio arc: [how sound changes across the video]
+- Score: one synth score, `composition/audio/score.mjs` → `assets/audio/score.wav`, sharing `audio/cues.mjs` with the timeline (sound-design.md §7); sound brief: [copy from the plan]
+- SFX map: [every visible event → synth call, from sound-design.md §5; clicks at vel 0.9–1]
+- Voiceover: [none / lines with measured durations and start times]
 - Music: [filename, or none only if disabled, missing, or intentionally silent]
 - Music treatment: [volume posture, fade-in/out intent, beat/swell notes; e.g. fade under final logo]
 - Music cue guidance: [cue source — bundled preset path, or "detect at composition via analyze_music_cues.py / hyperframes beats" — plus concise optional timing hints; or unavailable]
@@ -75,6 +84,11 @@ Load the composition-building Hyperframes domain skills — `hyperframes-core` (
 Requirements:
 - Show at least one real UI, copy, or visual element from the source project.
 - Keep all text readable in the final render.
+- Frame 0 shows the product name (or logo + name), already legible: no fade from black, no empty opening frame. The final frame is the product name again as a settled lockup (with the logo and the CTA/URL if planned), held at least 1 s.
+- Use the app's real icons. With an icon package in the project, copy the exact SVG paths (for `lucide-react`, the icon's SVG from `node_modules/lucide-react/dist/esm/icons/<name>.js` or `lucide-static`) into inline `<svg>`; with SVG files, copy the files into `composition/assets/`. A rectangle or blank square where the app shows an icon is a defect.
+- Show interaction with `<skill-dir>/references/ui-demo-motion.md`: a camera layer (`#camera`, marked `data-layout-allow-overflow`), human cursor paths, press and ripple click cues with the result 0.1–0.15s later, push-in zooms on the action and its result, dwell times by density (1.5–2s on dense screens), and a transition chosen by how far apart two screens are (pan, slide/fade, loading bridge, dip).
+- Finishing effects from `<skill-dir>/references/effects.md` (2–3 per video, by tone): shape morph, glow, glass, skew/perspective, continuous cuts. Name them per scene in the brief.
+- Animate text with the recipes in `<skill-dir>/references/text-animation.md` (split by word/line, stagger, eases, blur-in, masked lines). Choose the recipe per line by its job; don't give every line the same fade.
 - Keep the video within 15-25 seconds.
 - Include the planned music/SFX layer unless audio was explicitly disabled or documented as intentionally silent.
 - Treat `/brag` audio notes as guidance, not a fixed cue sheet. Choose SFX after the visual animation exists.
@@ -91,7 +105,7 @@ The brief is the boundary: if a detail belongs to product positioning, copy, ton
 
 ---
 
-## Audio asset preparation
+## Audio asset preparation (library route only, with --library-music)
 
 Read [audio.md](audio.md). Copy the planned music into `<output-dir>/composition/assets/music/` before building the composition.
 
@@ -199,12 +213,18 @@ Do not manually copy stale composition snippets from this skill into the output.
 Before moving to delivery, verify:
 
 - [ ] `<output-dir>/composition-brief.md` exists.
-- [ ] The brief clearly identifies the exact product moments to show.
+- [ ] The brief clearly identifies the exact product moments to show: one per feature highlight, each with its source files.
 - [ ] The composition uses the current Hyperframes workflow, not a hardcoded `/brag` template.
-- [ ] Music file is copied into `<output-dir>/composition/assets/music/`.
+- [ ] The synth score renders (`node audio/score.mjs --report`) and its per-bus table meets sound-design.md §9 (library route: the music file is copied into `assets/music/`).
 - [ ] At least one visual element subtly reacts to the music (audio-reactive treatment present), or extraction failure is documented.
 - [ ] At least 1 major tween is beat-locked to a strong cue (a `strongCue`, or the highest-`strength` beat from `hyperframes beats`) within ±0.15s, marked `// beat-locked` (or natural timing was chosen for readability).
 - [ ] Sequential events (cards, stats, list items) snap to consecutive `beats[]` timestamps (±0.10s), marked `// beat-grid` (or natural timing was chosen for readability).
 - [ ] The composition shows at least one real UI, copy, or visual element from the project.
 - [ ] Total duration is 15-25 seconds.
+- [ ] Frame 0 and the last frame both show the product name, legible (check by grabbing both frames with ffmpeg after render).
+- [ ] Cursor moves ease and arc; clicks show a press and a ripple before the screen changes; dense screens hold 1.5–2s; the key action is zoomed; there are no bare hard cuts between contexts (stills taken mid-zoom and mid-transition look clean).
+- [ ] No black/empty frames between scenes; each module gets a 2–6 word headline; waits are compressed, moving time-lapses (≤0.6s of plain spinner); payoff states (error → fixed, pending → approved) hold before and after; typed prompts go character by character with a caret; every submit click has the depress + ripple cue.
+- [ ] Every icon the app shows is drawn as the app's real icon; no placeholder blocks.
+- [ ] Text reveals use text-animation.md recipes (word/line scope, stagger, ease), and every line holds for its reading time.
+- [ ] The music and SFX match the app's sound profile, not a default.
 - [ ] Hyperframes check passes, or any blocker is documented for the user.

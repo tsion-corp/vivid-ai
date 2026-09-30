@@ -1,0 +1,129 @@
+<!doctype html><html><head><meta charset="utf-8">
+<script src="https://cdn.jsdelivr.net/npm/gsap@3.14.2/dist/gsap.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/gsap@3.14.2/dist/MorphSVGPlugin.min.js"></script>
+<style>
+html,body{margin:0;background:#12101c}
+#root{width:1280px;height:720px;position:relative;overflow:hidden;font-family:Helvetica,Arial,sans-serif;--accent:124 92 255}
+.scene{position:absolute;inset:0}
+#intro{z-index:5} #intro .bg{position:absolute;inset:0;background:radial-gradient(circle at 30% 30%,#5b3fd6 0,transparent 50%),radial-gradient(circle at 75% 70%,#e0467c 0,transparent 45%),#12101c}
+#intro .name{position:absolute;left:0;right:0;top:290px;text-align:center;color:#fff;font-size:120px;font-weight:800;letter-spacing:-3px;line-height:140px;text-shadow:0 0 10px rgb(var(--accent)/.6),0 0 40px rgb(var(--accent)/.35)}
+#app{background:#f3f2f8;visibility:hidden}
+#brand{position:absolute;left:40px;top:26px;font-size:30px;font-weight:800;letter-spacing:-.5px;color:#5b3fd6;line-height:40px;z-index:60;visibility:hidden}
+h2{position:absolute;left:0;right:0;top:34px;margin:0;text-align:center;font-size:40px;color:#16131f}
+#stage3d{position:absolute;inset:0;perspective:1800px;perspective-origin:50% 45%}
+#screen{position:absolute;left:290px;top:110px;width:700px;height:560px;transform-style:preserve-3d;border-radius:28px;background:#fff;box-shadow:0 30px 80px rgba(20,10,60,.18)}
+.ui{position:absolute;inset:0;padding:36px 40px;box-sizing:border-box}
+.ui h3{margin:0 0 6px;font-size:28px;color:#16131f}.ui p{margin:0 0 26px;color:#6b6780;font-size:18px}
+.slots{display:grid;grid-template-columns:repeat(2,1fr);gap:16px}
+.slot{height:74px;border-radius:16px;border:2px solid #e4e1ef;display:flex;align-items:center;justify-content:center;font-size:24px;font-weight:700;color:#2a2640}
+.slot.on{border-color:#7c5cff;background:#f1edff;color:#5b3fd6}
+.dim{position:absolute;inset:0;background:#0b0816;opacity:0;border-radius:28px}
+#cta{position:absolute;left:40px;right:40px;bottom:40px;height:84px;border-radius:18px;background:#7c5cff;color:#fff;font-size:28px;font-weight:800;display:flex;align-items:center;justify-content:center;gap:12px;box-shadow:0 2px 6px rgba(0,0,0,.12)}
+#cta svg{width:34px;height:34px}
+#cta{overflow:hidden}.sweep{position:absolute;top:0;bottom:0;width:40%;left:0;background:linear-gradient(100deg,transparent,rgba(255,255,255,.45),transparent);transform:translateX(-120%)}
+#cam{position:absolute;inset:0;transform-style:preserve-3d}
+#grid{position:absolute;left:-300px;top:-200px;width:1880px;height:1120px;background:linear-gradient(#5b3fd612 1px,transparent 1px) 0 0/56px 56px,linear-gradient(90deg,#5b3fd612 1px,transparent 1px) 0 0/56px 56px}
+#chip{position:absolute;left:1010px;top:180px;padding:14px 18px;border-radius:16px;background:#fff;box-shadow:0 20px 50px rgba(20,10,60,.2);font-size:20px;font-weight:700;color:#2a2640}
+#fx{position:absolute;inset:0;pointer-events:none}
+#cursor{position:absolute;left:0;top:0;transform-origin:4px 3px;z-index:50}
+#outro{background:#7c5cff;clip-path:circle(0px at 640px 600px);perspective:1400px}
+#outro .name{position:absolute;left:0;right:0;top:250px;text-align:center;color:#fff;font-size:120px;font-weight:800;letter-spacing:-3px;line-height:140px;text-shadow:0 0 30px rgba(255,255,255,.35);visibility:hidden}
+#outro .tag{position:absolute;left:390px;width:500px;top:420px;height:64px;border-radius:32px;background:#fff;color:#5b3fd6;font-size:26px;font-weight:700;display:flex;align-items:center;justify-content:center;transform-origin:50% 0%}
+</style></head><body>
+<div id="root" data-composition-id="main" data-width="1280" data-height="720" data-duration="13" data-fps="30">
+ <div class="scene" id="intro" data-scene="1" data-layout-allow-overflow><div class="bg"></div><div class="name" data-fx="name-open anticipate" data-flow="morph 1-2">Trimly</div></div>
+ <div class="scene" id="app" data-scene="2" data-layout-allow-overflow>
+  <h2 id="headline">Book in one tap</h2>
+  <div id="stage3d" data-fx="skew"><div id="cam" data-fx="immersive tilt"><div id="grid"></div><div id="chip">★ 4.9 · 212 reviews</div><div id="screen" data-fx="tilt">
+   <div class="ui"><h3>Marco's Barbers</h3><p>Skin fade · 45 min · $32</p>
+    <div class="slots" data-fx="stagger-pop"><div class="slot">2:00</div><div class="slot">2:45</div><div class="slot on" data-fx="micro">3:30</div><div class="slot">4:15</div></div></div>
+   <div class="dim"></div>
+   <div id="cta" data-fx="pop-out morph micro anticipate"><div class="sweep" data-fx="micro"></div><span id="ctalabel">Book 3:30</span>
+    <svg viewBox="0 0 24 24" fill="none" stroke="#fff" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><path id="icon" d="M5 12h14M13 6l6 6-6 6"/><path id="tick" d="M20 6 9 17 4 12" style="visibility:hidden"/></svg></div>
+  </div></div></div>
+  <div id="fx"></div>
+  <svg id="cursor" data-fx="anticipate" width="28" height="28" viewBox="0 0 28 28"><path d="M4 3 L4 22 L9.5 17 L13 25 L16 23.6 L12.6 15.8 L20 15.6 Z" fill="#111" stroke="#fff" stroke-width="1.6" stroke-linejoin="round"/></svg>
+ </div>
+ <div class="scene" id="outro" data-scene="3" data-layout-allow-overflow><div class="name" data-fx="name-close">Trimly</div><div class="tag" data-fx="tilt">Book your next cut in one tap</div></div>
+ <div id="brand" data-fx="anticipate" data-flow="carry 2-3">Trimly</div>
+</div>
+<script type="module">
+import { CUE } from './audio/cues.mjs';
+gsap.registerPlugin(MorphSVGPlugin);
+window.__timelines = window.__timelines || {};
+const tl = gsap.timeline({ paused: true });
+// pre-set every element that enters later: immediateRender:false leaves it visible at rest before its tween
+gsap.set('#headline', { opacity: 0 }); gsap.set('.slot', { opacity: 0 }); gsap.set('#outro .tag', { opacity: 0 });
+const $ = (s) => document.querySelector(s);
+const box = (el) => { const r = el.getBoundingClientRect(), R = $('#root').getBoundingClientRect(); return { x: r.left - R.left, y: r.top - R.top, w: r.width, h: r.height }; };
+// morph across 1→2: the wordmark shrinks and travels into the brand mark's box, then hands over
+function morphAcross(a, b, at, dur = 0.65) {
+  const A = box(a), B = box(b);
+  tl.to(a, { x: B.x + B.w / 2 - (A.x + A.w / 2), y: B.y + B.h / 2 - (A.y + A.h / 2), scale: B.h / A.h, color: getComputedStyle(b).color, textShadow: '0 0 0 rgba(0,0,0,0)', duration: dur, ease: 'power3.inOut' }, at);
+  tl.set(b, { autoAlpha: 1 }, at + dur); tl.set(a, { autoAlpha: 0 }, at + dur);
+}
+// scene 1: name on frame 0
+tl.fromTo('#intro .name', { scale: 1.06 }, { scale: 1, duration: 1.2, ease: 'power3.out' }, 0);
+tl.set('#app', { autoAlpha: 1, opacity: 0 }, CUE.morph1);
+tl.to('#intro .bg', { opacity: 0, duration: 0.45, ease: 'power2.in' }, CUE.morph1);
+tl.to('#app', { opacity: 1, duration: 0.45, ease: 'power2.out' }, CUE.morph1 + 0.1);
+morphAcross($('#intro .name'), $('#brand'), CUE.morph1);
+tl.set('#intro', { autoAlpha: 0 }, CUE.morph1 + 0.7);
+// scene 2: app slides in leaning (skew), screen arrives tilted and glides at an angle, flattens before reading
+tl.fromTo('#stage3d', { x: 260, skewX: -9 }, { x: 0, duration: 0.55, ease: 'expo.out', immediateRender: false }, CUE.enter);
+tl.to('#stage3d', { skewX: 0, duration: 0.45, ease: 'power2.out' }, CUE.enter + 0.1);
+tl.fromTo('#screen', { rotationY: -24, rotationX: 10, z: -200, transformOrigin: '50% 60%' }, { rotationY: -14, rotationX: 6, z: 0, duration: 0.8, ease: 'power3.out', immediateRender: false }, CUE.enter);
+tl.to('#screen', { rotationY: -7, rotationX: 3, duration: CUE.flatten - CUE.enter - 0.8, ease: 'sine.inOut' }, CUE.enter + 0.8);
+tl.to('#screen', { rotationY: 0, rotationX: 0, duration: 0.55, ease: 'power3.inOut' }, CUE.flatten);
+tl.fromTo('#headline', { y: 20, opacity: 0, filter: 'blur(8px)' }, { y: 0, opacity: 1, filter: 'blur(0px)', duration: 0.6, ease: 'power3.out', immediateRender: false }, CUE.headline);
+[...document.querySelectorAll('.slot')].forEach((el, i) => tl.fromTo(el, { scale: 0.6, opacity: 0, y: 24 }, { scale: 1, opacity: 1, y: 0, duration: 0.5, ease: 'back.out(1.7)', immediateRender: false }, CUE.slots + i * 0.07));
+// cursor, pop-out, press
+const r = box($('#cta'));
+const target = { x: r.x + r.w / 2 - 6, y: r.y + r.h / 2 + 2 };
+tl.set('#cursor', { x: 1100, y: 650 }, 0);
+tl.to('#cursor', { x: target.x, duration: 0.8, ease: 'power3.inOut' }, CUE.cursor);
+tl.to('#cursor', { y: target.y, duration: 0.8, ease: 'sine.inOut' }, CUE.cursor);
+tl.set('#cta', { transformStyle: 'preserve-3d', zIndex: 5 }, CUE.popOut);
+tl.to('#cta', { z: 120, scale: 1.12, rotationX: -6, rotationY: 4, boxShadow: '0 40px 90px rgba(60,30,160,.45)', duration: 0.45, ease: 'back.out(1.6)' }, CUE.popOut);
+tl.to('.dim', { opacity: 0.3, duration: 0.35 }, CUE.popOut);
+tl.to('#cursor', { scale: 0.82, duration: 0.07 }, CUE.press); tl.to('#cursor', { scale: 1, duration: 0.16, ease: 'back.out(2)' }, CUE.press + 0.07);
+tl.to('#cta', { z: 66, scale: 1.08, duration: 0.08, ease: 'power2.out' }, CUE.press);
+tl.to('#cta', { z: 120, scale: 1.12, duration: 0.25, ease: 'back.out(2.2)' }, CUE.press + 0.08);
+const rip = document.createElement('div'); Object.assign(rip.style, { position: 'absolute', left: `${target.x - 42}px`, top: `${target.y - 42}px`, width: '84px', height: '84px', borderRadius: '50%', background: 'rgba(255,255,255,.55)', boxShadow: '0 0 0 3px rgba(255,255,255,.9)', opacity: 0, zIndex: 40 }); $('#fx').appendChild(rip);
+tl.fromTo(rip, { scale: 0.15, opacity: 1 }, { scale: 1.5, opacity: 0, duration: 0.5, ease: 'power2.out', immediateRender: false }, CUE.press);
+tl.to('#cta', { z: 0, scale: 1, rotationX: 0, rotationY: 0, boxShadow: '0 2px 6px rgba(0,0,0,.12)', duration: 0.5, ease: 'power3.inOut' }, CUE.press + 0.35);
+tl.to('.dim', { opacity: 0, duration: 0.4 }, CUE.press + 0.35);
+tl.to('#cursor', { x: 1150, y: 690, duration: 0.6, ease: 'power2.in' }, CUE.press + 0.5);
+// button → tick
+const size = 96;
+tl.to('#ctalabel', { opacity: 0, duration: 0.15 }, CUE.morph);
+tl.to('#cta', { scaleX: size / r.w, scaleY: size / r.h, borderRadius: '50%', backgroundColor: '#16a34a', duration: 0.45, ease: 'power3.inOut' }, CUE.morph);
+tl.to('#cta svg', { scaleX: r.w / size, scaleY: r.h / size, duration: 0.45, ease: 'power3.inOut' }, CUE.morph);
+tl.to('#icon', { morphSVG: '#tick', duration: 0.4, ease: 'power2.inOut' }, CUE.morph + 0.3);
+tl.fromTo('#cta', { boxShadow: '0 0 0 0 rgba(22,163,74,.55)' }, { boxShadow: '0 0 0 22px rgba(22,163,74,0)', duration: 0.6, ease: 'power2.out', immediateRender: false }, CUE.done);
+// scene 3: circle opens from the tick; the carried brand mark grows into the lockup name
+const cy = r.y + r.h / 2;
+tl.fromTo('#outro', { clipPath: `circle(0px at 640px ${cy}px)` }, { clipPath: `circle(150% at 640px ${cy}px)`, duration: 0.7, ease: 'power3.inOut', immediateRender: false }, CUE.reveal);
+tl.set('#app', { autoAlpha: 0 }, CUE.reveal + 0.7);
+// ---- immersive camera: layers at different depths, camera flies in from deep and angled
+gsap.set('#grid', { z: -300 }); gsap.set('#chip', { z: 140 }); gsap.set('#chip', { opacity: 0 });
+tl.fromTo('#cam', { rotationY: 16, rotationX: 8, z: -380 }, { rotationY: 0, rotationX: 0, z: 0, duration: 1.5, ease: 'power3.out', immediateRender: false }, CUE.enter);
+tl.to('#chip', { opacity: 1, duration: 0.4 }, CUE.enter + 0.4);
+// ---- anticipation: wind up before each big move
+tl.to('#intro .name', { scale: 1.04, y: 8, duration: 0.14, ease: 'power2.out' }, CUE.morph1 - 0.14);
+tl.to('#cursor', { x: 1112, y: 660, duration: 0.14, ease: 'power2.out' }, CUE.cursor - 0.14);
+tl.to('#cta', { z: -10, scale: 0.98, duration: 0.14, ease: 'power2.out' }, CUE.popOut - 0.14);
+tl.to('#brand', { scale: 0.9, duration: 0.14, ease: 'power2.out' }, CUE.brandToName - 0.39);
+// ---- micro-interactions: selected slot pops its ring, the CTA gets a hover sweep, then a busy state on press
+tl.fromTo('.slot.on', { boxShadow: '0 0 0 0 rgba(124,92,255,.5)' }, { boxShadow: '0 0 0 10px rgba(124,92,255,0)', duration: 0.5, ease: 'power2.out', immediateRender: false }, CUE.slots + 0.5);
+tl.to('.slot.on', { scale: 1.06, duration: 0.12 }, CUE.slots + 0.5); tl.to('.slot.on', { scale: 1, duration: 0.3, ease: 'back.out(2)' }, CUE.slots + 0.62);
+tl.to('.sweep', { x: '360%', duration: 0.45, ease: 'power2.inOut' }, CUE.cursor + 0.7);
+tl.set('#ctalabel', { textContent: 'Booking…' }, CUE.press + 0.05);
+const B = box($('#brand')), N = box($('#outro .name'));
+tl.to('#brand', { x: N.x + N.w / 2 - (B.x + B.w / 2), y: N.y + N.h / 2 - (B.y + B.h / 2), scale: N.h / B.h, color: '#ffffff', duration: 0.6, ease: 'power3.inOut' }, CUE.brandToName - 0.25);
+tl.set('#outro .name', { autoAlpha: 1 }, CUE.nameClose); tl.set('#brand', { autoAlpha: 0 }, CUE.nameClose);
+tl.fromTo('#outro .tag', { rotationX: 70, opacity: 0, y: 20 }, { rotationX: 0, opacity: 1, y: 0, duration: 0.8, ease: 'power3.out', immediateRender: false }, CUE.nameClose + 0.2);
+window.__timelines['main'] = tl;
+</script>
+<audio id="score" src="assets/audio/score.wav" data-start="0" data-track-index="10" data-volume="1"></audio>
+</body></html>

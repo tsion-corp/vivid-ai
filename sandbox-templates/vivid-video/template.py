@@ -31,7 +31,7 @@ def main() -> int:
         .from_node_image("22")
         .run_cmd("apt-get update && apt-get install -y --no-install-recommends git bash "
                  "chromium ffmpeg fonts-liberation fonts-noto fonts-noto-color-emoji "
-                 "fonts-noto-cjk python3 "
+                 "fonts-noto-cjk python3 python3-venv espeak-ng "
                  "&& rm -rf /var/lib/apt/lists/*", user="root")
         # hyperframes finds Chromium through these; the check/render gate
         # needs no download at run time.
@@ -40,6 +40,13 @@ def main() -> int:
                    "PUPPETEER_SKIP_DOWNLOAD": "true"})
         .run_cmd(f"npm install -g hyperframes@{HYPERFRAMES_VERSION} && npm cache clean --force",
                  user="root")
+        # Voiceover: `hyperframes tts` runs Kokoro through Python; the system espeak-ng
+        # (not the espeakng-loader wheel) does the phonemes.
+        .run_cmd("python3 -m venv /opt/tts && /opt/tts/bin/pip install -q --no-cache-dir "
+                 "kokoro-onnx soundfile && chown -R user:user /opt/tts", user="root")
+        .set_envs({"HYPERFRAMES_PYTHON": "/opt/tts/bin/python",
+                   "PHONEMIZER_ESPEAK_LIBRARY": "/usr/lib/x86_64-linux-gnu/libespeak-ng.so.1",
+                   "ESPEAK_DATA_PATH": "/usr/lib/x86_64-linux-gnu/espeak-ng-data"})
         .run_cmd(f"mkdir -p {APP} && chown -R user:user /home/user", user="root")
         .set_workdir(APP)
         # brag's assets (music, sound effects, cue presets) at a pinned commit.
@@ -48,6 +55,8 @@ def main() -> int:
                  user="user")
         # A first run caches whatever hyperframes fetches on first use.
         .run_cmd("npx hyperframes --version", user="user")
+        # ...including the Kokoro model, so a voiceover needs no download at run time.
+        .run_cmd("npx hyperframes tts 'Ready.' -o /tmp/warm.wav && rm -f /tmp/warm.wav", user="user")
     )
     info = Template.build(template, name=NAME, cpu_count=4, memory_mb=4096,
                           on_build_logs=default_build_logger())

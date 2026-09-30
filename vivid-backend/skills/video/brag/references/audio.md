@@ -1,5 +1,7 @@
 # Audio reference
 
+> **The default sound is an original synth score: see `sound-design.md`.** This file covers the bundled library (ende.app tracks, Kenney SFX), which is used only with `--library-music` or when the synth can't run. The mixing rules below (click levels, timing, never cutting a sound short with `data-duration`) apply to both routes.
+
 All SFX are CC0 (Kenney.nl, public domain). Music and SFX should be used by default unless the user passes `--no-music`, `--no-sfx`, the required assets are missing, or the plan explicitly chooses silence as the strongest creative move.
 
 Bias toward a smooth, professional result: one tasteful music bed plus a small number of well-timed SFX usually feels better than silence.
@@ -212,11 +214,56 @@ Scene 2 — Reveal — 3s
 
 ---
 
+## Sound for the app
+
+Choose the sound for **this app**, before you choose by tone. Different apps
+need different sounds. A savings app that sounds like a party game feels wrong,
+however good the edit is. Name the category, then take its profile:
+
+| App category | Music feel | Tempo | Bed volume | SFX palette | SFX density |
+|---|---|---|---|---|---|
+| Finance, banking, payments, insurance | calm, confident, low-key | slow–mid | 0.22–0.30 | `interface/bong_001`, soft `drop_*`, one `impactSoft_medium` | 2–3, very soft |
+| Health, wellness, meditation, therapy | warm, airy, gentle | slow | 0.20–0.28, low-passed | soft `drop_*` only | 1–2 |
+| Productivity, B2B, dev tools, admin/CRM | clean, steady, focused | mid | 0.28–0.34 | `interface/click_*`, `ui/switch*`, `keyboard/` for typing | 3–4, dry |
+| Commerce, food ordering, delivery, marketplaces | bright, upbeat | mid–fast | 0.32–0.38 | `interface/drop_*`, `casino/card-place-*` for product cards, a bell on checkout | 4–5 |
+| Social, dating, community, chat | playful, bouncy | fast | 0.34–0.40 | `interface/drop_*`, `ui/click*`, a light bell on a match | 4–6 |
+| Games, entertainment, events, nightlife | energetic, punchy | fast | 0.36–0.42 | `impact/impactPunch_*`, `casino/*`, `interface/glitch_*` | dense |
+| Education, kids, learning | friendly, light | mid | 0.30–0.35 | `interface/drop_*`, a bell on "correct" | 3–4 |
+| Luxury, real estate, travel, fashion | elegant, spacious, cinematic | slow | 0.24–0.30 | one low `impactBell_heavy_*` swell | 1–2 |
+| Logistics, fleet, field services | driven, purposeful | mid | 0.30–0.35 | `ui/switch*`, `interface/click_*`, `impactSoft_medium` on the key reveal | 3–4 |
+
+Then let the tone adjust it (`tones.md`). Tone refines the profile; it does not replace it.
+
+### Pick the track
+
+1. **Use the library first.** Look in `<skill-dir>/assets/music/library/` (if
+   present). Its `library.json` lists each track as `{file, feel, tempo, genres}`.
+   Pick the track whose `feel` best matches the profile.
+2. **Otherwise, use the bundled tracks** (all upbeat, from one series) and make
+   them fit:
+   - **Choose by tempo and energy.** For calm profiles, use vol-12 or vol-10
+     (≈110 BPM, the steadiest). For bright ones, use vol-1 (≈120 BPM, the most
+     energetic). For warm ones, use vol-11 or vol-9.
+   - **Start the bed at a different section,** not always 0 s. Take an offset
+     from the cue file where the section suits the opening: a quieter bar for
+     calm apps, a strong cue for energetic ones. Use `data-media-start` or trim
+     with ffmpeg.
+   - **Shape it for calm profiles.** Soften it with ffmpeg before copying it in,
+     e.g. `ffmpeg -i in.mp3 -af "lowpass=f=2800,volume=0.9" -c:a libmp3lame -q:a 2 out.mp3`
+     (use `f=2000` for wellness). Raise the fade-in to 0.6–1.0 s.
+3. **Don't reuse a choice without a reason.** If `<output-dir>` or earlier
+   `brag-output*` folders show a previous video's track, pick a different track
+   or offset unless that track is clearly the best fit.
+
+Write the choice in the plan as: `Sound profile: <category> → <track> from <offset>s, <shaping>, SFX <palette>`.
+
+---
+
 ## Music
 
 ### Available tracks
 
-All tracks are "Happy Beats / Business Moves" by ende.app. Upbeat, clean, corporate-adjacent. Good across multiple tones.
+All bundled tracks are "Happy Beats / Business Moves" by ende.app (CC BY 4.0): upbeat, clean, corporate-adjacent. They are one feel, so use "Sound for the app" above to make them fit, and prefer `library/` tracks when they exist.
 
 | Filename | Duration | Character | Best for |
 |---|---|---|---|

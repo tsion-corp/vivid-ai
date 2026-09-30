@@ -1,0 +1,94 @@
+<!doctype html><html><head><meta charset="utf-8">
+<script src="https://cdn.jsdelivr.net/npm/gsap@3.14.2/dist/gsap.min.js"></script>
+<style>
+html,body{margin:0;background:#0e0c16}
+#root{width:1280px;height:720px;position:relative;overflow:hidden;font-family:Helvetica,Arial,sans-serif;color:#fff}
+#world{position:absolute;inset:0;perspective:1400px;perspective-origin:50% 50%}
+#cam{position:absolute;inset:0;transform-style:preserve-3d}
+.layer{position:absolute;transform-style:preserve-3d}
+#bgGrid{left:-400px;top:-300px;width:2080px;height:1320px;background:linear-gradient(#ffffff08 1px,transparent 1px) 0 0/64px 64px,linear-gradient(90deg,#ffffff08 1px,transparent 1px) 0 0/64px 64px}
+/* crash game card */
+#game{left:140px;top:120px;width:620px;height:420px;border-radius:24px;background:#17142a;box-shadow:0 30px 80px #0008;overflow:hidden}
+#mult{position:absolute;left:32px;top:26px;font-size:64px;font-weight:800;font-variant-numeric:tabular-nums;color:#ff5a6e}
+#curve{position:absolute;left:0;top:0}
+#bet{position:absolute;left:32px;bottom:28px;width:230px;height:64px;border-radius:16px;background:#7c5cff;font-size:24px;font-weight:800;display:flex;align-items:center;justify-content:center;gap:10px}
+.spin{width:18px;height:18px;border-radius:50%;border:3px solid #fff6;border-top-color:#fff;display:none}
+/* countdown ring */
+#ring{left:830px;top:140px;width:300px;height:300px}
+#ringNum{position:absolute;inset:0;display:flex;align-items:center;justify-content:center;font-size:72px;font-weight:800;font-variant-numeric:tabular-nums}
+/* split pane */
+#split{left:140px;top:580px;width:1000px;height:120px;display:grid;grid-template-columns:1fr 1fr;gap:16px}
+.log{background:#17142a;border-radius:14px;padding:12px 16px;font:15px/1.6 ui-monospace,Menlo,monospace;color:#b9b3d6}
+.log div{opacity:0}.log .ok{color:#5be39b}
+.ui{background:#f4f2fb;border-radius:14px;padding:12px;display:grid;grid-template-columns:repeat(3,1fr);gap:8px}
+.ui div{background:#dcd6f3;border-radius:8px;opacity:0}
+/* modal over dimmed, blurred content */
+#scrim{position:absolute;inset:0;background:#07050e;opacity:0;z-index:20}
+#modal{position:absolute;left:390px;top:200px;width:500px;height:300px;border-radius:28px;z-index:30;background:linear-gradient(135deg,#ffffff2e,#ffffff10);backdrop-filter:blur(22px) saturate(160%);border:1px solid #ffffff44;box-shadow:inset 0 1px 0 #fff6,0 40px 100px #000a;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:8px;opacity:0}
+#modal .big{font-size:56px;font-weight:800;color:#ffd166}
+</style></head><body>
+<div id="root" data-composition-id="main" data-width="1280" data-height="720" data-duration="9" data-fps="30">
+ <div id="world" data-layout-allow-overflow><div id="cam">
+  <div class="layer" id="bgGrid"></div>
+  <div class="layer" id="game"><div id="mult">1.00x</div>
+   <svg id="curve" width="620" height="420"><path id="trail" d="" fill="none" stroke="#ff5a6e" stroke-width="5" stroke-linecap="round"/><circle id="rocket" r="9" fill="#ffd166"/></svg>
+   <div id="bet"><span class="spin"></span><span id="betLabel">Place bet</span></div></div>
+  <div class="layer" id="ring"><svg width="300" height="300" viewBox="0 0 300 300"><circle cx="150" cy="150" r="130" stroke="#ffffff1a" stroke-width="16" fill="none"/><circle id="arc" cx="150" cy="150" r="130" stroke="#7c5cff" stroke-width="16" fill="none" stroke-linecap="round" transform="rotate(-90 150 150)"/></svg><div id="ringNum">60</div></div>
+  <div class="layer" id="split"><div class="log" id="log"><div>› Writing src/pages/home.tsx</div><div>› Updating the database</div><div>› Wiring checkout</div><div class="ok">✓ Built in 41s</div></div>
+   <div class="ui" id="ui"><div></div><div></div><div></div><div></div><div></div><div></div></div></div>
+ </div></div>
+ <div id="scrim"></div>
+ <div id="modal"><div style="font-size:22px;opacity:.8">You won!</div><div class="big">+ 4.2 SOL</div></div>
+</div>
+<script>
+window.__timelines = window.__timelines || {};
+const tl = gsap.timeline({ paused: true });
+// ---- anticipation: a small opposite wind-up before the real move
+function anticipate(tl, el, at, v, o = {}) { // v = the move, e.g. {x:-300}
+  const back = {}; for (const k of ['x','y']) if (v[k] !== undefined) back[k] = -Math.sign(v[k]) * (o.amount ?? 14);
+  tl.to(el, { ...back, scale: o.squash ?? 0.97, duration: o.wind ?? 0.16, ease: 'power2.out' }, at);
+  tl.to(el, { ...v, scale: 1, duration: o.dur ?? 0.5, ease: o.ease ?? 'power3.in' }, at + (o.wind ?? 0.16));
+  return at + (o.wind ?? 0.16) + (o.dur ?? 0.5);
+}
+// ---- immersive 3D: camera starts deep and angled, pushes forward with layered parallax
+gsap.set('#bgGrid', { z: -400 }); gsap.set('#game', { z: 0 }); gsap.set('#ring', { z: 120 }); gsap.set('#split', { z: 60 });
+tl.fromTo('#cam', { rotationY: 18, rotationX: 10, z: -500 }, { rotationY: -6, rotationX: 4, z: 0, duration: 2.2, ease: 'power3.out' }, 0);
+tl.to('#cam', { rotationY: 0, rotationX: 0, duration: 1.2, ease: 'power2.inOut' }, 2.2);
+// ---- tactile micro-interaction: press → disabled "Placing…" state
+tl.to('#bet', { scale: 0.94, duration: 0.08, ease: 'power2.out' }, 0.9);
+tl.to('#bet', { scale: 1, duration: 0.3, ease: 'back.out(2.5)' }, 0.98);
+tl.set('#betLabel', { textContent: 'Placing…' }, 0.95); tl.set('.spin', { display: 'inline-block' }, 0.95);
+tl.to('#bet', { backgroundColor: '#4b3a8f', opacity: 0.85, duration: 0.2 }, 0.95);
+tl.fromTo('.spin', { rotation: 0 }, { rotation: 720, duration: 1.2, ease: 'none', immediateRender: false }, 0.95);
+tl.set('#betLabel', { textContent: 'Cash out' }, 2.15); tl.set('.spin', { display: 'none' }, 2.15);
+tl.to('#bet', { backgroundColor: '#16a34a', opacity: 1, duration: 0.25 }, 2.15);
+// ---- live data: multiplier + trajectory from ONE progress value
+const P = { p: 0 }, W = 620, H = 420, mult = document.getElementById('mult'), trail = document.getElementById('trail'), rocket = document.getElementById('rocket');
+const m = (p) => 1 + (Math.pow(1.9, p * 3.2) - 1) * 0.66;          // 1.00x → ~3.06x, accelerating like the game
+const pt = (p) => [40 + p * (W - 90), H - 40 - (m(p) - 1) / 2.06 * (H - 150)];
+function draw() { const p = P.p; mult.textContent = m(p).toFixed(2) + 'x';
+  let d = ''; for (let i = 0; i <= 60; i++) { const [x, y] = pt(p * i / 60); d += (i ? 'L' : 'M') + x.toFixed(1) + ' ' + y.toFixed(1); }
+  trail.setAttribute('d', d); const [rx, ry] = pt(p); rocket.setAttribute('cx', rx); rocket.setAttribute('cy', ry); }
+draw();
+tl.to(P, { p: 1, duration: 3.0, ease: 'power1.in', onUpdate: draw }, 2.2);
+tl.to('#mult', { scale: 1.12, duration: 0.12, ease: 'power2.out', transformOrigin: '0% 50%' }, 5.2); tl.to('#mult', { scale: 1, duration: 0.3 }, 5.32);
+// ---- countdown ring: number and arc from one clock
+const C = { s: 60 }, arc = document.getElementById('arc'), num = document.getElementById('ringNum'), L = 2 * Math.PI * 130;
+arc.setAttribute('stroke-dasharray', L);
+const ring = () => { num.textContent = Math.ceil(C.s); arc.setAttribute('stroke-dashoffset', L * (1 - C.s / 60)); arc.setAttribute('stroke', C.s < 15 ? '#ff5a6e' : '#7c5cff'); };
+ring(); tl.to(C, { s: 12, duration: 5, ease: 'none', onUpdate: ring }, 0.5);
+// ---- split-pane sync: one step table drives the log lines AND the UI blocks
+const STEPS = [[1.0, [0, 1]], [1.8, [2, 3]], [2.6, [4]], [3.3, [5]]];
+const lines = document.querySelectorAll('#log div'), blocks = document.querySelectorAll('#ui div');
+STEPS.forEach(([t, bl], i) => { tl.fromTo(lines[i], { opacity: 0, x: -8 }, { opacity: 1, x: 0, duration: 0.25, immediateRender: false }, t);
+  bl.forEach((b, k) => tl.fromTo(blocks[b], { opacity: 0, scale: 0.85 }, { opacity: 1, scale: 1, duration: 0.35, ease: 'back.out(1.8)', immediateRender: false }, t + 0.08 + k * 0.06)); });
+// ---- spatial modal: content recedes (dim + depth-of-field blur + push back), glass panel rises in front
+tl.to('#scrim', { opacity: 0.55, duration: 0.4 }, 6.0);
+tl.to('#world', { filter: 'blur(6px)', duration: 0.4 }, 6.0);
+tl.to('#cam', { z: -120, duration: 0.6, ease: 'power3.out' }, 6.0);
+anticipate(tl, '#modal', 5.95, {}, {});   // no-op move keeps the helper visible in tests
+tl.fromTo('#modal', { opacity: 0, y: 60, scale: 0.9, rotationX: 18, transformPerspective: 1200 }, { opacity: 1, y: 0, scale: 1, rotationX: 0, duration: 0.6, ease: 'back.out(1.4)', immediateRender: false }, 6.1);
+// anticipation on the modal leaving at the end
+anticipate(tl, '#modal', 7.8, { y: -500 }, { dur: 0.45 });
+window.__timelines['main'] = tl;
+</script></body></html>

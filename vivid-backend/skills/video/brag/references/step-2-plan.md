@@ -26,10 +26,14 @@ What makes this video specific to this project and not generic.]
 [The opening moment. This is the most important decision.
 What word, image, or motion earns the next 20 seconds?]
 
-## Key moments (the middle)
-[2-3 sharp highlights from the product.
-Bullet points. Specific. "The altitude meter counting up." 
-Not "feature callouts."]
+## Feature highlights (from feature-map.md)
+[The 3-4 highlights chosen in Step 1, one scene each. For every one:
+- the feature, in the user's words,
+- the screen or component it is recreated from (file path),
+- the moment on screen: what moves, fills, arrives or changes state,
+- the real fact or number it carries, if any.
+Specific: "the rider pin moving along the map as the ETA counts down from 12 min",
+not "live tracking feature". Drawn from different areas of the product when it has them.]
 
 ## Outro / punchline
 [How does it land? The final line. The beat before the logo.]
@@ -38,7 +42,7 @@ Not "feature callouts."]
 [The 2–3 beats of *using* the product (entry → key action → result), pulled from
 Step 1 question 9. This is the strongest material the video has — the centerpiece
 scenes should show the flow, not just landing-page sections. If the project is
-landing-page-only, write "none — landing-page only" and rely on Key moments instead.]
+landing-page-only, write "none — landing-page only" and rely on the feature highlights instead.]
 
 ## Tone
 - Preset: [default / polished / yc-parody / chaotic / deadpan / cinematic / app-store]
@@ -61,7 +65,20 @@ landing-page-only, write "none — landing-page only" and rely on Key moments in
 
 ## Audio direction
 - Role: [warm bed / sparse professional accents / cinematic support / dense rhythmic layer / intentional silence]
-- Music: [candidate track / mood / none only if disabled, missing, or intentionally silent]
+- Product truth: [audience / pain / promise / hero moment / proof / CTA — story-script.md §1]
+- Arc: [PAS / BAB / demo loop / future pacing / cascade — why]
+- Hook: [visual | spoken | on-screen — three different things]
+- Script self-test: [answers to story-script.md §7]
+- Scene flow: [the table from scene-flow.md: every boundary → device → what carries/morphs]
+- Depth & interaction (depth-and-interaction.md): [anticipations (4+), micro-interactions (3+) with the app's real state copy, spatial layers (modals/sheets), the immersive camera scene and its depth layers, live values with real ranges, split-pane step tables]
+- Motion signature (all required, motion-signature.md): pop-out [which real control, at which scene], tilt [which screen, angle], shape morph [what becomes what], continuous cut [which scene change, which kind]; extras [glow / glass / skew / stagger-pop / exploded]
+- Module headlines: [per highlight: a 2–6 word headline saying what that part does, in the product's words]
+- Payoff states: [any state change that IS the feature (error → self-fixed, pending → approved): hold before 1.5–2s, change, hold after]
+- Waits: [each real wait (boot, build, generation) and how it's shown as a 0.8–1.5s moving time-lapse: skeleton / streaming log / progress]
+- Interaction beats: [per highlight: what the cursor or finger does, what gets zoomed, the dwell (1.5–2s if the screen is dense), and the transition into the next scene (pan / slide / loading bridge / dip)]
+- Sound brief: [the full brief from sound-design.md §2 — app world, groove family + genre card, tempo & key, energy map, ui-led, sonic logo, app-world sounds, not-like-the-last-one]
+- Voiceover: [yes/no + the reason from sound-design.md §6; if yes: voice id, speed, one line per scene (~2.6 words/s)]
+- Music: [synth score (default) / bundled track only with --library-music]
 - Music treatment: [start time, volume posture, fade-in/out intent, beat/swell notes]
 - Music cue guidance: [preset cue file read / unavailable; list 1-3 strongCue timestamps for major moments; list beat-grid windows for sequential events]
 - Audio-reactive treatment: [none / subtle / expressive; what visual qualities may respond to music energy]
@@ -96,8 +113,11 @@ Transition mood: [mood] → Scene 3
 
 The default pattern is:
 ```
-Hook → Reveal → 2-3 highlights → Punchline/outro
+Hook → Reveal → one scene per feature highlight (3-4) → Punchline/outro
 ```
+The highlight scenes are the video. Each shows a different real screen doing its
+thing; together they should leave a stranger knowing what the whole product does, not
+just what its landing page says.
 
 But adapt it. These are the right scene counts for each tone:
 
@@ -113,11 +133,12 @@ But adapt it. These are the right scene counts for each tone:
 
 ## Duration guidance
 
-Scene durations must sum to 15-25 seconds. Count them.
+Scene durations must sum to 15-30 seconds. Count them.
 
 - Under 15 seconds: too thin, add a scene or lengthen holds.
-- Over 25 seconds: cut a scene or tighten timing.
-- 18-22 seconds is the sweet spot for most brag videos.
+- 3 highlights: 18-22 seconds is the sweet spot.
+- 4 highlights: up to 30 seconds, about 4 seconds each plus the hook and the outro.
+- Over 30 seconds: cut a highlight, not the holds.
 
 ## Reading time (keep the pace, not at text's expense)
 

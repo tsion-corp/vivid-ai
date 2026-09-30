@@ -694,7 +694,7 @@ class Settings(BaseSettings):
     BUILDER_VIDEO_TEMPLATE_DIR: str = "../sandbox-templates/vivid-video"
     #: The strong model the videos need (the sample was made by Claude Opus).
     VIDEO_MODEL: str = "anthropic/claude-sonnet-5.5"
-    VIDEO_MAX_STEPS: int = 60
+    VIDEO_MAX_STEPS: int = 90
     #: Wall clock for one video, composing and rendering, in seconds.
     VIDEO_TIMEOUT_SECONDS: int = 1800
     #: A render command may take this long (a 20 s video at 30 fps).

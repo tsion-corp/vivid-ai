@@ -4,8 +4,19 @@
 
 ```bash
 cd <output-dir>/composition
-npx hyperframes check   # brag's single pre-render gate — fix every error it reports
+node audio/score.mjs --report                                           # render the score; read the per-bus table
+node <skill-dir>/scripts/verify-composition.mjs . --tone <tone>         # motion signature + sound gate
+npx hyperframes check                                                   # layout, contrast, runtime
 ```
+
+Both gates must pass. `verify-composition` fails when:
+- a signature move (pop-out, tilt, morph, cut) is missing or not really animated;
+- the product name isn't tagged at frame 0 and at the end;
+- the score has no clicks, whooshes or tuned UI sounds, or the clicks are quiet;
+- a voiceover isn't ducked;
+- the loudness is off target.
+
+Fix what it names and re-run. Don't render until it passes.
 
 Fix all errors. `check` is brag's single pre-render gate — run it and fix everything it reports, including WCAG contrast failures (they gate as errors, not warnings). Each contrast finding carries a suggested compliant color, so apply it or adjust within the palette family and re-run `check` — most fixes need no screenshot. There is no per-element contrast escape hatch for real text; the only bypass is `check --no-contrast`, which skips the entire WCAG pass (all-or-nothing), not a way to accept one borderline element. For exact contrast thresholds, layout escape hatches, and reporting details, follow the current hyperframes-cli `check` guidance. `check`'s layout pass backstops the "keep all text readable" creative law — fix any reported overflow.
 
@@ -43,11 +54,26 @@ For final delivery:
 npx hyperframes render --quality high --output ../brag.mp4
 ```
 
+## Check the render for dead frames
+
+Run both checks on the rendered file before picking the poster:
+
+```bash
+# black or near-black frames (transitions that dip to black): must print nothing
+ffmpeg -v info -i ../brag.mp4 -vf "blackdetect=d=0.04:pic_th=0.95:pix_th=0.08" -an -f null - 2>&1 | grep black_start
+# frozen stretches: each one listed must be an intended hold, and none longer than 2.5s
+ffmpeg -v info -i ../brag.mp4 -vf "freezedetect=n=0.002:d=1.0" -an -f null - 2>&1 | grep -E "freeze_(start|duration)"
+```
+
+- **For any `black_start`:** fix the transition (§5 of `ui-demo-motion.md`) and render again. The only exception is an app that is dark by design, when you have checked the frame and it shows the product's own background with content on it.
+- **For a freeze longer than 2.5 s, or one over a loading state:** add motion (a slow camera drift, the wait compressed per §2a), or shorten it.
+- **Then look at stills** of every scene change, the typed prompt midway, and the payoff's before and after states.
+
 ## Pick the poster frame
 
 The poster is the still shown before the video plays — the first thing anyone sees when it's idle or unplayed. Don't leave it to the raw first frame or an arbitrary timestamp; those land on fades, mid-transitions, blank intro backgrounds, or half-rendered text.
 
-You built this composition, so you already know its strongest moment and exactly when it lands — the hook line, the hero reveal, or the final logo. Pick that beat at a **settled** point: text fully animated in, before it exits (the storyboard timings tell you the safe window). Then extract that one frame full-res with ffmpeg. From `<output-dir>/composition`:
+You built this composition, so you already know its strongest moment and exactly when it lands. Because the poster becomes frame 0, **it must show the product name**: the settled final lockup (name + logo), or a hero moment where the name is clearly on screen. Never a frame without the name. Pick that beat at a **settled** point: text fully animated in, before it exits (the storyboard timings tell you the safe window). Then extract that one frame full-res with ffmpeg. From `<output-dir>/composition`:
 
 ```bash
 # use the timestamp of your strongest settled beat, e.g. 3.2s
@@ -151,6 +177,7 @@ After this step, `<output-dir>/` should contain:
 <output-dir>/
   brag.mp4                — the rendered video
   brag.jpg                — the poster (best frame, for <video poster>)
+  feature-map.md          — every screen and feature found in the code, and the chosen highlights
   brag-plan.md            — the plan and storyboard
   composition-brief.md    — the Hyperframes handoff brief
   share-copy.txt          — the share caption

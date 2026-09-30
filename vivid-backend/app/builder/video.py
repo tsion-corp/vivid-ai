@@ -182,7 +182,13 @@ Where things are (paths relative to the working directory):
   composition/, work/). Use exactly this one; never a timestamped one.
 - brag's music and sound effects: `brag-assets/music/`, `brag-assets/sfx/`,
   cue presets in `brag-assets/music/cues/`. Everything brag calls `<skill-dir>/assets/`
-  is `brag-assets/`, and `<skill-dir>/references/` is `{SKILLS_DIR}/brag/references/`.
+  is `brag-assets/`. Every other `<skill-dir>/…` path (references/, scripts/, examples/)
+  is under `{SKILLS_DIR}/brag/`; its absolute form, for the `import` in `audio/score.mjs`,
+  is `/home/user/app/{SKILLS_DIR}/brag/scripts/synth/index.mjs`.
+- Voiceover works offline here: `node {SKILLS_DIR}/brag/scripts/voice.mjs vo.json --out
+  {OUT_DIR}/composition/assets/vo` (Kokoro is installed; no API keys).
+- Before rendering, `node {SKILLS_DIR}/brag/scripts/verify-composition.mjs
+  {OUT_DIR}/composition --tone <tone>` must print "passes"; fix what it names.
 - The Hyperframes skills are in `{SKILLS_DIR}/hyperframes/<skill>/SKILL.md` with their
   references: read hyperframes-animation, hyperframes-creative, hyperframes-keyframes and
   hyperframes-audio there when brag says to load them.
@@ -195,7 +201,7 @@ What the person asked for:
 Done means these exist, made the way brag's step 4 says:
 - `{OUT_DIR}/brag.mp4` (the render, poster baked in as frame 0),
 - `{OUT_DIR}/brag.jpg` (the poster), `{OUT_DIR}/share-copy.txt` (1-3 postable sentences).
-Then reply with one sentence on the creative angle. Keep it short: 15-25 seconds of video.
+Then reply with one sentence on the creative angle. Keep it short: 15-30 seconds of video.
 """
     parts = [preamble] + [_skill(rel) for rel in PROMPT_SKILLS]
     return "\n\n---\n\n".join(p for p in parts if p)
@@ -293,7 +299,7 @@ async def _probe(sandbox: Sandbox, video: BuilderVideo) -> tuple[float | None, s
     if (stream_.get("width"), stream_.get("height")) != (w, h):
         return duration, f"brag.mp4 is {stream_.get('width')}x{stream_.get('height')}, not {w}x{h}"
     if not 8 <= duration <= 45:
-        return duration, f"brag.mp4 is {duration:.1f}s long; make it 15-25s"
+        return duration, f"brag.mp4 is {duration:.1f}s long; make it 15-30s"
     check = await sandbox.run(f"test -s {OUT_DIR}/brag.jpg && test -s {OUT_DIR}/share-copy.txt",
                               timeout=15)
     if not check.ok:
