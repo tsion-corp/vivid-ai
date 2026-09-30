@@ -127,6 +127,8 @@ async def init_db() -> None:
                 f"ALTER TABLE vivid_pay_checkouts ADD COLUMN IF NOT EXISTS {col}"))
         await conn.execute(text(
             "ALTER TABLE users ADD COLUMN IF NOT EXISTS deleted_at TIMESTAMPTZ"))
+        await conn.execute(text(
+            "ALTER TABLE builder_videos ADD COLUMN IF NOT EXISTS model VARCHAR(80)"))
         # A payment record outlives its app: the checkout's project link is
         # cleared when the project goes, instead of the row going with it.
         await conn.execute(text(

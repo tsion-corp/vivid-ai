@@ -53,7 +53,10 @@ async function kokoro(text, file, line) {
   for (const [lib, data] of [["/opt/homebrew/lib/libespeak-ng.1.dylib", "/opt/homebrew/share/espeak-ng-data"], ["/usr/lib/x86_64-linux-gnu/libespeak-ng.so.1", "/usr/lib/x86_64-linux-gnu/espeak-ng-data"], ["/usr/lib/aarch64-linux-gnu/libespeak-ng.so.1", "/usr/lib/aarch64-linux-gnu/espeak-ng-data"]])
     if (!env.PHONEMIZER_ESPEAK_LIBRARY && existsSync(lib)) { env.PHONEMIZER_ESPEAK_LIBRARY = lib; env.ESPEAK_DATA_PATH = data; }
   const voice = line.voice || spec.voice?.kokoro || "am_michael";
-  run("npx", ["-y", "hyperframes", "tts", text, "-v", voice, "-s", String(line.speed ?? 1.0), "-o", file], { env });
+  // the installed hyperframes (pinned in the video sandbox) if there is one; npx otherwise
+  const installed = spawnSync("sh", ["-c", "command -v hyperframes"], { encoding: "utf8" }).status === 0;
+  const [cmd, pre] = installed ? ["hyperframes", []] : ["npx", ["-y", "hyperframes"]];
+  run(cmd, [...pre, "tts", text, "-v", voice, "-s", String(line.speed ?? 1.0), "-o", file], { env });
 }
 
 async function openai(text, file, line) {

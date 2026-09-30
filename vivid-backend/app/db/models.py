@@ -518,8 +518,10 @@ class BuilderVideo(Base):
     poster_key: Mapped[str | None] = mapped_column(String(512), default=None)
     share_copy: Mapped[str | None] = mapped_column(Text, default=None)
     error: Mapped[str | None] = mapped_column(Text, default=None)
-    #: allowance | wallet
+    #: allowance | wallet | pilot (an internal test run: never charged or counted)
     paid_with: Mapped[str] = mapped_column(String(10), default="allowance")
+    #: The OpenRouter model that makes it (settings.VIDEO_MODEL unless a pilot chose another).
+    model: Mapped[str | None] = mapped_column(String(80), default=None)
     amount_micro: Mapped[int] = mapped_column(BigInteger, default=0)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_now, index=True)
     finished_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), default=None)

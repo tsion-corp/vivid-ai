@@ -12,6 +12,7 @@ canceled. Model usage is recorded as kind "video", so videos never draw on
 build credits.
 """
 import asyncio
+import base64
 import io
 import json
 import tarfile
@@ -32,6 +33,7 @@ from app.core.config import settings
 from app.db.models import BuilderProject, BuilderSnapshot, BuilderVideo, User
 from app.db.session import async_session
 from app.services import mail, push
+from app.services.models_gateway import provider
 from app.services.plans import usage as plan_usage
 from app.services.wallet import ledger, to_micro
 
@@ -51,6 +53,8 @@ PROJECT_DIR, OUT_DIR, SKILLS_DIR = "project", "brag-output", "skills"
 #: The skills shipped with the backend: brag, and the Hyperframes skills it uses.
 SKILLS_ROOT = Path(__file__).resolve().parents[2] / "skills" / "video"
 #: Put in the system prompt; everything else under skills/ the agent reads when it needs it.
+#: Keep in step with sandbox-templates/vivid-video/template.py.
+HYPERFRAMES_VERSION = "0.8.91"
 PROMPT_SKILLS = ("brag/SKILL.md", "hyperframes/hyperframes-core/SKILL.md",
                  "hyperframes/hyperframes-cli/SKILL.md")
 
@@ -99,7 +103,7 @@ async def request(db: AsyncSession, project: BuilderProject, user: User, tone: s
     video = BuilderVideo(project_id=project.id, user_id=user.id, owner_id=project.owner_id,
                          snapshot_id=snapshot.id, tone=(tone or "").strip()[:80] or None, format=fmt,
                          direction=(direction or "").strip()[:300] or None,
-                         paid_with="allowance" if left > 0 else "wallet")
+                         paid_with="allowance" if left > 0 else "wallet", model=settings.VIDEO_MODEL)
     db.add(video)
     await db.flush()
     if video.paid_with == "wallet":
@@ -108,6 +112,23 @@ async def request(db: AsyncSession, project: BuilderProject, user: User, tone: s
                            f"video:{video.id}", ref=project.id,
                            original_amount=str(settings.VIDEO_PRICE_USD), original_currency="USD",
                            description=f"Launch video of {project.name}")
+    return video
+
+
+async def pilot(db: AsyncSession, project: BuilderProject, user: User, model: str,
+                tone: str | None, fmt: str, direction: str | None,
+                snapshot: BuilderSnapshot) -> BuilderVideo:
+    """An internal test run with a chosen model (scripts/video_pilot.py): not
+    charged and not counted against the owner's allowance. The caller commits,
+    then calls start()."""
+    if fmt not in FORMATS:
+        raise VideoError("bad_format", "Format is landscape, vertical or square.")
+    video = BuilderVideo(project_id=project.id, user_id=user.id, owner_id=project.owner_id,
+                         snapshot_id=snapshot.id, tone=(tone or "").strip()[:80] or None, format=fmt,
+                         direction=(direction or "").strip()[:300] or None,
+                         paid_with="pilot", model=model)
+    db.add(video)
+    await db.flush()
     return video
 
 
@@ -185,6 +206,10 @@ Where things are (paths relative to the working directory):
   is `brag-assets/`. Every other `<skill-dir>/…` path (references/, scripts/, examples/)
   is under `{SKILLS_DIR}/brag/`; its absolute form, for the `import` in `audio/score.mjs`,
   is `/home/user/app/{SKILLS_DIR}/brag/scripts/synth/index.mjs`.
+- Hyperframes {HYPERFRAMES_VERSION} is installed globally: run `hyperframes <command>` (check,
+  render, snapshot, tts…) rather than `npx hyperframes`, which may fetch a different version.
+- Look at your work with the `view_frames` tool after every draft render (and at the poster):
+  you can't judge motion, depth or framing from the code alone.
 - Voiceover works offline here: `node {SKILLS_DIR}/brag/scripts/voice.mjs vo.json --out
   {OUT_DIR}/composition/assets/vo` (Kokoro is installed; no API keys).
 - Before rendering, `node {SKILLS_DIR}/brag/scripts/verify-composition.mjs
@@ -209,10 +234,67 @@ Then reply with one sentence on the creative angle. Keep it short: 15-30 seconds
 
 # -------------------------------------------------------------------- tools
 _TOOL_NAMES = ("read_file", "write_file", "edit_file", "list_files", "run_command")
+#: Stills the agent looks at, so it reviews the picture the way a person would.
+VIEW_FRAMES = {"type": "function", "function": {
+    "name": "view_frames",
+    "description": ("Look at your video. Give a rendered .mp4 and up to 6 times in seconds "
+                    "(stills are taken with ffmpeg), or a .png/.jpg (a snapshot or the poster). "
+                    "The images come back to you in the next message. Use it after every draft "
+                    "render: at each scene change (cut −0.1 / +0.1), the peaks of the pop-out, "
+                    "tilt and morphs, the first and last frames."),
+    "parameters": {"type": "object", "properties": {
+        "path": {"type": "string", "description": "An .mp4, .png or .jpg under the working directory."},
+        "times": {"type": "array", "items": {"type": "number"},
+                  "description": "Seconds into the .mp4, up to 6."}},
+        "required": ["path"]}}}
+_FRAME_WIDTH = 960
 
 
 def _schemas() -> list[dict]:
-    return [s for s in tools.SCHEMAS if s["function"]["name"] in _TOOL_NAMES]
+    return [s for s in tools.SCHEMAS if s["function"]["name"] in _TOOL_NAMES] + [VIEW_FRAMES]
+
+
+async def _frames(sandbox: Sandbox, args: dict) -> tuple[str, list[str]]:
+    """(text for the tool result, data URLs to show the model)."""
+    path = str(args.get("path") or "").strip()
+    if not path or path.startswith("/") or ".." in path.split("/"):
+        return "error: give a path under the working directory", []
+    lower = path.lower()
+    if lower.endswith((".png", ".jpg", ".jpeg")):
+        out = "/tmp/vf-0.jpg"
+        result = await sandbox.run(f"ffmpeg -v error -y -i '{path}' -vf scale={_FRAME_WIDTH}:-2 -q:v 4 {out}",
+                                   timeout=60)
+        shots = [(None, out)] if result.ok else []
+    elif lower.endswith(".mp4"):
+        times = [float(t) for t in (args.get("times") or [])[:6] if isinstance(t, (int, float))] or [0.0]
+        shots = []
+        for i, t in enumerate(times):
+            out = f"/tmp/vf-{i}.jpg"
+            result = await sandbox.run(f"ffmpeg -v error -y -ss {max(t, 0):.3f} -i '{path}' -frames:v 1 "
+                                       f"-vf scale={_FRAME_WIDTH}:-2 -q:v 4 {out}", timeout=60)
+            if result.ok:
+                shots.append((t, out))
+    else:
+        return "error: view_frames reads an .mp4, .png or .jpg", []
+    urls, labels = [], []
+    for t, out in shots:
+        try:
+            data = await sandbox.read_bytes(out)
+        except SandboxError:
+            continue
+        urls.append("data:image/jpeg;base64," + base64.b64encode(data).decode())
+        labels.append("image" if t is None else f"t={t:.2f}s")
+    if not urls:
+        return f"error: no frames could be read from {path}", []
+    return f"{len(urls)} still(s) of {path} ({', '.join(labels)}) follow in the next message.", urls
+
+
+def _drop_old_frames(messages: list[dict]) -> None:
+    """Keep only the newest stills in the conversation, so images don't pile up."""
+    for m in messages:
+        if m.get("role") == "user" and isinstance(m.get("content"), list):
+            if any(p.get("type") == "image_url" for p in m["content"]):
+                m["content"] = [{"type": "text", "text": "(stills you looked at earlier; removed)"}]
 
 
 async def _tool(sandbox: Sandbox, name: str, args: dict) -> str:
@@ -310,7 +392,8 @@ async def _probe(sandbox: Sandbox, video: BuilderVideo) -> tuple[float | None, s
 async def _agent(sandbox: Sandbox, video: BuilderVideo, project: BuilderProject,
                  calls: list[ModelCall]) -> float:
     """The brag run. Returns the video's duration once the deliverables pass."""
-    endpoint = routing.endpoint_for(routing.VIDEO)
+    endpoint = (provider.openrouter_model(video.model, context_tokens=settings.BUILDER_CONTEXT_TOKENS)
+                if video.model else routing.endpoint_for(routing.VIDEO))
     fallback = routing.endpoint_for(routing.FALLBACK)
     messages: list[dict] = [{"role": "system", "content": system_prompt(video, project)},
                             {"role": "user", "content": "Make the launch video now."}]
@@ -344,9 +427,13 @@ async def _agent(sandbox: Sandbox, video: BuilderVideo, project: BuilderProject,
             {"id": c["id"], "type": "function",
              "function": {"name": c["name"], "arguments": json.dumps(c["arguments"])}}
             for c in step.calls]})
+        stills: list[str] = []
         for call in step.calls:
             if call.get("error"):
                 result = f"error: {call['error']}. Call the tool again with valid JSON."
+            elif call["name"] == "view_frames":
+                result, urls = await _frames(sandbox, call["arguments"])
+                stills += urls
             else:
                 if call["name"] == "run_command" and "hyperframes render" in str(
                         call["arguments"].get("command") or ""):
@@ -354,6 +441,13 @@ async def _agent(sandbox: Sandbox, video: BuilderVideo, project: BuilderProject,
                 result = await _tool(sandbox, call["name"], call["arguments"])
             messages.append({"role": "tool", "tool_call_id": call["id"], "name": call["name"],
                              "content": result})
+        if stills:
+            _drop_old_frames(messages)
+            messages.append({"role": "user", "content": [
+                {"type": "text", "text": "The stills you asked for. Judge them like a motion designer: "
+                                          "readable, the product filling the frame, depth visible, "
+                                          "no empty or doubled frames. Fix what's wrong."},
+                *({"type": "image_url", "image_url": {"url": u}} for u in stills[:6])]})
     raise VideoError("too_many_steps", "The video could not be finished. Try again; you were not charged.")
 
 

@@ -95,6 +95,9 @@ class VideoSandbox(FakeSandbox):
                                             "format": {"duration": "21.3"}}), "")
         if cmd.startswith("test -s"):
             return RunResult(0, "", "")
+        if cmd.startswith("ffmpeg"):                            # view_frames: a still at the last argument
+            self.blobs[cmd.split()[-1]] = b"\xff\xd8jpeg"
+            return RunResult(0, "", "")
         return RunResult(0, "", "")
 
 
@@ -162,7 +165,8 @@ def test_the_job_makes_checks_stores_and_meters(maker, fake_blob, monkeypatch): 
     assert sandbox.killed
     system = model.requests[0]["messages"][0]["content"]
     assert "never switch to brag-slim" in system and "Format: landscape (1920x1080" in system
-    assert sorted(model.requests[0]["tools"]) == ["edit_file", "list_files", "read_file", "run_command", "write_file"]
+    assert sorted(model.requests[0]["tools"]) == ["edit_file", "list_files", "read_file", "run_command",
+                                                  "view_frames", "write_file"]
     assert {e.kind for e in events} == {"video"}
 
     async def meter():
@@ -203,3 +207,52 @@ def test_allowance_follows_the_plan(monkeypatch):
     assert [catalog.get(p).videos_per_month for p in ("free", "pro", "max")] == [1, 5, 20]
     monkeypatch.setattr(settings, "PLAN_PRO_VIDEOS", 7)
     assert catalog.get("pro").videos_per_month == 7
+
+
+def test_a_pilot_uses_its_model_is_free_and_sees_its_frames(maker, fake_blob, monkeypatch):  # noqa: F811
+    sandbox = VideoSandbox()
+    sandbox.files["brag-output/share-copy.txt"] = "Kicks."
+    sandbox.blobs["brag-output/brag.mp4"] = b"mp4"
+    sandbox.blobs["brag-output/brag.jpg"] = b"jpg"
+    _wire(monkeypatch, maker, fake_blob, sandbox)
+    model = install(monkeypatch, [
+        ("", [call("view_frames", {"path": "brag-output/brag.mp4", "times": [0, 2.5]}, "f1")]),
+        ("Looks right.", []),
+    ])
+
+    async def make_pilot():
+        async with maker() as db:
+            project = BuilderProject(owner_id="u1", name="Kicks", mode="build")
+            db.add(project)
+            await db.flush()
+            snap = BuilderSnapshot(project_id=project.id, seq=1, r2_key="snap-key")
+            db.add(snap)
+            await db.flush()
+            from app.db.models import User
+            user = await db.get(User, "u1") or User(id="u1", email="u1@x.test")
+            video = await video_mod.pilot(db, project, user, "anthropic/claude-fable-5.1", None,
+                                          "landscape", None, snap)
+            await db.commit()
+            return video.id
+    vid = asyncio.run(make_pilot())
+    asyncio.run(video_mod._run(vid))
+
+    async def after():
+        async with maker() as db:
+            return await db.get(BuilderVideo, vid), (await video_mod.allowance(db, "u1"))["used"]
+    video, used = asyncio.run(after())
+    assert video.status == "done" and video.paid_with == "pilot" and used == 0     # never counted
+    assert all(r["model"] == "anthropic/claude-fable-5.1" for r in model.requests)
+    # The stills come back to the model as images in the next message.
+    last = model.requests[1]["messages"][-1]
+    images = [p for p in last["content"] if p.get("type") == "image_url"]
+    assert last["role"] == "user" and len(images) == 2
+    assert images[0]["image_url"]["url"].startswith("data:image/jpeg;base64,")
+    assert "2 still(s)" in model.requests[1]["messages"][-2]["content"]
+
+
+def test_view_frames_refuses_paths_outside_the_work_dir():
+    text, urls = asyncio.run(video_mod._frames(VideoSandbox(), {"path": "/etc/passwd"}))
+    assert text.startswith("error") and urls == []
+    text, urls = asyncio.run(video_mod._frames(VideoSandbox(), {"path": "../x.mp4"}))
+    assert text.startswith("error") and urls == []
