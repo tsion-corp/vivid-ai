@@ -1,6 +1,6 @@
 # Motion signature: the moves every brag video must have
 
-Earlier runs chose effects by tone, and every tone ended up choosing "almost none". The result looked like a flat screen recording. From now on **every video uses all the signature moves below**. **Tilt means at least two perspective shots:** one of them is held at an angle of 12° or more for over a second (`tiltGlide`), not a single quick settle nobody notices. The tone changes only how strong they are, never whether they appear.
+Earlier runs chose effects by tone, and every tone ended up choosing "almost none". The result looked like a flat screen recording. From now on **every video uses all the signature moves below**. **Tilt means at least two perspective shots:** one of them is held at an angle of **20° or more** for over a second (`tiltGlide`) on an object **scaled below the frame** (0.6–0.8), so its edges and corners are visible. A full-bleed screen tilted a few degrees reads as flat. See `depth-and-interaction.md` §4. The tone changes only how strong they are, never whether they appear.
 
 | Move | What the viewer sees | Tag the moving element |
 |---|---|---|

@@ -10,7 +10,7 @@ html,body{margin:0;background:#12101c}
 #app{background:#f3f2f8;visibility:hidden}
 #brand{position:absolute;left:40px;top:26px;font-size:30px;font-weight:800;letter-spacing:-.5px;color:#5b3fd6;line-height:40px;z-index:60;visibility:hidden}
 h2{position:absolute;left:0;right:0;top:34px;margin:0;text-align:center;font-size:40px;color:#16131f}
-#stage3d{position:absolute;inset:0;perspective:1800px;perspective-origin:50% 45%}
+#stage3d{position:absolute;inset:0;perspective:1100px;perspective-origin:50% 40%}
 #screen{position:absolute;left:290px;top:110px;width:700px;height:560px;transform-style:preserve-3d;border-radius:28px;background:#fff;box-shadow:0 30px 80px rgba(20,10,60,.18)}
 .ui{position:absolute;inset:0;padding:36px 40px;box-sizing:border-box}
 .ui h3{margin:0 0 6px;font-size:28px;color:#16131f}.ui p{margin:0 0 26px;color:#6b6780;font-size:18px}
@@ -34,7 +34,7 @@ h2{position:absolute;left:0;right:0;top:34px;margin:0;text-align:center;font-siz
  <div class="scene" id="intro" data-scene="1" data-layout-allow-overflow><div class="bg"></div><div class="name" data-fx="name-open anticipate" data-flow="morph 1-2">Trimly</div></div>
  <div class="scene" id="app" data-scene="2" data-layout-allow-overflow>
   <h2 id="headline">Book in one tap</h2>
-  <div id="stage3d" data-fx="skew"><div id="cam" data-fx="immersive tilt"><div id="grid"></div><div id="chip">★ 4.9 · 212 reviews</div><div id="screen" data-fx="tilt">
+  <div id="stage3d" data-fx="skew"><div id="cam" data-fx="immersive tilt"><div id="grid"></div><div id="chip">★ 4.9 · 212 reviews</div><div id="screen">
    <div class="ui"><h3>Marco's Barbers</h3><p>Skin fade · 45 min · $32</p>
     <div class="slots" data-fx="stagger-pop"><div class="slot">2:00</div><div class="slot">2:45</div><div class="slot on" data-fx="micro">3:30</div><div class="slot">4:15</div></div></div>
    <div class="dim"></div>
@@ -72,9 +72,6 @@ tl.set('#intro', { autoAlpha: 0 }, CUE.morph1 + 0.7);
 // scene 2: app slides in leaning (skew), screen arrives tilted and glides at an angle, flattens before reading
 tl.fromTo('#stage3d', { x: 260, skewX: -9 }, { x: 0, duration: 0.55, ease: 'expo.out', immediateRender: false }, CUE.enter);
 tl.to('#stage3d', { skewX: 0, duration: 0.45, ease: 'power2.out' }, CUE.enter + 0.1);
-tl.fromTo('#screen', { rotationY: -24, rotationX: 10, z: -200, transformOrigin: '50% 60%' }, { rotationY: -14, rotationX: 6, z: 0, duration: 0.8, ease: 'power3.out', immediateRender: false }, CUE.enter);
-tl.to('#screen', { rotationY: -7, rotationX: 3, duration: CUE.flatten - CUE.enter - 0.8, ease: 'sine.inOut' }, CUE.enter + 0.8);
-tl.to('#screen', { rotationY: 0, rotationX: 0, duration: 0.55, ease: 'power3.inOut' }, CUE.flatten);
 tl.fromTo('#headline', { y: 20, opacity: 0, filter: 'blur(8px)' }, { y: 0, opacity: 1, filter: 'blur(0px)', duration: 0.6, ease: 'power3.out', immediateRender: false }, CUE.headline);
 [...document.querySelectorAll('.slot')].forEach((el, i) => tl.fromTo(el, { scale: 0.6, opacity: 0, y: 24 }, { scale: 1, opacity: 1, y: 0, duration: 0.5, ease: 'back.out(1.7)', immediateRender: false }, CUE.slots + i * 0.07));
 // cursor, pop-out, press
@@ -106,8 +103,11 @@ const cy = r.y + r.h / 2;
 tl.fromTo('#outro', { clipPath: `circle(0px at 640px ${cy}px)` }, { clipPath: `circle(150% at 640px ${cy}px)`, duration: 0.7, ease: 'power3.inOut', immediateRender: false }, CUE.reveal);
 tl.set('#app', { autoAlpha: 0 }, CUE.reveal + 0.7);
 // ---- immersive camera: layers at different depths, camera flies in from deep and angled
-gsap.set('#grid', { z: -300 }); gsap.set('#chip', { z: 140 }); gsap.set('#chip', { opacity: 0 });
-tl.fromTo('#cam', { rotationY: 16, rotationX: 8, z: -380 }, { rotationY: 0, rotationX: 0, z: 0, duration: 1.5, ease: 'power3.out', immediateRender: false }, CUE.enter);
+gsap.set('#grid', { z: -400 }); gsap.set('#chip', { z: 320 }); gsap.set('#chip', { opacity: 0 });
+tl.fromTo('#cam', { rotationY: 34, rotationX: 14, z: -420, scale: 0.68 }, { rotationY: 26, rotationX: 10, z: -120, scale: 0.72, duration: 0.9, ease: 'power3.out', immediateRender: false }, CUE.enter);
+tl.to('#cam', { rotationY: 14, rotationX: 6, scale: 0.8, duration: CUE.flatten - CUE.enter - 0.9, ease: 'sine.inOut' }, CUE.enter + 0.9);   // orbit glide while angled: parallax
+tl.to('#cam', { rotationY: 0, rotationX: 0, z: 0, scale: 1, duration: 0.6, ease: 'power3.inOut' }, CUE.flatten);
+tl.to('#chip', { z: 40, duration: 0.6, ease: 'power3.inOut' }, CUE.flatten);   // the near layer settles back so it stays in frame
 tl.to('#chip', { opacity: 1, duration: 0.4 }, CUE.enter + 0.4);
 // ---- anticipation: wind up before each big move
 tl.to('#intro .name', { scale: 1.04, y: 8, duration: 0.14, ease: 'power2.out' }, CUE.morph1 - 0.14);

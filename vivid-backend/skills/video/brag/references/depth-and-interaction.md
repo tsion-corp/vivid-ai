@@ -75,6 +75,16 @@ tl.fromTo("#modal", { opacity: 0, y: 60, scale: 0.9, rotationX: 18, transformPer
 
 ## 4. Immersive 3D: a camera moving through the product
 
+**3D only reads when you can see an object's edges.** A full-screen UI tilted 18° looks like a slightly skewed flat screen. That's what an earlier VividBuild run shipped, and it passed its tags while showing no 3D. For depth to be visible, all of these must hold:
+- **The tilted object is smaller than the frame:** scale it to 0.6–0.8 so its whole silhouette (corners, edges, shadow) shows against a background. The background has its own depth cue: a gradient, a grid floor, or blurred shapes.
+- **Real angles:** 25–35° on the hero shot (`rotationY`), with 8–15° of `rotationX`. Keep 12–18° only for gentle glides.
+- **Strong perspective:** `perspective` of 900–1400px (lower is stronger), not 1800+.
+- **Real separation in depth:** layers sit **150–350 px apart in z** (for example background −400, screen 0, phone +180, floating card +320). Separations of 40–90 px produce no visible parallax.
+- **The camera moves while angled:** an orbit (rotateY sweeping 20° or more), a dolly or a crane, lasting 1.5–3 s. The parallax is only seen *during* movement. A tilt that settles in 0.8 s and flattens is not immersive.
+- **Depth cues:** a soft contact shadow under the object, far layers blurred 3–6 px, and a floating element casting a bigger, softer shadow.
+
+**Check a still at the peak of the move:** you should see at least two corners of the screen, a floor or background around it, and layers clearly offset from each other.
+
 At least one scene is shot like a camera moving in real 3D, not a flat screen sliding in:
 
 ```js

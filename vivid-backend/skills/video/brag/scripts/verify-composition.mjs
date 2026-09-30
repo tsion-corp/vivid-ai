@@ -26,8 +26,8 @@ const signature = {
     why: "a UI element lifts out of the screen toward the camera (z/scale ≥1.05, a growing shadow)",
   },
   tilt: {
-    need: () => has(/perspective/) && maxAbs(/\brotation[XY]\s*:\s*(-?[\d.]+)/g) >= 12,
-    why: "perspective shots: a screen or device angled ≥12° in 3D (perspective on the parent), gliding or settling flat",
+    need: () => has(/perspective/) && maxAbs(/\brotation[XY]\s*:\s*(-?[\d.]+)/g) >= 20,
+    why: "perspective shots: a screen or device, scaled below the frame so its edges show, angled ≥20° in 3D (perspective on the parent), gliding then settling flat",
   },
   skew: {
     need: () => maxAbs(/\bskew[XY]\s*:\s*(-?[\d.]+)/g) >= 5,
@@ -53,6 +53,21 @@ if (count("immersive") < 1) fail.push('motion: no immersive camera rig (data-fx=
 else {
   const zs = new Set([...html.matchAll(/\bz\s*:\s*(-?\d+(?:\.\d+)?)/g)].map((m) => m[1]));
   if (zs.size < 3) fail.push(`motion: the immersive rig uses ${zs.size} depth value(s) — put 3+ layers at different z so the camera move has parallax`);
+  // the rig itself: its own tweens must reach a real angle and shrink it below the frame
+  const rigId = html.match(/id=["']([^"']+)["'][^>]*data-fx=["'][^"']*\bimmersive\b/)?.[1] || html.match(/data-fx=["'][^"']*\bimmersive\b[^>]*id=["']([^"']+)["']/)?.[1];
+  if (rigId) {
+    const calls = [...html.matchAll(new RegExp(`\\.(?:to|fromTo|set)\\(\\s*['"\`]#${rigId}['"\`]\\s*,([\\s\\S]*?)\\)\\s*;`, "g"))].map((m) => m[1]).join(" ");
+    const css = html.match(new RegExp(`#${rigId}\\s*\\{([^}]*)\\}`))?.[1] || "";
+    const ang = Math.max(0, ...[...calls.matchAll(/rotation[XY]\s*:\s*(-?[\d.]+)/g)].map((m) => Math.abs(+m[1])));
+    const scales = [...(calls + " " + css).matchAll(/scale\s*:\s*([\d.]+)|scale\(([\d.]+)\)/g)].map((m) => +(m[1] || m[2]));
+    if (ang < 20) fail.push(`motion: the immersive rig #${rigId} only turns ${ang}° — angle it 25–35° on the hero move so the depth reads (depth-and-interaction.md §4)`);
+    if (!scales.some((v) => v > 0 && v <= 0.85)) fail.push(`motion: the immersive rig #${rigId} is never scaled below the frame — at full bleed its edges are off-screen and the tilt reads flat; scale it 0.6–0.8 while angled`);
+  }
+  const zv = [...zs].map(Number);
+  const spread = Math.max(...zv) - Math.min(...zv);
+  if (spread < 300) fail.push(`motion: the immersive layers span only ${spread}px in z — spread them 150–350px apart (e.g. −400 / 0 / +180 / +320) or the parallax is invisible`);
+  const persp = [...html.matchAll(/perspective\s*:\s*(\d+)/g)].map((m) => +m[1]);
+  if (persp.length && Math.min(...persp) > 1500) fail.push(`motion: perspective ${Math.min(...persp)}px is too weak for visible depth — use 900–1400px on the immersive rig`);
 }
 if (/\d+\.\d+x|\$\d|%\s*<|\bcount/i.test(html) && count("live") < 1) warn.push('motion: the video shows numbers but none is tagged data-fx="live" — interpolate changing values (number + path + colour from one proxy)');
 
