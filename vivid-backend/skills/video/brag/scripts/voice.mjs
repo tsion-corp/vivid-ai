@@ -48,7 +48,8 @@ async function kokoro(text, file, line) {
   const env = { ...process.env };
   // a local Kokoro venv (sound-design.md §6) when the environment doesn't name one
   const home = process.env.HOME || "";
-  if (!env.HYPERFRAMES_PYTHON && existsSync(`${home}/.cache/brag-tts/bin/python`)) env.HYPERFRAMES_PYTHON = `${home}/.cache/brag-tts/bin/python`;
+  for (const py of [`${home}/.cache/brag-tts/bin/python`, "/opt/tts/bin/python"])   // local venv, or the video sandbox's
+    if (!env.HYPERFRAMES_PYTHON && existsSync(py)) env.HYPERFRAMES_PYTHON = py;
   // macOS: the espeakng-loader wheel points at a CI path; prefer a system espeak-ng when present
   for (const [lib, data] of [["/opt/homebrew/lib/libespeak-ng.1.dylib", "/opt/homebrew/share/espeak-ng-data"], ["/usr/lib/x86_64-linux-gnu/libespeak-ng.so.1", "/usr/lib/x86_64-linux-gnu/espeak-ng-data"], ["/usr/lib/aarch64-linux-gnu/libespeak-ng.so.1", "/usr/lib/aarch64-linux-gnu/espeak-ng-data"]])
     if (!env.PHONEMIZER_ESPEAK_LIBRARY && existsSync(lib)) { env.PHONEMIZER_ESPEAK_LIBRARY = lib; env.ESPEAK_DATA_PATH = data; }
