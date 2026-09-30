@@ -178,6 +178,7 @@ Use it on a screen that is already tilted (`rotationY` −25°, `rotationX` 15°
 
 - **Pre-set everything that enters later.** A `fromTo` with `immediateRender: false` leaves the element visible at rest *before* its tween starts. Headlines and cards then flash on, vanish and animate in. `gsap.set(el, { opacity: 0 })` every entering element at build time.
 - **A morphing element must be above the incoming scene.** Give the outgoing scene (or the travelling element) a higher `z-index` while it hands over, or the new scene covers it mid-morph.
+- **No negative `z` on children of a `preserve-3d` surface.** They go behind it and disappear. Wind up with `y` and `scale` instead.
 - **Hide what a reveal covered.** After a circle or clip reveal or a zoom-through finishes, set the covered scene to `autoAlpha: 0`. Otherwise `hyperframes check` reports `text_occluded` for every line underneath.
 - **Keep the dim overlay of a pop-out at 0.35 opacity or less, and short.** The check flags the dimmed text's contrast while it's dimmed. That's expected during the lift, but not during a dwell.
 - **A morph's midpoint is visible for several frames.** Counter-scale icons inside a scaled button (`buttonToTick` does this), or they stretch.

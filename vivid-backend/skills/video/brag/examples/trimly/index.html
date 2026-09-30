@@ -81,7 +81,7 @@ tl.set('#cursor', { x: 1100, y: 650 }, 0);
 tl.to('#cursor', { x: target.x, duration: 0.8, ease: 'power3.inOut' }, CUE.cursor);
 tl.to('#cursor', { y: target.y, duration: 0.8, ease: 'sine.inOut' }, CUE.cursor);
 tl.set('#cta', { transformStyle: 'preserve-3d', zIndex: 5 }, CUE.popOut);
-tl.to('#cta', { z: 120, scale: 1.12, rotationX: -6, rotationY: 4, boxShadow: '0 40px 90px rgba(60,30,160,.45)', duration: 0.45, ease: 'back.out(1.6)' }, CUE.popOut);
+tl.to('#cta', { z: 120, y: 0, scale: 1.12, rotationX: -6, rotationY: 4, boxShadow: '0 40px 90px rgba(60,30,160,.45)', duration: 0.45, ease: 'back.out(1.6)' }, CUE.popOut);
 tl.to('.dim', { opacity: 0.3, duration: 0.35 }, CUE.popOut);
 tl.to('#cursor', { scale: 0.82, duration: 0.07 }, CUE.press); tl.to('#cursor', { scale: 1, duration: 0.16, ease: 'back.out(2)' }, CUE.press + 0.07);
 tl.to('#cta', { z: 66, scale: 1.08, duration: 0.08, ease: 'power2.out' }, CUE.press);
@@ -112,7 +112,7 @@ tl.to('#chip', { opacity: 1, duration: 0.4 }, CUE.enter + 0.4);
 // ---- anticipation: wind up before each big move
 tl.to('#intro .name', { scale: 1.04, y: 8, duration: 0.14, ease: 'power2.out' }, CUE.morph1 - 0.14);
 tl.to('#cursor', { x: 1112, y: 660, duration: 0.14, ease: 'power2.out' }, CUE.cursor - 0.14);
-tl.to('#cta', { z: -10, scale: 0.98, duration: 0.14, ease: 'power2.out' }, CUE.popOut - 0.14);
+tl.to('#cta', { y: 3, scale: 0.97, duration: 0.14, ease: 'power2.out' }, CUE.popOut - 0.14);
 tl.to('#brand', { scale: 0.9, duration: 0.14, ease: 'power2.out' }, CUE.brandToName - 0.39);
 // ---- micro-interactions: selected slot pops its ring, the CTA gets a hover sweep, then a busy state on press
 tl.fromTo('.slot.on', { boxShadow: '0 0 0 0 rgba(124,92,255,.5)' }, { boxShadow: '0 0 0 10px rgba(124,92,255,0)', duration: 0.5, ease: 'power2.out', immediateRender: false }, CUE.slots + 0.5);

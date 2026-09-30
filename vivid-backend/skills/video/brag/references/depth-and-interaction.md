@@ -24,7 +24,7 @@ function anticipate(tl, el, at, v, o = {}) {
 **Where to use it** (plan at least four per video):
 - **Button presses:** the control rises about 2 px, *then* dips. The cursor lifts slightly before the click.
 - **Exits:** a card, modal or screen leaving the frame backs off 10–20 px first.
-- **Pop-outs:** the element sinks a touch (`z: -10, scale: 0.98`) before lifting toward the camera.
+- **Pop-outs:** the element sinks a touch (`y: 3, scale: 0.97`) before lifting toward the camera. **Never wind up with a negative `z` inside a 3D (`preserve-3d`) parent**: it passes behind its own surface and vanishes for those frames.
 - **Camera pushes and whips:** the camera eases back 2–3% before pushing in.
 - **Slams:** a headline word rises and holds for a beat before it drops into place.
 
