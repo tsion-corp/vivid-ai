@@ -231,6 +231,7 @@ function wide(tl, at, o = {}) {
 }
 ```
 
+- **Fill the frame.** A full desktop UI at 1920 wide makes its text tiny, and in a dark app the frame reads as empty. In every UI scene the part being shown (the chat, the spec, the phone, the build row) fills at least **55–60% of the frame width** while it's being read. Push in on it, or crop to that pane. Show the whole app only for the ~1 s establishing beat.
 - **Zoom range:** 1.2–1.8×. Anything bigger reads as a jump. Zooms take 0.6–0.9 s, eased `power3.inOut`, and never linear.
 - **When to push in:** as the cursor starts its last approach, so the zoom and the move finish together. Or on the result: the toast, the updated preview, the generated item.
 - **One zoom per beat.** In → dwell → out, or in → cut to the next scene. Don't wobble in and out on the same screen.

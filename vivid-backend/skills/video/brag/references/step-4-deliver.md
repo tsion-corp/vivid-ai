@@ -65,7 +65,8 @@ ffmpeg -v info -i ../brag.mp4 -vf "blackdetect=d=0.04:pic_th=0.95:pix_th=0.08" -
 ffmpeg -v info -i ../brag.mp4 -vf "freezedetect=n=0.002:d=1.0" -an -f null - 2>&1 | grep -E "freeze_(start|duration)"
 ```
 
-- **For any `black_start`:** fix the transition (§5 of `ui-demo-motion.md`) and render again. The only exception is an app that is dark by design, when you have checked the frame and it shows the product's own background with content on it.
+- **For any `black_start`:** fix the transition (§5 of `ui-demo-motion.md`) and render again.
+- **Dark apps get no free pass on long hits.** A hit longer than 0.5 s means the frame is mostly empty dark UI. Push the camera in on the part that matters (`ui-demo-motion.md` §4), so the content fills the frame, then render again.
 - **For a freeze longer than 2.5 s, or one over a loading state:** add motion (a slow camera drift, the wait compressed per §2a), or shorten it.
 - **Then look at stills** of every scene change, the typed prompt midway, and the payoff's before and after states.
 
