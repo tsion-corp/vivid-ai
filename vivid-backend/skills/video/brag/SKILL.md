@@ -39,7 +39,7 @@ Parse these options:
 | Option | Values | Default |
 |---|---|---|
 | `--tone` | preset or freeform description | inferred |
-| `--format` | `landscape`, `vertical`, `square` | `landscape` |
+| `--format` | `landscape`, `vertical`, `square` | `landscape` (vertical and square show the app's **mobile layout**: `references/formats.md`) |
 | `--duration` | seconds | auto (15-30s: about 4s per highlight) |
 | `--no-music` | flag | music on |
 | `--no-sfx` | flag | sfx on |
@@ -114,6 +114,7 @@ When music is selected, include a compact `Music cue guidance` section: read the
 **Read:** [references/text-animation.md](references/text-animation.md)
 **Read:** [references/ui-demo-motion.md](references/ui-demo-motion.md)
 **Read:** [references/motion-signature.md](references/motion-signature.md) (required moves; study `examples/trimly/`)
+**Read:** [references/formats.md](references/formats.md) (vertical and square use the app's mobile layout, never a shrunk desktop)
 **Read:** [references/scene-flow.md](references/scene-flow.md) (every scene hands something to the next)
 **Read:** [references/depth-and-interaction.md](references/depth-and-interaction.md) (spatial UI, immersive 3D, micro-interactions, anticipation, live data, split panes; see `examples/live-depth/`)
 **Read:** [references/effects.md](references/effects.md)
@@ -180,6 +181,8 @@ These apply to every brag video regardless of tone.
 **Used by a human, not a robot.** When the video shows the app in use: the cursor moves on eased, slightly curved paths; every click that changes something shows a press and a ripple, and the result follows 0.1–0.15s later; the camera pushes in (1.2–1.8×) on the action and its result, so nobody has to hunt; dense screens (grids, specs, tables, forms) hold 1.5–2s after they settle; different contexts are joined by a pan, a 200–300ms slide or fade, or the app's own loading state as a bridge, never a bare hard cut. See `references/ui-demo-motion.md`.
 
 **Never dead, never black.** No frame is black or empty. Transitions slide or fade from one piece of the product to the next, keeping the app's chrome in place; a render with `blackdetect` hits is not finished. Real waits (boot, build, generation) become 0.8–1.5s time-lapses that keep moving (skeletons filling, real log lines streaming), never a static spinner for seconds. Each new module arrives with a 2–6 word headline saying what it does. When the feature is a change of state (an error it fixes itself, a check that passes), hold the before state 1.5–2s, animate the change, and hold the after state. Typed prompts appear character by character with a caret.
+
+**Each format shows the app as it's really seen.** Vertical (TikTok, Reels, Shorts, Status) and square videos use the app's own mobile layout: built at phone width from its responsive code, scaled up, and kept inside the platform safe zones. Never shrink the desktop to fit (`references/formats.md`).
 
 **Physical, not flat.** Every big move winds up first (anticipation). Every tap answers immediately (press, busy, done, select states in the app's own copy). Modals and results float over a dimmed, depth-blurred world. At least one scene is a camera moving through layered 3D. Changing numbers interpolate (value, path and colour from one progress value), and split panes resolve together from one step table (`references/depth-and-interaction.md`).
 

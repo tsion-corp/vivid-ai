@@ -71,6 +71,22 @@ else {
 }
 if (/\d+\.\d+x|\$\d|%\s*<|\bcount/i.test(html) && count("live") < 1) warn.push('motion: the video shows numbers but none is tagged data-fx="live" — interpolate changing values (number + path + colour from one proxy)');
 
+// ---------- format: vertical/square use the mobile layout (formats.md) ----------
+const rootW = +(html.match(/data-width=["'](\d+)["']/)?.[1] || 0), rootH = +(html.match(/data-height=["'](\d+)["']/)?.[1] || 0);
+if (rootW && rootH && rootH >= rootW) {
+  const kind = rootH > rootW ? "vertical" : "square";
+  if (!/data-viewport=["']mobile["']/.test(html))
+    fail.push(`format: a ${kind} video shows the app's mobile layout — build screens at 360–430 css px from its mobile classes, scale them up, and tag them data-viewport="mobile" (formats.md)`);
+  // widths of CSS rules and inline styles, except decorative layers (backgrounds, grids, glows) that may overflow
+  const deco = /bg|grid|floor|world|backdrop|glow|blob|aurora|gradient|scrim|vignette/i;
+  const decls = [...html.matchAll(/([^{}<>]+)\{([^}]*)\}/g)].map((m) => [m[1], m[2]])
+    .concat([...html.matchAll(/<\w+([^>]*?)style=["']([^"']*)["']/g)].map((m) => [m[1], m[2]]));
+  const wide = decls.filter(([name]) => !deco.test(name))
+    .flatMap(([, body]) => [...body.matchAll(/(?<![-\w])width\s*:\s*(\d+(?:\.\d+)?)px/g)].map((m) => +m[1]))
+    .filter((w) => w > rootW);
+  if (wide.length) fail.push(`format: elements ${Math.max(...wide)}px wide in a ${rootW}px-wide ${kind} video — that's a desktop layout shrunk to fit; use the mobile layout instead`);
+}
+
 // ---------- scene flow ----------
 const scenes = [...new Set([...html.matchAll(/data-scene=["']([^"']+)["']/g)].map((m) => m[1]))];
 const flows = [...html.matchAll(/data-flow=["']([^"']+)["']/g)].map((m) => m[1]);

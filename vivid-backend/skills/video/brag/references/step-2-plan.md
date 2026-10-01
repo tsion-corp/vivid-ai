@@ -50,6 +50,7 @@ landing-page-only, write "none — landing-page only" and rely on the feature hi
 - Interpretation: [one sentence on how this affects pacing, writing, visual energy, and restraint]
 
 ## Format: [landscape / vertical / square] — [width]x[height]
+Layout shown: [desktop / the mobile layout at 390 css px, full-bleed or in a phone frame — formats.md]; safe zones respected (vertical)
 ## Duration: [target seconds]
 
 ## Visual identity (from the project)

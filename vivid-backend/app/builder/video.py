@@ -186,6 +186,9 @@ def skills_tarball() -> bytes:
 def system_prompt(video: BuilderVideo, project: BuilderProject) -> str:
     w, h = FORMATS[video.format]
     wishes = [f"- Format: {video.format} ({w}x{h}, 30fps)."]
+    if video.format in ("vertical", "square"):
+        wishes.append("- It's for phones (TikTok, Reels, Shorts, Status): show the app's MOBILE layout, built at "
+                      "390 css px from its mobile classes and scaled up (references/formats.md); never shrink the desktop.")
     if video.tone:
         wishes.append(f"- Tone: {video.tone}.")
     if video.direction:

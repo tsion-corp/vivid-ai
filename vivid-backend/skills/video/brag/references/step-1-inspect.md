@@ -41,6 +41,7 @@ owner's admin or dashboard, settings, and any other roles (riders, staff, vendor
 - **Voice.** The README, docs and the landing page: the product's own claims and tone. Use
   them for copy, and check each claim against the code before repeating it.
 - **Assets.** `public/`, `assets/` and uploads: the logo, icons, product images.
+- **Mobile layout.** How each highlight screen looks at phone width in the code: its responsive classes (un-prefixed vs `md:`), media queries, mobile-only components (bottom tabs, drawer, sheets), and what collapses (sidebar, split panes, tables). Vertical and square videos are built from this (`formats.md`).
 - **Icons.** Find the icon set the app really uses: the package (`lucide-react`,
   `@heroicons/react`, `react-icons`, `@expo/vector-icons`, `@phosphor-icons/react`...),
   inline `<svg>` components, and SVG files. For each highlight screen, note the icons
