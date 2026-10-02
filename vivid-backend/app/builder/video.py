@@ -55,8 +55,11 @@ SKILLS_ROOT = Path(__file__).resolve().parents[2] / "skills" / "video"
 #: Put in the system prompt; everything else under skills/ the agent reads when it needs it.
 #: Keep in step with sandbox-templates/vivid-video/template.py.
 HYPERFRAMES_VERSION = "0.8.91"
-PROMPT_SKILLS = ("brag/SKILL.md", "hyperframes/hyperframes-core/SKILL.md",
-                 "hyperframes/hyperframes-cli/SKILL.md")
+PROMPT_SKILLS = ("brag/SKILL.md", "hyperframes/hyperframes-core/SKILL.md")
+#: When the conversation passes this many characters (~4 per token), old tool output is trimmed
+#: in one batch. Batched, not every step, so the cached prefix stays valid most of the time.
+COMPACT_AT_CHARS = 360_000
+KEEP_RECENT_RESULTS = 8
 
 
 class VideoError(Exception):
@@ -211,6 +214,11 @@ Where things are (paths relative to the working directory):
   is `/home/user/app/{SKILLS_DIR}/brag/scripts/synth/index.mjs`.
 - Hyperframes {HYPERFRAMES_VERSION} is installed globally: run `hyperframes <command>` (check,
   render, snapshot, tts…) rather than `npx hyperframes`, which may fetch a different version.
+- Work in few, large steps; every step re-reads the whole conversation. Read only the files you
+  need (and a range of a big file, not all of it); write the composition in large pieces, not
+  line by line; chain related commands in one run_command (`node audio/score.mjs --report &&
+  node … verify-composition.mjs …`); pipe long output through `tail -40`. Older tool output is
+  trimmed as the conversation grows: keep what you'll need in files (brag-plan.md, the brief).
 - Look at your work with the `view_frames` tool after every draft render (and at the poster):
   you can't judge motion, depth or framing from the code alone.
 - Voiceover works offline here: `node {SKILLS_DIR}/brag/scripts/voice.mjs vo.json --out
@@ -219,7 +227,7 @@ Where things are (paths relative to the working directory):
   {OUT_DIR}/composition --tone <tone>` must print "passes"; fix what it names.
 - The Hyperframes skills are in `{SKILLS_DIR}/hyperframes/<skill>/SKILL.md` with their
   references: read hyperframes-animation, hyperframes-creative, hyperframes-keyframes and
-  hyperframes-audio there when brag says to load them.
+  hyperframes-audio there when brag says to load them, and hyperframes-cli if a command fails.
 - `hyperframes` is installed; run it with `npx hyperframes ...` from `{OUT_DIR}/composition`.
   Chromium and ffmpeg are installed. Commands may run up to {settings.VIDEO_RENDER_TIMEOUT}s.
 
@@ -290,6 +298,45 @@ async def _frames(sandbox: Sandbox, args: dict) -> tuple[str, list[str]]:
     if not urls:
         return f"error: no frames could be read from {path}", []
     return f"{len(urls)} still(s) of {path} ({', '.join(labels)}) follow in the next message.", urls
+
+
+def _size(messages: list[dict]) -> int:
+    return sum(len(json.dumps(m.get("content") or "")) + len(json.dumps(m.get("tool_calls") or ""))
+               for m in messages)
+
+
+def _compact(messages: list[dict]) -> bool:
+    """Trim old tool results and old file contents the agent wrote, keeping the
+    system prompt, the newest results, and every decision. True if anything changed."""
+    if _size(messages) < COMPACT_AT_CHARS:
+        return False
+    tool_idx = [i for i, m in enumerate(messages) if m.get("role") == "tool"]
+    old = set(tool_idx[:-KEEP_RECENT_RESULTS])
+    for i in old:
+        text = str(messages[i].get("content") or "")
+        if len(text) > 400:
+            messages[i] = {**messages[i], "content": text[:300] + f"\n[… {len(text) - 300} characters trimmed "
+                           "to save context; run or read it again if you need it]"}
+    cutoff = min(old) if old else 0
+    for i, m in enumerate(messages[:cutoff]):
+        if m.get("role") != "assistant" or not m.get("tool_calls"):
+            continue
+        calls = []
+        for c in m["tool_calls"]:
+            fn = dict(c["function"])
+            try:
+                args = json.loads(fn["arguments"])
+            except (ValueError, TypeError):
+                args = None
+            if isinstance(args, dict):
+                for key in ("content", "new_string", "old_string"):
+                    if isinstance(args.get(key), str) and len(args[key]) > 400:
+                        args[key] = f"[{len(args[key])} characters; the file has it]"
+                fn["arguments"] = json.dumps(args)
+            calls.append({**c, "function": fn})
+        messages[i] = {**m, "tool_calls": calls}
+    _drop_old_frames(messages)
+    return True
 
 
 def _drop_old_frames(messages: list[dict]) -> None:
@@ -405,6 +452,7 @@ async def _agent(sandbox: Sandbox, video: BuilderVideo, project: BuilderProject,
     for _ in range(settings.VIDEO_MAX_STEPS):
         if time.monotonic() > deadline:
             raise VideoError("timed_out", "Making the video took too long.")
+        _compact(messages)
         step = ModelStep(messages, _schemas(), endpoint)
         async for _part in step.run():
             pass

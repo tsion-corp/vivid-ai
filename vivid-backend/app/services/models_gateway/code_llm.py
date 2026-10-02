@@ -97,6 +97,43 @@ def _stream_error(chunk: dict) -> str | None:
     return None
 
 
+_EPHEMERAL = {"type": "ephemeral"}
+
+
+def _mark(content):
+    """The content with a cache breakpoint on its last block, or None if it can't carry one."""
+    if isinstance(content, str):
+        return [{"type": "text", "text": content, "cache_control": _EPHEMERAL}] if content.strip() else None
+    if isinstance(content, list) and content:
+        parts = [dict(p) for p in content]
+        for p in reversed(parts):
+            if p.get("type") == "image_url" or (p.get("type") == "text" and str(p.get("text") or "").strip()):
+                p["cache_control"] = _EPHEMERAL
+                return parts
+    return None
+
+
+def with_cache_breakpoints(messages: list[dict], model: str) -> list[dict]:
+    """Claude only caches what a request marks (other providers cache on their own).
+    Mark the system prompt and the newest message that can carry a marker: each step
+    then reads everything before it from the cache (about a tenth of the input price)
+    instead of paying full price for the whole conversation again. The caller's list
+    is not changed."""
+    if not model.lstrip("~").startswith("anthropic/"):
+        return messages
+    out = list(messages)
+    targets = [0] if out and out[0].get("role") == "system" else []
+    for i in range(len(out) - 1, 0, -1):
+        if _mark(out[i].get("content")) is not None:
+            targets.append(i)
+            break
+    for i in targets:
+        marked = _mark(out[i].get("content"))
+        if marked is not None:
+            out[i] = {**out[i], "content": marked}
+    return out
+
+
 async def stream_chat(messages: list[dict], tools: list[dict],
                       max_tokens: int | None = None,
                       endpoint: provider.Endpoint | None = None,
@@ -119,7 +156,7 @@ async def stream_chat(messages: list[dict], tools: list[dict],
         raise CodeLLMUnavailable(ep.missing)
     payload = {
         "model": ep.model,
-        "messages": messages,
+        "messages": with_cache_breakpoints(messages, ep.model),
         "tools": tools,
         "tool_choice": "auto",
         "max_tokens": max_tokens or settings.CODE_MAX_REPLY_TOKENS,

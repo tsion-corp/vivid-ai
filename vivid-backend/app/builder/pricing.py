@@ -31,6 +31,9 @@ class Price:
     cached: float | None
 
     def cost(self, usage: dict) -> float:
+        reported = usage.get("cost")                     # OpenRouter's own figure, cache writes included
+        if isinstance(reported, (int, float)) and reported > 0:
+            return float(reported)
         prompt = int(usage.get("prompt_tokens") or 0)
         completion = int(usage.get("completion_tokens") or 0)
         cached = int((usage.get("prompt_tokens_details") or {}).get("cached_tokens") or 0)

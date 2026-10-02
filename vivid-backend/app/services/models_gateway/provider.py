@@ -126,9 +126,12 @@ class Endpoint:
         the OpenAI shape. vLLM takes none. OpenRouter takes a routing
         preference, which decides which host answers and therefore how long
         the first token takes."""
-        if self.provider == OPENROUTER and settings.OPENROUTER_PROVIDER_SORT:
-            return {"provider": {"sort": settings.OPENROUTER_PROVIDER_SORT}}
-        return {}
+        if self.provider != OPENROUTER:
+            return {}
+        extra: dict = {"usage": {"include": True}}       # usage carries OpenRouter's own cost (cache writes too)
+        if settings.OPENROUTER_PROVIDER_SORT:
+            extra["provider"] = {"sort": settings.OPENROUTER_PROVIDER_SORT}
+        return extra
 
     @property
     def is_pod(self) -> bool:
