@@ -413,7 +413,7 @@ async def _agent(sandbox: Sandbox, video: BuilderVideo, project: BuilderProject,
             continue
         if step.failed is not None:
             raise VideoError("model_unavailable", "The video model is unavailable. Try again later.")
-        calls.append(ModelCall(endpoint.model, "video", step.usage))
+        calls.append(ModelCall(endpoint.model, f"video:{video.id}", step.usage))   # traceable per video
         if not step.calls:
             messages.append({"role": "assistant", "content": step.text or "Done."})
             duration, problem = await _probe(sandbox, video)

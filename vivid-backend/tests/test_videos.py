@@ -168,6 +168,7 @@ def test_the_job_makes_checks_stores_and_meters(maker, fake_blob, monkeypatch): 
     assert sorted(model.requests[0]["tools"]) == ["edit_file", "list_files", "read_file", "run_command",
                                                   "view_frames", "write_file"]
     assert {e.kind for e in events} == {"video"}
+    assert all((e.meta or {}).get("stage") == f"video:{vid}" for e in events if e.kind == "video")
 
     async def meter():
         async with maker() as db:
