@@ -13,7 +13,7 @@ import { join, resolve } from "node:path";
 import { homedir } from "node:os";
 
 const args = process.argv.slice(2);
-const dir = resolve(args.find((a) => !a.startsWith("--")) || process.cwd());
+const dir = resolve((args.find((a) => !a.startsWith("--")) || process.cwd()).replace(/[.\/]+$/, "") || "/");
 const all = args.includes("--all");
 const logs = join(homedir(), ".claude", "projects", dir.replace(/[^A-Za-z0-9]/g, "-"));
 if (!existsSync(logs)) {
